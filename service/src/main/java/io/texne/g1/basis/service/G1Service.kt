@@ -195,6 +195,14 @@ class G1Service : Service() {
             }
         }
 
+        override fun connectGlasses(deviceAddress: String?) {
+            if (deviceAddress == null) {
+                connectGlasses()
+            } else {
+                connectGlasses(deviceAddress, null)
+            }
+        }
+
         override fun disconnectGlasses(id: String?, callback: OperationCallback?) {
             bluetoothManager.disconnect()
             callback?.onResult(true)
