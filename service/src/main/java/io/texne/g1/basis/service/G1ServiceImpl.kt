@@ -2,6 +2,8 @@ package io.texne.g1.basis.service
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -9,12 +11,14 @@ import android.bluetooth.le.ScanSettings
 import android.os.ParcelUuid
 import android.util.Log
 import io.texne.g1.basis.service.protocol.IG1Service
+import io.texne.g1.basis.service.protocol.IG1StateCallback
 import java.util.UUID
 
 class G1ServiceImpl : IG1Service.Stub() {
 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var gatt: BluetoothGatt? = null
+    private var stateCallback: IG1StateCallback? = null
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
@@ -67,15 +71,16 @@ class G1ServiceImpl : IG1Service.Stub() {
         Log.d(TAG, "Looking for glasses...")
     }
 
-    override fun observeState() {
+    override fun observeState(callback: IG1StateCallback?) {
+        stateCallback = callback
         val charUuid = UUID.fromString("0000fff1-0000-1000-8000-00805f9b34fb")
         val characteristic = gatt?.getService(SERVICE_UUID)?.getCharacteristic(charUuid)
         if (characteristic != null) {
             gatt?.setCharacteristicNotification(characteristic, true)
+            Log.d(TAG, "Observing state...")
         } else {
             Log.w(TAG, "State characteristic not available")
         }
-        Log.d(TAG, "Observing state...")
     }
 
     override fun displayTextPage(text: String?) {
@@ -103,8 +108,28 @@ class G1ServiceImpl : IG1Service.Stub() {
         }
     }
 
+    private val gattCallback = object : BluetoothGattCallback() {
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+        ) {
+            if (characteristic.uuid.toString().equals(STATE_CHAR_UUID, ignoreCase = true)) {
+                val data = characteristic.value
+                if (data.size >= 2) {
+                    val connected = data[0].toInt() == 1
+                    val battery = data[1].toInt() and 0xFF
+                    Log.d(TAG, "State update: connected=$connected, battery=$battery")
+                    stateCallback?.onStateChanged(connected, battery)
+                } else {
+                    Log.w(TAG, "State update payload too short: ${'$'}{data.size}")
+                }
+            }
+        }
+    }
+
     private companion object {
         private val SERVICE_UUID: UUID = UUID.fromString("0000fff0-0000-1000-8000-00805f9b34fb")
+        private const val STATE_CHAR_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
         private const val TAG = "G1ServiceImpl"
     }
 }

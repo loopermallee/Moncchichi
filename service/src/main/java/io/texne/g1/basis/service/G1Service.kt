@@ -23,6 +23,7 @@ import com.nabinbhandari.android.permissions.Permissions
 import io.texne.g1.basis.service.protocol.G1Glasses
 import io.texne.g1.basis.service.protocol.G1ServiceState
 import io.texne.g1.basis.service.protocol.IG1Service
+import io.texne.g1.basis.service.protocol.IG1StateCallback
 import io.texne.g1.basis.service.protocol.IG1ServiceClient
 import io.texne.g1.basis.service.protocol.ObserveStateCallback
 import io.texne.g1.basis.service.protocol.OperationCallback
@@ -161,7 +162,7 @@ class G1Service : Service() {
     }
 
     private val binder = object : IG1Service.Stub() {
-        override fun observeState(callback: ObserveStateCallback?) = commonObserveState(callback)
+        override fun observeState(callback: IG1StateCallback?) = registerStateCallback(callback)
 
         override fun lookForGlasses() {
             if (state.value.status == ServiceStatus.LOOKING) {
@@ -237,6 +238,18 @@ class G1Service : Service() {
         if (callback == null) return
         coroutineScope.launch {
             state.collectLatest { callback.onStateChange(it.toState()) }
+        }
+    }
+
+    private fun registerStateCallback(callback: IG1StateCallback?) {
+        if (callback == null) return
+        coroutineScope.launch {
+            state.collectLatest { internalState ->
+                val connected = internalState.devices.values.any {
+                    it.connectionState == DeviceManager.ConnectionState.CONNECTED
+                }
+                callback.onStateChanged(connected, -1)
+            }
         }
     }
 
