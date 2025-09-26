@@ -1,12 +1,11 @@
 package io.texne.g1.basis.service.protocol;
 
+import io.texne.g1.basis.service.protocol.IG1StateCallback;
+
 interface IG1Service {
-    void connectGlasses(String deviceAddress);
+    void observeState(IG1StateCallback callback);
+    void connectGlasses(String deviceId);
     void disconnectGlasses();
-    boolean isConnected();
-    void sendMessage(String msg);
-    void lookForGlasses();
-    void observeState();
     void displayTextPage(String text);
     void stopDisplaying();
 }
