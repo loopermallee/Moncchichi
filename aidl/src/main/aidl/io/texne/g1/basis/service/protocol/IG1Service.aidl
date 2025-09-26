@@ -6,7 +6,7 @@ interface IG1Service {
     boolean isConnected();
     void sendMessage(String msg);
     void lookForGlasses();
-    void observeState(IG1StateCallback callback);
+    void observeState();
     void displayTextPage(String text);
     void stopDisplaying();
 }
