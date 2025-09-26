@@ -11,4 +11,8 @@ interface IG1Service {
     void disconnectGlasses(String id, @nullable OperationCallback callback);
     void displayTextPage(String id, in String[] page, @nullable OperationCallback callback);
     void stopDisplaying(String id, @nullable OperationCallback callback);
+    void connectGlasses();
+    void disconnectGlasses();
+    boolean isConnected();
+    void sendMessage(String msg);
 }

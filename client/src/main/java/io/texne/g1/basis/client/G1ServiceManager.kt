@@ -89,6 +89,20 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
         service?.disconnectGlasses(id, null)
     }
 
+    fun connectGlasses() {
+        service?.connectGlasses()
+    }
+
+    fun disconnectGlasses() {
+        service?.disconnectGlasses()
+    }
+
+    fun isConnected(): Boolean = service?.isConnected ?: false
+
+    fun sendMessage(message: String) {
+        service?.sendMessage(message)
+    }
+
     override suspend fun displayTextPage(id: String, page: List<String>) =
         suspendCoroutine<Boolean> { continuation ->
             service?.displayTextPage(
