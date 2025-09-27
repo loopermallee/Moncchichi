@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.texne.g1.basis.client.G1ServiceCommon
+import io.texne.g1.basis.client.G1ServiceCommon.GlassesStatus
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
 import io.texne.g1.hub.model.Repository
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -17,54 +18,103 @@ import javax.inject.Inject
 @HiltViewModel
 class ApplicationViewModel @Inject constructor(
     private val repository: Repository
-): ViewModel() {
+) : ViewModel() {
+
+    enum class DeviceStatus(val label: String) {
+        DISCONNECTED("Disconnected"),
+        CONNECTING("Connecting"),
+        CONNECTED("Connected"),
+        DISCONNECTING("Disconnecting"),
+        ERROR("Error")
+    }
+
+    data class Device(
+        val id: String?,
+        val name: String,
+        val status: DeviceStatus
+    ) {
+        val canPair: Boolean
+            get() = id != null && when (status) {
+                DeviceStatus.DISCONNECTED, DeviceStatus.ERROR -> true
+                DeviceStatus.CONNECTING, DeviceStatus.CONNECTED, DeviceStatus.DISCONNECTING -> false
+            }
+
+        val canDisconnect: Boolean
+            get() = id != null && when (status) {
+                DeviceStatus.CONNECTED -> true
+                DeviceStatus.CONNECTING, DeviceStatus.DISCONNECTED, DeviceStatus.DISCONNECTING, DeviceStatus.ERROR -> false
+            }
+    }
 
     data class State(
-        val connectedGlasses: G1ServiceCommon.Glasses? = null,
-        val error: Boolean = false,
-        val scanning: Boolean = false,
-        val nearbyGlasses: List<G1ServiceCommon.Glasses>? = null
+        val devices: List<Device> = emptyList(),
+        val isLooking: Boolean = false,
+        val serviceError: Boolean = false
     )
 
-    val state = repository.getServiceStateFlow().map {
-        State(
-            connectedGlasses = it?.glasses?.filter { it.status == G1ServiceCommon.GlassesStatus.CONNECTED }?.firstOrNull(),
-            error = it?.status == ServiceStatus.ERROR,
-            scanning = it?.status == ServiceStatus.LOOKING,
-            nearbyGlasses = if(it == null || it.status == ServiceStatus.READY) null else it.glasses
-        )
-    }.stateIn(viewModelScope, SharingStarted.Lazily, State())
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val messages = _messages.asSharedFlow()
 
-    sealed class Event {
-        data class ConnectionResult(val success: Boolean) : Event()
-        data object Disconnected : Event()
+    val state = repository.getServiceStateFlow()
+        .map { serviceState ->
+            val glasses = serviceState?.glasses.orEmpty()
+            State(
+                devices = glasses.map { it.toDevice() },
+                isLooking = serviceState?.status == ServiceStatus.LOOKING,
+                serviceError = serviceState?.status == ServiceStatus.ERROR
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.Lazily, State())
+
+    fun refreshDevices() {
+        try {
+            repository.startLooking()
+        } catch (error: IllegalArgumentException) {
+            viewModelScope.launch {
+                _messages.emit("Service not ready yet")
+            }
+        }
     }
 
-    private val _events = MutableSharedFlow<Event>()
-    val events = _events.asSharedFlow()
-
-    fun scan() {
-        repository.startLooking()
-    }
-
-    fun connect(id: String) {
+    fun pair(id: String) {
         viewModelScope.launch {
-            val success = repository.connectGlasses(id)
-            _events.emit(Event.ConnectionResult(success))
+            val result = runCatching { repository.connectGlasses(id) }
+            val success = result.getOrNull()
+            if (success != true || result.isFailure) {
+                _messages.emit("Unable to pair with the selected glasses")
+            }
         }
     }
 
     fun disconnect(id: String) {
-        repository.disconnectGlasses(id)
-        viewModelScope.launch { _events.emit(Event.Disconnected) }
+        viewModelScope.launch {
+            runCatching { repository.disconnectGlasses(id) }
+                .onFailure {
+                    _messages.emit("Unable to disconnect from the selected glasses")
+                }
+        }
     }
 
-    fun disconnectSelected() {
-        repository.disconnectGlasses()
-        viewModelScope.launch { _events.emit(Event.Disconnected) }
+    fun reportMissingIdentifier() {
+        viewModelScope.launch {
+            _messages.emit("Device identifier unavailable")
+        }
     }
 
-    fun sendMessage(message: String) {
-        repository.sendMessage(message)
+    private fun G1ServiceCommon.Glasses.toDevice(): Device {
+        val safeName = name?.takeIf { it.isNotBlank() } ?: "Unnamed glasses"
+        return Device(
+            id = id,
+            name = safeName,
+            status = status.toDeviceStatus()
+        )
+    }
+
+    private fun GlassesStatus.toDeviceStatus(): DeviceStatus = when (this) {
+        GlassesStatus.UNINITIALIZED, GlassesStatus.DISCONNECTED -> DeviceStatus.DISCONNECTED
+        GlassesStatus.CONNECTING -> DeviceStatus.CONNECTING
+        GlassesStatus.CONNECTED -> DeviceStatus.CONNECTED
+        GlassesStatus.DISCONNECTING -> DeviceStatus.DISCONNECTING
+        GlassesStatus.ERROR -> DeviceStatus.ERROR
     }
 }

@@ -6,6 +6,7 @@ Open, multipurpose infrastructure for writing Android applications that talk to 
 | Goal | Description | Progress |
 |------|-------------|----------|
 | **Null-Safety Clean-Up** | Clean up all Kotlin nullability errors (smart-cast issues like `state.connectedGlasses`) by introducing safe locals and explicit null checks. | ✅ 80% complete (remaining: `hub/ApplicationFrame.kt` UI bindings) |
+| **Basic Glasses Pairing Workflow** | Provide a minimal hub screen to discover glasses and initiate pairing via the existing service layer. | 🔄 50% complete |
 | **AIDL Alignment** | Ensure all AIDL parcelables (e.g. `G1Glasses`, `G1ServiceState`) map correctly to Kotlin data classes with matching nullability. | 🔄 60% complete |
 | **Stable BLE Pairing** | Refactor `G1BLEManager`/`G1Connector` for stable single-session connection (no redundant reconnect). | 🔄 40% complete |
 | **Debug Build** | Establish working `assembleDebug` pipeline to generate downloadable APK. | ✅ 100% complete |
@@ -17,7 +18,7 @@ Open, multipurpose infrastructure for writing Android applications that talk to 
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **Pairing Wizard** | Simple first-run wizard to discover and pair glasses (no theme yet). | ⏳ Planned |
+| **Pairing Wizard** | Simple first-run wizard to discover and pair glasses (no theme yet). | ✅ Basic workflow available |
 | **Battery & Connection UI** | Live display of battery % and connection state from `G1Glasses`. | ⏳ Planned |
 | **Text Page Display** | Use `displayTextPage()` AIDL to send multi-page text to glasses. | ⏳ Planned |
 | **Stop Displaying** | Implement `stopDisplaying()` AIDL to cancel display on glasses. | ⏳ Planned |
