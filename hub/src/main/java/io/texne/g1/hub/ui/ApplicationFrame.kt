@@ -62,10 +62,11 @@ fun ApplicationFrame() {
     }
 
     val connectedGlasses = state.connectedGlasses
+    val connectedId = connectedGlasses?.id
     val nearbyGlasses = state.nearbyGlasses
 
-    LaunchedEffect(connectedGlasses?.id) {
-        selectedId = connectedGlasses?.id
+    LaunchedEffect(connectedId) {
+        selectedId = connectedId
     }
 
     Column(
@@ -88,15 +89,15 @@ fun ApplicationFrame() {
             Button(onClick = { viewModel.scan() }) {
                 Text(if (state.scanning) "Scanning..." else "Scan for devices")
             }
-            if (connectedGlasses != null) {
-                Button(onClick = { viewModel.disconnect(connectedGlasses.id) }) {
+            if (connectedId != null) {
+                Button(onClick = { viewModel.disconnect(connectedId) }) {
                     Text("Disconnect")
                 }
             } else {
                 Button(onClick = {
-                    val target = selectedId ?: nearbyGlasses?.firstOrNull()?.id
-                    if (target != null) {
-                        viewModel.connect(target)
+                    val targetId = selectedId ?: nearbyGlasses?.firstOrNull { it.id != null }?.id
+                    if (targetId != null) {
+                        viewModel.connect(targetId)
                     } else {
                         Toast.makeText(context, "Select a device first", Toast.LENGTH_SHORT).show()
                     }
@@ -123,7 +124,13 @@ fun ApplicationFrame() {
                     DeviceRow(
                         glasses = glasses,
                         selected = glasses.id == selectedId,
-                        onClick = { selectedId = glasses.id },
+                        onClick = {
+                            val id = glasses.id
+                            selectedId = id
+                            if (id == null) {
+                                Toast.makeText(context, "Device ID unavailable", Toast.LENGTH_SHORT).show()
+                            }
+                        },
                     )
                 }
             }
@@ -140,10 +147,12 @@ fun ApplicationFrame() {
             maxLines = 3,
         )
         Button(
-            enabled = message.isNotBlank() && connectedGlasses != null,
+            enabled = message.isNotBlank() && connectedId != null,
             onClick = {
-                viewModel.sendMessage(message)
-                Toast.makeText(context, "Message sent", Toast.LENGTH_SHORT).show()
+                if (connectedId != null) {
+                    viewModel.sendMessage(message)
+                    Toast.makeText(context, "Message sent", Toast.LENGTH_SHORT).show()
+                }
             },
         ) {
             Text("Send")
@@ -165,8 +174,10 @@ private fun DeviceRow(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = glasses.name, style = MaterialTheme.typography.titleMedium)
-            Text(text = glasses.id, style = MaterialTheme.typography.bodySmall)
+            val name = glasses.name ?: "Unnamed device"
+            val identifier = glasses.id ?: "Unknown ID"
+            Text(text = name, style = MaterialTheme.typography.titleMedium)
+            Text(text = identifier, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

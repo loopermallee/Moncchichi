@@ -29,6 +29,8 @@ fun GlassesScreen(
     glasses: G1ServiceCommon.Glasses,
     disconnect: () -> Unit
 ) {
+    val name = glasses.name ?: "Unnamed device"
+    val identifier = glasses.id ?: "Unknown ID"
     Box(
         Modifier.fillMaxSize()
             .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
@@ -77,12 +79,12 @@ fun GlassesScreen(
                         verticalArrangement = Arrangement.spacedBy((-8).dp)
                     ) {
                         Text(
-                            text = glasses.name,
+                            text = name,
                             fontSize = 24.sp,
                             color = Color.Black,
                             fontWeight = FontWeight.Black
                         )
-                        Text(glasses.id, fontSize = 10.sp, color = Color.Gray)
+                        Text(identifier, fontSize = 10.sp, color = Color.Gray)
                     }
                 }
             }

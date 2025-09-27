@@ -59,9 +59,14 @@ fun ScannerScreen(
                     val nonNullGlasses = glassesList ?: emptyList()
                     items(nonNullGlasses.size) { index ->
                         val glasses = nonNullGlasses[index]
+                        val glassesId = glasses.id
                         GlassesItem(
-                            glasses,
-                            { connect(glasses.id) }
+                            glasses = glasses,
+                            connect = {
+                                if (glassesId != null) {
+                                    connect(glassesId)
+                                }
+                            }
                         )
                     }
                 }
@@ -109,6 +114,9 @@ fun GlassesItem(
     glasses: G1ServiceCommon.Glasses,
     connect: () -> Unit
 ) {
+    val name = glasses.name ?: "Unnamed device"
+    val identifier = glasses.id ?: "Unknown ID"
+    val canConnect = glasses.id != null
     Box(
         Modifier.fillMaxWidth()
             .padding(horizontal = 16.dp)
@@ -151,6 +159,7 @@ fun GlassesItem(
                                         containerColor = Color(6, 64, 43, 255),
                                         contentColor = Color.White
                                     ),
+                                    enabled = canConnect,
                                     onClick = { connect() }
                                 ) {
                                     Text("CONNECT")
@@ -170,12 +179,12 @@ fun GlassesItem(
                         verticalArrangement = Arrangement.spacedBy((-8).dp)
                     ) {
                         Text(
-                            text = glasses.name,
+                            text = name,
                             fontSize = 24.sp,
                             color = Color.Black,
                             fontWeight = FontWeight.Black
                         )
-                        Text(glasses.id, fontSize = 10.sp, color = Color.Gray)
+                        Text(identifier, fontSize = 10.sp, color = Color.Gray)
                     }
                 }
             }
