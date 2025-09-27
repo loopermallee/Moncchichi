@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# 👇 This line gives the workflow the ability to push commits / create branches
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,6 +20,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 👈 Important if you plan to create branches or tags
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
