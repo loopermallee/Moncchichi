@@ -22,7 +22,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # 👈 required if you plan to create branches/tags or push commits
+          token: ${{ secrets.GH_PAT }}   # 👈 Use your personal token
+          fetch-depth: 0                 # 👈 required if you plan to create branches/tags or push commits
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
