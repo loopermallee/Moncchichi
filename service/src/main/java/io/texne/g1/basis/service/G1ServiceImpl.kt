@@ -36,13 +36,13 @@ class G1ServiceImpl : IG1Service.Stub() {
 
     override fun connectGlasses(id: String?, callback: OperationCallback?) {
         Log.d(TAG, "connectGlasses(id=$id, callback=$callback)")
-        connectGlasses(id)
+        connectGlassesById(id)
         callback?.onResult(false)
     }
 
     override fun disconnectGlasses(id: String?, callback: OperationCallback?) {
         Log.d(TAG, "disconnectGlasses(id=$id, callback=$callback)")
-        disconnectGlasses()
+        disconnectPreferredGlasses()
         callback?.onResult(true)
     }
 
@@ -62,25 +62,25 @@ class G1ServiceImpl : IG1Service.Stub() {
     }
 
     override fun stopDisplaying(id: String?, callback: OperationCallback?) {
-        stopDisplaying()
+        sendStopDisplayingCommand()
         callback?.onResult(true)
     }
 
-    override fun connectGlasses(deviceAddress: String?) {
-        Log.d(TAG, "connectGlasses(deviceAddress=$deviceAddress)")
+    override fun connectGlassesById(deviceAddress: String?) {
+        Log.d(TAG, "connectGlassesById(deviceAddress=$deviceAddress)")
     }
 
-    override fun disconnectGlasses(deviceAddress: String?) {
-        Log.d(TAG, "disconnectGlasses(deviceAddress=$deviceAddress)")
-        disconnectGlasses()
+    override fun disconnectGlassesById(deviceAddress: String?) {
+        Log.d(TAG, "disconnectGlassesById(deviceAddress=$deviceAddress)")
+        disconnectPreferredGlasses()
     }
 
-    override fun connectGlasses() {
-        Log.d(TAG, "connectGlasses()")
+    override fun connectPreferredGlasses() {
+        Log.d(TAG, "connectPreferredGlasses()")
     }
 
-    override fun disconnectGlasses() {
-        Log.d(TAG, "disconnectGlasses()")
+    override fun disconnectPreferredGlasses() {
+        Log.d(TAG, "disconnectPreferredGlasses()")
     }
 
     override fun isConnected(): Boolean {
@@ -126,16 +126,16 @@ class G1ServiceImpl : IG1Service.Stub() {
         }
     }
 
-    override fun displayTextPage(text: String?, page: Int, flags: Int) {
-        Log.d(TAG, "displayTextPage(text=$text, page=$page, flags=$flags)")
+    override fun displayLegacyTextPage(text: String?, page: Int, flags: Int) {
+        Log.d(TAG, "displayLegacyTextPage(text=$text, page=$page, flags=$flags)")
         if (text != null) {
             writeDisplayText(text)
         }
     }
 
-    override fun stopDisplaying(flags: Int) {
-        Log.d(TAG, "stopDisplaying(flags=$flags)")
-        stopDisplaying()
+    override fun stopDisplayingWithFlags(flags: Int) {
+        Log.d(TAG, "stopDisplayingWithFlags(flags=$flags)")
+        sendStopDisplayingCommand()
     }
 
     private fun writeDisplayText(text: String) {
@@ -151,7 +151,7 @@ class G1ServiceImpl : IG1Service.Stub() {
         }
     }
 
-    override fun stopDisplaying() {
+    private fun sendStopDisplayingCommand() {
         val charUuid = UUID.fromString("0000fff2-0000-1000-8000-00805f9b34fb")
         val characteristic = gatt?.getService(SERVICE_UUID)?.getCharacteristic(charUuid)
         if (characteristic != null) {

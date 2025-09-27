@@ -197,17 +197,17 @@ class G1Service : Service() {
             }
         }
 
-        override fun connectGlasses(deviceAddress: String?) {
+        override fun connectGlassesById(deviceAddress: String?) {
             if (deviceAddress == null) {
-                connectGlasses()
+                connectPreferredGlasses()
             } else {
                 connectGlasses(deviceAddress, null)
             }
         }
 
-        override fun disconnectGlasses(deviceAddress: String?) {
+        override fun disconnectGlassesById(deviceAddress: String?) {
             if (deviceAddress == null) {
-                disconnectGlasses()
+                disconnectPreferredGlasses()
             } else {
                 disconnectGlasses(deviceAddress, null)
             }
@@ -224,24 +224,24 @@ class G1Service : Service() {
         override fun stopDisplaying(id: String?, callback: OperationCallback?) =
             commonStopDisplaying(callback)
 
-        override fun displayTextPage(text: String?, page: Int, flags: Int) {
+        override fun displayLegacyTextPage(text: String?, page: Int, flags: Int) {
             if (!text.isNullOrEmpty()) {
                 commonDisplayTextPage(arrayOf(text), null)
             }
         }
 
-        override fun stopDisplaying(flags: Int) {
+        override fun stopDisplayingWithFlags(flags: Int) {
             commonStopDisplaying(null)
         }
 
-        override fun connectGlasses() {
+        override fun connectPreferredGlasses() {
             val preferred = state.value.selectedAddress ?: state.value.devices.keys.firstOrNull()
             if (preferred != null) {
                 connectGlasses(preferred, null)
             }
         }
 
-        override fun disconnectGlasses() {
+        override fun disconnectPreferredGlasses() {
             bluetoothManager.disconnect()
         }
 

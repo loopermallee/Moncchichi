@@ -32,10 +32,10 @@ class Repository @Inject constructor(
         service.disconnect(id)
 
     fun connectSelectedGlasses() =
-        service.connectGlasses()
+        service.connectPreferredGlasses()
 
     fun disconnectGlasses() =
-        service.disconnectGlasses()
+        service.disconnectPreferredGlasses()
 
     fun isConnected() =
         service.isConnected()

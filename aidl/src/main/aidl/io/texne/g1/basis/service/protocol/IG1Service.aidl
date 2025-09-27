@@ -10,12 +10,12 @@ interface IG1Service {
     void disconnectGlasses(String id, @nullable OperationCallback callback);
     void displayTextPage(String id, in String[] page, @nullable OperationCallback callback);
     void stopDisplaying(String id, @nullable OperationCallback callback);
-    void connectGlasses(String deviceId);
-    void disconnectGlasses(String deviceId);
-    void connectGlasses();
-    void disconnectGlasses();
+    void connectGlassesById(String deviceId);
+    void disconnectGlassesById(String deviceId);
+    void connectPreferredGlasses();
+    void disconnectPreferredGlasses();
     boolean isConnected();
     void sendMessage(String message);
-    void displayTextPage(String text, int page, int flags);
-    void stopDisplaying(int flags);
+    void displayLegacyTextPage(String text, int page, int flags);
+    void stopDisplayingWithFlags(int flags);
 }

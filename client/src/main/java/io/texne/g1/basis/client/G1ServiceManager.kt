@@ -92,12 +92,12 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
         service?.disconnectGlasses(id, null)
     }
 
-    fun connectGlasses() {
-        service?.connectGlasses()
+    fun connectPreferredGlasses() {
+        service?.connectPreferredGlasses()
     }
 
-    fun disconnectGlasses() {
-        service?.disconnectGlasses()
+    fun disconnectPreferredGlasses() {
+        service?.disconnectPreferredGlasses()
     }
 
     fun isConnected(): Boolean = service?.isConnected() ?: false
