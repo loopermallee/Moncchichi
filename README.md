@@ -1,9 +1,37 @@
 # G1 Basis
 Open, multipurpose infrastructure for writing Android applications that talk to the [Even Realities G1](https://www.evenrealities.com/g1) glasses.
 
-## Progress
+## 🚧 Current Goals & Progress
 
-- Null-safety clean-up: 100%
+| Goal | Description | Progress |
+|------|-------------|----------|
+| **Null-Safety Clean-Up** | Clean up all Kotlin nullability errors (smart-cast issues like `state.connectedGlasses`) by introducing safe locals and explicit null checks. | ✅ 80% complete (remaining: `hub/ApplicationFrame.kt` UI bindings) |
+| **AIDL Alignment** | Ensure all AIDL parcelables (e.g. `G1Glasses`, `G1ServiceState`) map correctly to Kotlin data classes with matching nullability. | 🔄 60% complete |
+| **Stable BLE Pairing** | Refactor `G1BLEManager`/`G1Connector` for stable single-session connection (no redundant reconnect). | 🔄 40% complete |
+| **Debug Build** | Establish working `assembleDebug` pipeline to generate downloadable APK. | ✅ 100% complete |
+| **Material Components** | Standardize UI components on Material 1.12.0 and CardView 1.0.0. | 🔄 30% complete |
+
+---
+
+## 📝 Planned Functions & Features
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Pairing Wizard** | Simple first-run wizard to discover and pair glasses (no theme yet). | ⏳ Planned |
+| **Battery & Connection UI** | Live display of battery % and connection state from `G1Glasses`. | ⏳ Planned |
+| **Text Page Display** | Use `displayTextPage()` AIDL to send multi-page text to glasses. | ⏳ Planned |
+| **Stop Displaying** | Implement `stopDisplaying()` AIDL to cancel display on glasses. | ⏳ Planned |
+| **Heartbeat Monitoring** | Maintain 0x25 heartbeat automatically for stable connection. | ⏳ Planned |
+| **Logging / Telemetry Toggle** | Allow user to enable or disable telemetry events for debugging. | ⏳ Planned |
+
+---
+
+### Next Milestones
+
+1. Finish null-safety fixes in `hub` module.
+2. Confirm `G1BLEManager` hand-off logic with a real device.
+3. Generate fresh debug APK after each merge for testing.
+4. Begin implementing the “Pairing Wizard” UI.
 
 ## Core
 The **core** module contains the source code to the core library. 
