@@ -31,13 +31,18 @@ class ApplicationViewModel @Inject constructor(
     data class Device(
         val id: String?,
         val name: String,
-        val status: DeviceStatus
+        val status: DeviceStatus,
+        val batteryPercentage: Int?,
+        val firmwareVersion: String?
     ) {
         val canPair: Boolean
             get() = id != null && when (status) {
                 DeviceStatus.DISCONNECTED, DeviceStatus.ERROR -> true
                 DeviceStatus.CONNECTING, DeviceStatus.CONNECTED, DeviceStatus.DISCONNECTING -> false
             }
+
+        val isBusy: Boolean
+            get() = status == DeviceStatus.CONNECTING || status == DeviceStatus.DISCONNECTING
     }
 
     data class State(
@@ -70,19 +75,36 @@ class ApplicationViewModel @Inject constructor(
         }
     }
 
-    fun pair(id: String) {
+    fun connectAvailableGlasses() {
         viewModelScope.launch {
-            val result = runCatching { repository.connectGlasses(id) }
-            val success = result.getOrNull()
-            if (success != true || result.isFailure) {
-                _messages.emit("Unable to pair with the selected glasses")
+            val target = state.value.devices.firstOrNull { it.canPair }
+            val result = target?.id?.let { identifier ->
+                runCatching { repository.connectGlasses(identifier) }
+            }
+
+            if (result == null) {
+                repository.connectSelectedGlasses()
+            } else {
+                val success = result.getOrNull()
+                if (success != true || result.isFailure) {
+                    _messages.emit("Unable to connect to the glasses")
+                }
             }
         }
     }
 
-    fun reportMissingIdentifier() {
+    fun disconnectGlasses() {
         viewModelScope.launch {
-            _messages.emit("Device identifier unavailable")
+            val connectedDevices = state.value.devices.filter { it.status == DeviceStatus.CONNECTED }
+            if (connectedDevices.isEmpty()) {
+                repository.disconnectGlasses()
+            } else {
+                connectedDevices.forEach { device ->
+                    device.id?.let { identifier ->
+                        repository.disconnectGlasses(identifier)
+                    }
+                }
+            }
         }
     }
 
@@ -91,7 +113,9 @@ class ApplicationViewModel @Inject constructor(
         return Device(
             id = id,
             name = safeName,
-            status = status.toDeviceStatus()
+            status = status.toDeviceStatus(),
+            batteryPercentage = batteryPercentage,
+            firmwareVersion = null
         )
     }
 
