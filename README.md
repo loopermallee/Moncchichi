@@ -32,7 +32,7 @@ Open, multipurpose infrastructure for writing Android applications that talk to 
 1. Finish null-safety fixes in `hub` module.
 2. Confirm `G1BLEManager` hand-off logic with a real device.
 3. Generate fresh debug APK after each merge for testing.
-4. Begin implementing the “Pairing Wizard” UI.
+4. Polish the pairing workflow with theming and follow-up UX improvements.
 
 ## Core
 The **core** module contains the source code to the core library. 
