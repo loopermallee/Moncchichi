@@ -133,11 +133,15 @@ fun GlassesCard(
                 verticalArrangement = Arrangement.spacedBy((-6.dp))
             ) {
                 Text(glasses.name, color = Color.Black, fontWeight = FontWeight.Black, fontSize = 32.sp)
-                Text("${glasses.batteryPercentage}% battery", color = when {
-                    glasses.batteryPercentage > 75 -> Color(4, 122, 0, 255)
-                    glasses.batteryPercentage > 25 -> Color(162, 141, 26, 255)
+                val batteryPercentage = glasses.batteryPercentage
+                val batteryColor = when {
+                    batteryPercentage == null -> Color.Gray
+                    batteryPercentage > 75 -> Color(4, 122, 0, 255)
+                    batteryPercentage > 25 -> Color(162, 141, 26, 255)
                     else -> Color(147, 0, 0, 255)
-                })
+                }
+                val batteryLabel = batteryPercentage?.let { "$it% battery" } ?: "Battery unknown"
+                Text(batteryLabel, color = batteryColor)
             }
         }
     }

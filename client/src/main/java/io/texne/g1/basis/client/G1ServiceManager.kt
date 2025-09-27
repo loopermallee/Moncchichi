@@ -55,7 +55,8 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
                                 id = deviceId,
                                 name = deviceId,
                                 status = glassesStatus,
-                                batteryPercentage = -1
+                                // Battery level is unknown at discovery time.
+                                batteryPercentage = null,
                             )
                         )
                     } else {
