@@ -20,6 +20,7 @@ import com.loopermallee.moncchichi.bluetooth.BluetoothManager
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.nabinbhandari.android.permissions.PermissionHandler
 import com.nabinbhandari.android.permissions.Permissions
+import io.texne.g1.basis.core.G1State
 import io.texne.g1.basis.service.protocol.G1Glasses
 import io.texne.g1.basis.service.protocol.G1ServiceState
 import io.texne.g1.basis.service.protocol.IG1Service
@@ -204,6 +205,14 @@ class G1Service : Service() {
             }
         }
 
+        override fun disconnectGlasses(deviceAddress: String?) {
+            if (deviceAddress == null) {
+                disconnectGlasses()
+            } else {
+                disconnectGlasses(deviceAddress, null)
+            }
+        }
+
         override fun disconnectGlasses(id: String?, callback: OperationCallback?) {
             bluetoothManager.disconnect()
             callback?.onResult(true)
@@ -214,6 +223,16 @@ class G1Service : Service() {
 
         override fun stopDisplaying(id: String?, callback: OperationCallback?) =
             commonStopDisplaying(callback)
+
+        override fun displayTextPage(text: String?, page: Int, flags: Int) {
+            if (!text.isNullOrEmpty()) {
+                commonDisplayTextPage(arrayOf(text), null)
+            }
+        }
+
+        override fun stopDisplaying(flags: Int) {
+            commonStopDisplaying(null)
+        }
 
         override fun connectGlasses() {
             val preferred = state.value.selectedAddress ?: state.value.devices.keys.firstOrNull()
@@ -245,10 +264,15 @@ class G1Service : Service() {
         if (callback == null) return
         coroutineScope.launch {
             state.collectLatest { internalState ->
-                val connected = internalState.devices.values.any {
-                    it.connectionState == DeviceManager.ConnectionState.CONNECTED
+                val status = when (internalState.status) {
+                    ServiceStatus.READY -> G1State.READY
+                    ServiceStatus.LOOKING -> G1State.LOOKING
+                    ServiceStatus.LOOKED -> G1State.LOOKED
+                    ServiceStatus.ERROR -> -1
                 }
-                callback.onStateChanged(connected, -1)
+                val activeDeviceId = internalState.selectedAddress
+                    ?: internalState.devices.keys.firstOrNull()
+                callback.onStateChanged(status, activeDeviceId)
             }
         }
     }

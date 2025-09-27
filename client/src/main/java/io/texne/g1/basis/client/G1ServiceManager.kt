@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import io.texne.g1.basis.core.G1State
 import io.texne.g1.basis.service.protocol.IG1Service
 import io.texne.g1.basis.service.protocol.IG1StateCallback
 import kotlin.coroutines.resume
@@ -36,22 +37,32 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
         ) {
             service = IG1Service.Stub.asInterface(binder)
             service?.observeState(object : IG1StateCallback.Stub() {
-                override fun onStateChanged(connected: Boolean, batteryPercent: Int) {
-                    val normalizedBattery = if (batteryPercent in 0..100) batteryPercent else -1
-                    val glasses = if (connected) {
+                override fun onStateChanged(status: Int, deviceId: String?) {
+                    val serviceStatus = when (status) {
+                        G1State.READY -> ServiceStatus.READY
+                        G1State.LOOKING -> ServiceStatus.LOOKING
+                        G1State.LOOKED -> ServiceStatus.LOOKED
+                        else -> ServiceStatus.ERROR
+                    }
+                    val glasses = if (deviceId != null) {
+                        val glassesStatus = when (serviceStatus) {
+                            ServiceStatus.LOOKED -> GlassesStatus.CONNECTED
+                            ServiceStatus.LOOKING -> GlassesStatus.CONNECTING
+                            else -> GlassesStatus.DISCONNECTED
+                        }
                         listOf(
                             Glasses(
-                                id = "connected",
-                                name = "G1 Glasses",
-                                status = GlassesStatus.CONNECTED,
-                                batteryPercentage = normalizedBattery
+                                id = deviceId,
+                                name = deviceId,
+                                status = glassesStatus,
+                                batteryPercentage = -1
                             )
                         )
                     } else {
                         emptyList()
                     }
                     writableState.value = State(
-                        status = if (connected) ServiceStatus.LOOKED else ServiceStatus.READY,
+                        status = serviceStatus,
                         glasses = glasses
                     )
                 }
@@ -89,7 +100,7 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
         service?.disconnectGlasses()
     }
 
-    fun isConnected(): Boolean = service?.isConnected ?: false
+    fun isConnected(): Boolean = service?.isConnected() ?: false
 
     fun sendMessage(message: String) {
         service?.sendMessage(message)

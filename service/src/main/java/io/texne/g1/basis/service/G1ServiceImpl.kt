@@ -10,8 +10,10 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.os.ParcelUuid
 import android.util.Log
+import io.texne.g1.basis.core.G1State
 import io.texne.g1.basis.service.protocol.IG1Service
 import io.texne.g1.basis.service.protocol.IG1StateCallback
+import io.texne.g1.basis.service.protocol.OperationCallback
 import java.util.UUID
 
 class G1ServiceImpl : IG1Service.Stub() {
@@ -32,8 +34,49 @@ class G1ServiceImpl : IG1Service.Stub() {
         }
     }
 
+    override fun connectGlasses(id: String?, callback: OperationCallback?) {
+        Log.d(TAG, "connectGlasses(id=$id, callback=$callback)")
+        connectGlasses(id)
+        callback?.onResult(false)
+    }
+
+    override fun disconnectGlasses(id: String?, callback: OperationCallback?) {
+        Log.d(TAG, "disconnectGlasses(id=$id, callback=$callback)")
+        disconnectGlasses()
+        callback?.onResult(true)
+    }
+
+    override fun displayTextPage(
+        id: String?,
+        page: Array<out String?>?,
+        callback: OperationCallback?,
+    ) {
+        val message = page?.filterNotNull()?.joinToString("\n")
+        if (message != null) {
+            writeDisplayText(message)
+            callback?.onResult(true)
+        } else {
+            Log.w(TAG, "displayTextPage(page=$page) missing text content")
+            callback?.onResult(false)
+        }
+    }
+
+    override fun stopDisplaying(id: String?, callback: OperationCallback?) {
+        stopDisplaying()
+        callback?.onResult(true)
+    }
+
     override fun connectGlasses(deviceAddress: String?) {
         Log.d(TAG, "connectGlasses(deviceAddress=$deviceAddress)")
+    }
+
+    override fun disconnectGlasses(deviceAddress: String?) {
+        Log.d(TAG, "disconnectGlasses(deviceAddress=$deviceAddress)")
+        disconnectGlasses()
+    }
+
+    override fun connectGlasses() {
+        Log.d(TAG, "connectGlasses()")
     }
 
     override fun disconnectGlasses() {
@@ -83,16 +126,28 @@ class G1ServiceImpl : IG1Service.Stub() {
         }
     }
 
-    override fun displayTextPage(text: String?) {
+    override fun displayTextPage(text: String?, page: Int, flags: Int) {
+        Log.d(TAG, "displayTextPage(text=$text, page=$page, flags=$flags)")
+        if (text != null) {
+            writeDisplayText(text)
+        }
+    }
+
+    override fun stopDisplaying(flags: Int) {
+        Log.d(TAG, "stopDisplaying(flags=$flags)")
+        stopDisplaying()
+    }
+
+    private fun writeDisplayText(text: String) {
         val charUuid = UUID.fromString("0000fff2-0000-1000-8000-00805f9b34fb")
         val characteristic = gatt?.getService(SERVICE_UUID)?.getCharacteristic(charUuid)
-        if (characteristic != null && text != null) {
+        if (characteristic != null) {
             val bytes = text.toByteArray(Charsets.UTF_8)
             characteristic.value = bytes
             gatt?.writeCharacteristic(characteristic)
             Log.d(TAG, "Displaying text: $text")
         } else {
-            Log.w(TAG, "Display characteristic not available or text null")
+            Log.w(TAG, "Display characteristic not available")
         }
     }
 
@@ -118,8 +173,9 @@ class G1ServiceImpl : IG1Service.Stub() {
                 if (data.size >= 2) {
                     val connected = data[0].toInt() == 1
                     val battery = data[1].toInt() and 0xFF
+                    val status = if (connected) G1State.LOOKED else G1State.READY
                     Log.d(TAG, "State update: connected=$connected, battery=$battery")
-                    stateCallback?.onStateChanged(connected, battery)
+                    stateCallback?.onStateChanged(status, null)
                 } else {
                     Log.w(TAG, "State update payload too short: ${'$'}{data.size}")
                 }
