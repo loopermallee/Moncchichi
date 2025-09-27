@@ -1,183 +1,127 @@
 package io.texne.g1.hub.ui
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import android.widget.Toast
 import androidx.hilt.navigation.compose.hiltViewModel
-import io.texne.g1.basis.client.G1ServiceCommon
 import kotlinx.coroutines.flow.collectLatest
 
 @Composable
 fun ApplicationFrame() {
     val viewModel = hiltViewModel<ApplicationViewModel>()
     val state by viewModel.state.collectAsState()
-    var selectedId by remember { mutableStateOf<String?>(null) }
-    var message by remember { mutableStateOf("") }
     val context = LocalContext.current
 
     LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            when (event) {
-                is ApplicationViewModel.Event.ConnectionResult -> {
-                    val text = if (event.success) {
-                        "Connected to glasses"
-                    } else {
-                        "Failed to connect"
-                    }
-                    Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
-                }
-                ApplicationViewModel.Event.Disconnected -> {
-                    Toast.makeText(context, "Disconnected", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
+        viewModel.refreshDevices()
     }
 
-    val connectedGlasses = state.connectedGlasses
-    val connectedId = connectedGlasses?.id
-    val nearbyGlasses = state.nearbyGlasses
-
-    LaunchedEffect(connectedId) {
-        selectedId = connectedId
+    LaunchedEffect(Unit) {
+        viewModel.messages.collectLatest { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "Moncchichi Hub",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(text = "Manage Even Realities G1 glasses over Bluetooth")
+        Text(text = "G1 Glasses Pairing")
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Button(onClick = { viewModel.scan() }) {
-                Text(if (state.scanning) "Scanning..." else "Scan for devices")
+            Button(onClick = { viewModel.refreshDevices() }) {
+                Text(text = "Refresh")
             }
-            if (connectedId != null) {
-                Button(onClick = { viewModel.disconnect(connectedId) }) {
-                    Text("Disconnect")
-                }
-            } else {
-                Button(onClick = {
-                    val targetId = selectedId ?: nearbyGlasses?.firstOrNull { it.id != null }?.id
-                    if (targetId != null) {
-                        viewModel.connect(targetId)
-                    } else {
-                        Toast.makeText(context, "Select a device first", Toast.LENGTH_SHORT).show()
-                    }
-                }) {
-                    Text("Connect")
-                }
+            if (state.isLooking) {
+                Text(text = "Searching for glasses…")
             }
         }
 
-        val devices = nearbyGlasses ?: emptyList()
-        if (devices.isEmpty()) {
-            Text(
-                text = if (state.scanning) "Scanning for glasses..." else "No glasses found",
-                modifier = Modifier.padding(vertical = 8.dp),
-            )
+        if (state.devices.isEmpty()) {
+            Text(text = "No glasses detected.")
         } else {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f, fill = false),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(devices) { glasses ->
+                items(state.devices) { device ->
                     DeviceRow(
-                        glasses = glasses,
-                        selected = glasses.id == selectedId,
-                        onClick = {
-                            val id = glasses.id
-                            selectedId = id
-                            if (id == null) {
-                                Toast.makeText(context, "Device ID unavailable", Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                        device = device,
+                        onPair = { id -> viewModel.pair(id) },
+                        onMissingId = { viewModel.reportMissingIdentifier() }
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            modifier = Modifier.fillMaxWidth(),
-            value = message,
-            onValueChange = { message = it },
-            label = { Text("Message to send") },
-            singleLine = false,
-            maxLines = 3,
-        )
-        Button(
-            enabled = message.isNotBlank() && connectedId != null,
-            onClick = {
-                if (connectedId != null) {
-                    viewModel.sendMessage(message)
-                    Toast.makeText(context, "Message sent", Toast.LENGTH_SHORT).show()
-                }
-            },
-        ) {
-            Text("Send")
+        if (state.serviceError) {
+            Text(
+                text = "The glasses service reported an error.",
+                color = Color.Red
+            )
         }
     }
 }
 
 @Composable
 private fun DeviceRow(
-    glasses: G1ServiceCommon.Glasses,
-    selected: Boolean,
-    onClick: () -> Unit,
+    device: ApplicationViewModel.Device,
+    onPair: (String) -> Unit,
+    onMissingId: () -> Unit
 ) {
-    Card(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
-        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            val name = glasses.name ?: "Unnamed device"
-            val identifier = glasses.id ?: "Unknown ID"
-            Text(text = name, style = MaterialTheme.typography.titleMedium)
-            Text(text = identifier, style = MaterialTheme.typography.bodySmall)
+        Text(text = device.name)
+        Text(text = "Status: ${device.status.label}")
+        device.id?.let { identifier ->
+            Text(text = "ID: $identifier")
+        } ?: Text(text = "ID unavailable")
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Button(
+                enabled = device.canPair,
+                onClick = {
+                    val identifier = device.id
+                    if (identifier != null) {
+                        onPair(identifier)
+                    } else {
+                        onMissingId()
+                    }
+                }
+            ) {
+                Text(text = "Pair")
+            }
         }
+
     }
 }
