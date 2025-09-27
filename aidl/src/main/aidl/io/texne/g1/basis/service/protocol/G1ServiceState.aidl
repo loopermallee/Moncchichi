@@ -1,9 +1,11 @@
 package io.texne.g1.basis.service.protocol;
 
 parcelable G1ServiceState {
-    int connectionStatus;   // 0 = disconnected, 1 = connecting, 2 = connected
-    int batteryLevel;       // 0–100 percentage
-    String deviceName;      // name of the paired glasses
-    String deviceId;        // unique ID of the paired device
-    boolean isDisplaying;   // true if text/page is currently shown
+    const int READY = 0;
+    const int LOOKING = 1;
+    const int LOOKED = 2;
+    const int ERROR = -1;
+
+    int status;
+    G1Glasses[] glasses;
 }
