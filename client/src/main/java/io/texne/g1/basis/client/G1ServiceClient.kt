@@ -59,9 +59,11 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
                                         G1Glasses.DISCONNECTING -> GlassesStatus.DISCONNECTING
                                         else -> GlassesStatus.ERROR
                                     }
+                                    val id = glass.id
+                                    val name = glass.name ?: id
                                     glasses += Glasses(
-                                        id = glass.id ?: "",
-                                        name = glass.name ?: glass.id.orEmpty(),
+                                        id = id,
+                                        name = name,
                                         status = status,
                                         // AIDL uses -1 when the battery percentage is unknown.
                                         batteryPercentage = glass.batteryPercentage.takeIf { it >= 0 },

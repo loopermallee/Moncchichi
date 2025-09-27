@@ -21,8 +21,8 @@ abstract class G1ServiceCommon<ServiceInterface> constructor(
     enum class GlassesStatus { UNINITIALIZED, DISCONNECTED, CONNECTING, CONNECTED, DISCONNECTING, ERROR }
 
     data class Glasses(
-        val id: String,
-        val name: String,
+        val id: String?,
+        val name: String?,
         val status: GlassesStatus,
         // Battery information is optional in the AIDL contract (missing or -1),
         // so we surface it as nullable to avoid misleading callers.

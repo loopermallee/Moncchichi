@@ -119,12 +119,13 @@ class Repository @Inject constructor(
 
     suspend fun displayText(text: List<String>): Boolean {
         val connectedGlasses = state.value.glasses
-        if (connectedGlasses == null) {
+        val glassesId = connectedGlasses?.id
+        if (glassesId == null) {
             Log.w(TAG, "displayText: no connected glasses available")
             return false
         }
         return service.displayFormattedPage(
-            connectedGlasses.id,
+            glassesId,
             G1ServiceCommon.FormattedPage(
                 lines = text.map { G1ServiceCommon.FormattedLine(text = it, justify = G1ServiceCommon.JustifyLine.LEFT) },
                 justify = G1ServiceCommon.JustifyPage.BOTTOM
@@ -134,11 +135,12 @@ class Repository @Inject constructor(
 
     suspend fun stopDisplaying(): Boolean {
         val connectedGlasses = state.value.glasses
-        if (connectedGlasses == null) {
+        val glassesId = connectedGlasses?.id
+        if (glassesId == null) {
             Log.w(TAG, "stopDisplaying: no connected glasses available")
             return false
         }
-        return service.stopDisplaying(connectedGlasses.id)
+        return service.stopDisplaying(glassesId)
     }
 
     private companion object {

@@ -119,6 +119,7 @@ fun GlassesCard(
     glasses: G1ServiceCommon.Glasses,
     openHub: () -> Unit
 ) {
+    val name = glasses.name ?: "Unnamed device"
     Box(
         modifier = Modifier.background(Color.White, RoundedCornerShape(16.dp)).fillMaxSize()
             .clickable(true, onClick = openHub),
@@ -132,7 +133,7 @@ fun GlassesCard(
             Column(
                 verticalArrangement = Arrangement.spacedBy((-6.dp))
             ) {
-                Text(glasses.name, color = Color.Black, fontWeight = FontWeight.Black, fontSize = 32.sp)
+                Text(name, color = Color.Black, fontWeight = FontWeight.Black, fontSize = 32.sp)
                 val batteryPercentage = glasses.batteryPercentage
                 val batteryColor = when {
                     batteryPercentage == null -> Color.Gray
