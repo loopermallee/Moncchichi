@@ -11,6 +11,9 @@ Open, multipurpose infrastructure for writing Android applications that talk to 
 | **Stable BLE Pairing** | Refactor `G1BLEManager`/`G1Connector` for stable single-session connection (no redundant reconnect). | 🔄 40% complete |
 | **Debug Build** | Establish working `assembleDebug` pipeline to generate downloadable APK. | ✅ 100% complete |
 | **Material Components** | Standardize UI components on Material 1.12.0 and CardView 1.0.0. | 🔄 30% complete |
+| **Device Screen v2** | Breath of Fire IV themed management screen with auto-reconnect and refresh controls. | ✅ 100% complete (debug APK built via `./gradlew assembleDebug`) |
+
+> 🎨 **Background art**: Download [this Breath of Fire IV wallpaper](https://wall.alphacoders.com/big.php?i=595706) and place it at `hub/src/main/res/drawable-nodpi/bof4_background.png` before building. The repository intentionally leaves the image untracked.
 
 ---
 
