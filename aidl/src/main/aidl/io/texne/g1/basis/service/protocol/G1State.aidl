@@ -1,3 +1,3 @@
 package io.texne.g1.basis.service.protocol;
 
-parcelable G1Glasses;
+parcelable G1State;

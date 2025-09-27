@@ -5,10 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
-import io.texne.g1.basis.service.protocol.G1Glasses
-import io.texne.g1.basis.service.protocol.G1ServiceState
 import io.texne.g1.basis.service.protocol.IG1Service
-import io.texne.g1.basis.service.protocol.ObserveStateCallback
+import io.texne.g1.basis.service.protocol.IG1StateCallback
+import io.texne.g1.basis.service.protocol.G1ServiceState
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -37,31 +36,35 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
             binder: IBinder?
         ) {
             service = IG1Service.Stub.asInterface(binder)
-            service?.observeState(object : ObserveStateCallback.Stub() {
-                override fun onStateChange(newState: G1ServiceState?) {
-                    if(newState != null) {
-                        writableState.value = State(
-                            status = when(newState.status) {
-                                G1ServiceState.READY -> ServiceStatus.READY
-                                G1ServiceState.LOOKING -> ServiceStatus.LOOKING
-                                G1ServiceState.LOOKED -> ServiceStatus.LOOKED
-                                else -> ServiceStatus.ERROR
-                            },
-                            glasses = newState.glasses.map { Glasses(
-                                id = it.id,
-                                name = it.name,
-                                status = when(it.connectionState) {
-                                    G1Glasses.UNINITIALIZED -> GlassesStatus.UNINITIALIZED
-                                    G1Glasses.DISCONNECTED -> GlassesStatus.DISCONNECTED
-                                    G1Glasses.CONNECTING -> GlassesStatus.CONNECTING
-                                    G1Glasses.CONNECTED -> GlassesStatus.CONNECTED
-                                    G1Glasses.DISCONNECTING -> GlassesStatus.DISCONNECTING
-                                    else -> GlassesStatus.ERROR
-                                },
-                                batteryPercentage = it.batteryPercentage
-                            ) }
-                        )
+            service?.observeState(object : IG1StateCallback.Stub() {
+                override fun onStateChanged(status: Int, deviceId: String?) {
+                    val serviceStatus = when (status) {
+                        G1ServiceState.READY -> ServiceStatus.READY
+                        G1ServiceState.LOOKING -> ServiceStatus.LOOKING
+                        G1ServiceState.LOOKED -> ServiceStatus.LOOKED
+                        else -> ServiceStatus.ERROR
                     }
+                    val glasses = if (deviceId != null) {
+                        val glassesStatus = when (serviceStatus) {
+                            ServiceStatus.LOOKED -> GlassesStatus.CONNECTED
+                            ServiceStatus.LOOKING -> GlassesStatus.CONNECTING
+                            else -> GlassesStatus.DISCONNECTED
+                        }
+                        listOf(
+                            Glasses(
+                                id = deviceId,
+                                name = deviceId,
+                                status = glassesStatus,
+                                batteryPercentage = -1
+                            )
+                        )
+                    } else {
+                        emptyList()
+                    }
+                    writableState.value = State(
+                        status = serviceStatus,
+                        glasses = glasses
+                    )
                 }
             })
         }
@@ -87,6 +90,20 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
 
     fun disconnect(id: String) {
         service?.disconnectGlasses(id, null)
+    }
+
+    fun connectPreferredGlasses() {
+        service?.connectPreferredGlasses()
+    }
+
+    fun disconnectPreferredGlasses() {
+        service?.disconnectPreferredGlasses()
+    }
+
+    fun isConnected(): Boolean = service?.isConnected() ?: false
+
+    fun sendMessage(message: String) {
+        service?.sendMessage(message)
     }
 
     override suspend fun displayTextPage(id: String, page: List<String>) =

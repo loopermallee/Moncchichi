@@ -31,5 +31,17 @@ class Repository @Inject constructor(
     fun disconnectGlasses(id: String) =
         service.disconnect(id)
 
+    fun connectSelectedGlasses() =
+        service.connectPreferredGlasses()
+
+    fun disconnectGlasses() =
+        service.disconnectPreferredGlasses()
+
+    fun isConnected() =
+        service.isConnected()
+
+    fun sendMessage(message: String) =
+        service.sendMessage(message)
+
     private lateinit var service: G1ServiceManager
 }

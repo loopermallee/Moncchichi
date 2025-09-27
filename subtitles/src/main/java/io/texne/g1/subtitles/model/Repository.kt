@@ -1,6 +1,7 @@
 package io.texne.g1.subtitles.model
 
 import android.content.Context
+import android.util.Log
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.texne.g1.basis.client.G1ServiceClient
@@ -116,12 +117,31 @@ class Repository @Inject constructor(
     fun unbindService() =
         service.close()
 
-    suspend fun displayText(text: List<String>) =
-        service.displayFormattedPage(state.value.glasses!!.id, G1ServiceCommon.FormattedPage(
-            lines = text.map { G1ServiceCommon.FormattedLine(text = it, justify = G1ServiceCommon.JustifyLine.LEFT) },
-            justify = G1ServiceCommon.JustifyPage.BOTTOM
-        ))
+    suspend fun displayText(text: List<String>): Boolean {
+        val connectedGlasses = state.value.glasses
+        if (connectedGlasses == null) {
+            Log.w(TAG, "displayText: no connected glasses available")
+            return false
+        }
+        return service.displayFormattedPage(
+            connectedGlasses.id,
+            G1ServiceCommon.FormattedPage(
+                lines = text.map { G1ServiceCommon.FormattedLine(text = it, justify = G1ServiceCommon.JustifyLine.LEFT) },
+                justify = G1ServiceCommon.JustifyPage.BOTTOM
+            ),
+        )
+    }
 
-    suspend fun stopDisplaying() =
-        service.stopDisplaying(state.value.glasses!!.id)
+    suspend fun stopDisplaying(): Boolean {
+        val connectedGlasses = state.value.glasses
+        if (connectedGlasses == null) {
+            Log.w(TAG, "stopDisplaying: no connected glasses available")
+            return false
+        }
+        return service.stopDisplaying(connectedGlasses.id)
+    }
+
+    private companion object {
+        private const val TAG = "SubtitlesRepository"
+    }
 }

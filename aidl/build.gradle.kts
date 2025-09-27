@@ -14,6 +14,12 @@ android {
         consumerProguardFiles("consumer-rules.pro")
     }
 
+    sourceSets {
+        getByName("main") {
+            aidl.srcDirs("aidl/src/main/aidl")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

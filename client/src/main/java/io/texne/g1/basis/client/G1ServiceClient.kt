@@ -45,27 +45,38 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
             service = IG1ServiceClient.Stub.asInterface(binder)
             service?.observeState(object : ObserveStateCallback.Stub() {
                 override fun onStateChange(newState: G1ServiceState?) {
-                    if(newState != null) {
+                    if (newState != null) {
+                        val glasses = mutableListOf<Glasses>()
+                        val discovered = newState.glasses
+                        if (discovered != null) {
+                            for (glass in discovered) {
+                                if (glass != null) {
+                                    val status = when (glass.connectionState) {
+                                        G1Glasses.UNINITIALIZED -> GlassesStatus.UNINITIALIZED
+                                        G1Glasses.DISCONNECTED -> GlassesStatus.DISCONNECTED
+                                        G1Glasses.CONNECTING -> GlassesStatus.CONNECTING
+                                        G1Glasses.CONNECTED -> GlassesStatus.CONNECTED
+                                        G1Glasses.DISCONNECTING -> GlassesStatus.DISCONNECTING
+                                        else -> GlassesStatus.ERROR
+                                    }
+                                    glasses += Glasses(
+                                        id = glass.id ?: "",
+                                        name = glass.name ?: glass.id.orEmpty(),
+                                        status = status,
+                                        batteryPercentage = glass.batteryPercentage
+                                    )
+                                }
+                            }
+                        }
+
                         writableState.value = State(
-                            status = when(newState.status) {
+                            status = when (newState.status) {
                                 G1ServiceState.READY -> ServiceStatus.READY
                                 G1ServiceState.LOOKING -> ServiceStatus.LOOKING
                                 G1ServiceState.LOOKED -> ServiceStatus.LOOKED
                                 else -> ServiceStatus.ERROR
                             },
-                            glasses = newState.glasses.map { Glasses(
-                                id = it.id,
-                                name = it.name,
-                                status = when(it.connectionState) {
-                                    G1Glasses.UNINITIALIZED -> GlassesStatus.UNINITIALIZED
-                                    G1Glasses.DISCONNECTED -> GlassesStatus.DISCONNECTED
-                                    G1Glasses.CONNECTING -> GlassesStatus.CONNECTING
-                                    G1Glasses.CONNECTED -> GlassesStatus.CONNECTED
-                                    G1Glasses.DISCONNECTING -> GlassesStatus.DISCONNECTING
-                                    else -> GlassesStatus.ERROR
-                                },
-                                batteryPercentage = it.batteryPercentage
-                            ) }
+                            glasses = glasses
                         )
                     }
                 }

@@ -6,7 +6,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
 import io.texne.g1.hub.model.Repository
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -31,7 +33,15 @@ class ApplicationViewModel @Inject constructor(
             scanning = it?.status == ServiceStatus.LOOKING,
             nearbyGlasses = if(it == null || it.status == ServiceStatus.READY) null else it.glasses
         )
-    }.stateIn(viewModelScope, SharingStarted.Lazily, null)
+    }.stateIn(viewModelScope, SharingStarted.Lazily, State())
+
+    sealed class Event {
+        data class ConnectionResult(val success: Boolean) : Event()
+        data object Disconnected : Event()
+    }
+
+    private val _events = MutableSharedFlow<Event>()
+    val events = _events.asSharedFlow()
 
     fun scan() {
         repository.startLooking()
@@ -39,11 +49,22 @@ class ApplicationViewModel @Inject constructor(
 
     fun connect(id: String) {
         viewModelScope.launch {
-            repository.connectGlasses(id)
+            val success = repository.connectGlasses(id)
+            _events.emit(Event.ConnectionResult(success))
         }
     }
 
     fun disconnect(id: String) {
         repository.disconnectGlasses(id)
+        viewModelScope.launch { _events.emit(Event.Disconnected) }
+    }
+
+    fun disconnectSelected() {
+        repository.disconnectGlasses()
+        viewModelScope.launch { _events.emit(Event.Disconnected) }
+    }
+
+    fun sendMessage(message: String) {
+        repository.sendMessage(message)
     }
 }

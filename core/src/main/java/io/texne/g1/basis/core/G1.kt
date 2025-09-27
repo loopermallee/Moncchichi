@@ -60,7 +60,11 @@ class G1 {
     private constructor(right: G1Device, left: G1Device) {
         val splitL = left.name.split("_")
         this.id = "${left.address}${right.address}".filter { it != ':' }
-        this.name = "${splitL[0]}.${splitL[1]}"
+        this.name = if (splitL.size >= 2) {
+            "${splitL[0]}.${splitL[1]}"
+        } else {
+            left.name
+        }
         this.right = right
         this.left = left
         this.state = right.state.combineState(left.state) { l, r ->
@@ -177,26 +181,42 @@ class G1 {
             val callback = object: ScanCallback() {
                 @SuppressLint("MissingPermission")
                 override fun onBatchScanResults(results: List<ScanResult?>) {
-                    results
-                        .filter { it -> it != null
-                                && it.device.name != null
-                                && it.device.name.startsWith(DEVICE_NAME_PREFIX)
-                                && foundAddresses.contains(it.device.address).not() }
-                        .distinctBy { it!!.device.address }
-                        .groupBy { it!!.device.name.split("_")[1] }
-                        .forEach {
-                            it.value.forEach { found ->
-                                foundAddresses.add(found!!.device.address)
+                    val validResults = results.mapNotNull { result ->
+                        val device = result?.device ?: return@mapNotNull null
+                        val name = device.name ?: return@mapNotNull null
+                        if (!name.startsWith(DEVICE_NAME_PREFIX)) {
+                            return@mapNotNull null
+                        }
+                        if (foundAddresses.contains(device.address)) {
+                            return@mapNotNull null
+                        }
+                        result
+                    }
+
+                    validResults
+                        .distinctBy { it.device.address }
+                        .groupBy { result ->
+                            result.device.name?.split("_")?.getOrNull(1) ?: result.device.address
+                        }
+                        .forEach { (key, group) ->
+                            group.forEach { found ->
+                                foundAddresses.add(found.device.address)
                             }
-                            val pair = foundPairs.get(it.key)
-                            var left = pair?.left ?: it.value.find { found -> found!!.device.name.split('_')[2] == "L" }
-                            var right = pair?.right ?: it.value.find { found -> found!!.device.name.split('_')[2] == "R" }
+                            val pair = foundPairs[key]
+                            val left = pair?.left ?: group.firstOrNull { found ->
+                                found.device.name?.split('_')?.getOrNull(2) == "L"
+                            }
+                            val right = pair?.right ?: group.firstOrNull { found ->
+                                found.device.name?.split('_')?.getOrNull(2) == "R"
+                            }
                             if(left != null && right != null) {
-                                foundPairs.remove(it.key)
+                                foundPairs.remove(key)
                                 trySendBlocking(G1(
                                     G1Device(right),
                                     G1Device(left)
                                 ))
+                            } else {
+                                foundPairs[key] = FoundPair(left, right)
                             }
                         }
                     }

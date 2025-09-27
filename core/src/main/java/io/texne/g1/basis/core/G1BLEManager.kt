@@ -18,9 +18,10 @@ import no.nordicsemi.android.ble.observer.ConnectionObserver
 import java.util.UUID
 
 private fun Data.toByteArray(): ByteArray {
-    val array = ByteArray(this.size())
-    (0..this.size()-1).forEach {
-        array[it] = this.getByte(it)!!
+    val size = size()
+    val array = ByteArray(size)
+    for (index in 0 until size) {
+        array[index] = getByte(index) ?: 0
     }
     return array
 }
@@ -72,21 +73,24 @@ internal class G1BLEManager(private val deviceName: String, context: Context, pr
                 writableConnectionState.value = G1.ConnectionState.DISCONNECTED
             }
         })
-        setNotificationCallback(
-            readCharacteristic
-        ).with { device, data ->
-            val split = device.name.split('_')
+        val notificationCharacteristic = readCharacteristic
+        if (notificationCharacteristic == null) {
+            Log.w("G1BLEManager", "initialize: read characteristic unavailable")
+            return
+        }
+        setNotificationCallback(notificationCharacteristic).with { device, data ->
+            val identifier = device.name?.split('_')?.getOrNull(2) ?: device.address ?: "G1"
             val packet = IncomingPacket.fromBytes(data.toByteArray())
             if(packet == null) {
-                Log.d("G1BLEManager", "TRAFFIC_LOG ${split[2]} - ${packet}")
+                Log.d("G1BLEManager", "TRAFFIC_LOG $identifier - $packet")
             } else {
-                Log.d("G1BLEManager", "TRAFFIC_LOG ${split[2]} - ${packet}")
+                Log.d("G1BLEManager", "TRAFFIC_LOG $identifier - $packet")
                 coroutineScope.launch {
                     writableIncoming.emit(packet)
                 }
             }
         }
-        enableNotifications(readCharacteristic)
+        enableNotifications(notificationCharacteristic)
     }
 
     //
@@ -96,13 +100,19 @@ internal class G1BLEManager(private val deviceName: String, context: Context, pr
 
         var attemptsRemaining = 3
         var success: Boolean = false
+        val characteristic = writeCharacteristic
+        if (characteristic == null) {
+            Log.w("G1BLEManager", "send: write characteristic unavailable")
+            return false
+        }
+
         while(!success && attemptsRemaining > 0) {
             if(--attemptsRemaining != 2) {
                 Log.d("G1BLEManager", "G1_TRAFFIC_SEND retrying, attempt ${3-attemptsRemaining}")
             }
             success = try {
                 writeCharacteristic(
-                    writeCharacteristic!!,
+                    characteristic,
                     packet.bytes,
                     BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 ).await()
