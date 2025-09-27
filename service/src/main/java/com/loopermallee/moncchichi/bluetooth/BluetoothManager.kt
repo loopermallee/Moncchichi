@@ -48,6 +48,7 @@ internal class BluetoothManager(
     private var scanCallback: ScanCallback? = null
     private var scanJob: Job? = null
 
+    @SuppressLint("MissingPermission")
     fun startScan() {
         if (scanCallback != null) {
             return
@@ -66,7 +67,6 @@ internal class BluetoothManager(
             }
         }
         scanCallback = callback
-        @SuppressLint("MissingPermission")
         val started = try {
             scanner?.startScan(callback)
             true
@@ -84,9 +84,9 @@ internal class BluetoothManager(
         }
     }
 
+    @SuppressLint("MissingPermission")
     fun stopScan() {
         val callback = scanCallback ?: return
-        @SuppressLint("MissingPermission")
         try {
             scanner?.stopScan(callback)
         } catch (t: Throwable) {

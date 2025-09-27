@@ -204,13 +204,13 @@ internal class DeviceManager(
 
     suspend fun clearScreen(): Boolean = sendCommand(byteArrayOf(BluetoothConstants.OPCODE_CLEAR_SCREEN))
 
+    @SuppressLint("MissingPermission")
     private suspend fun sendCommand(payload: ByteArray): Boolean {
         return writeMutex.withLock {
             val gatt = bluetoothGatt ?: return@withLock false
             val characteristic = writeCharacteristic ?: return@withLock false
             characteristic.value = payload
             val success = try {
-                @SuppressLint("MissingPermission")
                 gatt.writeCharacteristic(characteristic)
             } catch (t: Throwable) {
                 Log.e(TAG, "sendCommand: failed", t)
