@@ -1,6 +1,7 @@
 package io.texne.g1.hub.ui.glasses
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.texne.g1.basis.client.G1ServiceCommon
 
@@ -40,6 +42,8 @@ private val WarningOrange = Color(0xFFF57C00)
 @Composable
 fun GlassesScreen(
     glasses: G1ServiceCommon.Glasses,
+    isLooking: Boolean,
+    serviceError: Boolean,
     connect: () -> Unit,
     disconnect: () -> Unit,
     modifier: Modifier = Modifier
@@ -48,34 +52,34 @@ fun GlassesScreen(
     val deviceName = glasses.name?.takeIf { it.isNotBlank() } ?: "Unnamed glasses"
     val status = glasses.status
 
-    val statusLabel = when (status) {
-        G1ServiceCommon.GlassesStatus.CONNECTED -> "Glasses Online"
-        G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
-        G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
-        G1ServiceCommon.GlassesStatus.ERROR -> "Connection Error"
-        G1ServiceCommon.GlassesStatus.DISCONNECTED,
-        G1ServiceCommon.GlassesStatus.UNINITIALIZED -> "No Glasses Connected"
+    val statusLabel = when {
+        serviceError -> "Service Error"
+        status == G1ServiceCommon.GlassesStatus.CONNECTED -> "Glasses Online"
+        status == G1ServiceCommon.GlassesStatus.CONNECTING && isLooking -> "Looking for glasses…"
+        status == G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
+        status == G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
+        status == G1ServiceCommon.GlassesStatus.ERROR -> "Connection Error"
+        else -> "No Glasses Connected"
     }
 
-    val statusColor = when (status) {
-        G1ServiceCommon.GlassesStatus.CONNECTED -> ConnectedGreen
-        G1ServiceCommon.GlassesStatus.CONNECTING,
-        G1ServiceCommon.GlassesStatus.DISCONNECTING -> WarningOrange
-        G1ServiceCommon.GlassesStatus.ERROR -> ErrorRed
-        G1ServiceCommon.GlassesStatus.DISCONNECTED,
-        G1ServiceCommon.GlassesStatus.UNINITIALIZED -> DisconnectedGray
+    val statusColor = when {
+        serviceError -> ErrorRed
+        status == G1ServiceCommon.GlassesStatus.CONNECTED -> ConnectedGreen
+        status == G1ServiceCommon.GlassesStatus.CONNECTING ||
+            status == G1ServiceCommon.GlassesStatus.DISCONNECTING -> WarningOrange
+        status == G1ServiceCommon.GlassesStatus.ERROR -> ErrorRed
+        else -> DisconnectedGray
     }
 
-    val buttonLabel = when (status) {
-        G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect Glasses"
-        G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
-        G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
-        G1ServiceCommon.GlassesStatus.DISCONNECTED,
-        G1ServiceCommon.GlassesStatus.UNINITIALIZED,
-        G1ServiceCommon.GlassesStatus.ERROR -> "Connect Glasses"
+    val buttonLabel = when {
+        status == G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect Glasses"
+        status == G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
+        status == G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
+        else -> "Connect Glasses"
     }
 
-    val isActionEnabled = when (status) {
+    val hasIdentifier = glasses.id?.isNotBlank() == true
+    val isActionEnabled = hasIdentifier && !serviceError && when (status) {
         G1ServiceCommon.GlassesStatus.CONNECTING,
         G1ServiceCommon.GlassesStatus.DISCONNECTING -> false
         else -> true
@@ -134,23 +138,66 @@ fun GlassesScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        GlassDetailCard(
-            title = "Left Glass",
-            status = status,
-            batteryPercentage = glasses.batteryPercentage,
-            firmwareVersion = glasses.id,
-            modifier = Modifier.fillMaxWidth()
-        )
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val isCompact = maxWidth < 600.dp
+            if (isCompact) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    GlassDetailCard(
+                        title = "Left Glass",
+                        status = status,
+                        batteryPercentage = glasses.batteryPercentage,
+                        firmwareVersion = null,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    GlassDetailCard(
+                        title = "Right Glass",
+                        status = status,
+                        batteryPercentage = glasses.batteryPercentage,
+                        firmwareVersion = null,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    GlassDetailCard(
+                        title = "Left Glass",
+                        status = status,
+                        batteryPercentage = glasses.batteryPercentage,
+                        firmwareVersion = null,
+                        modifier = Modifier.weight(1f)
+                    )
+                    GlassDetailCard(
+                        title = "Right Glass",
+                        status = status,
+                        batteryPercentage = glasses.batteryPercentage,
+                        firmwareVersion = null,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        if (!hasIdentifier) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Device identifier unavailable",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
-        GlassDetailCard(
-            title = "Right Glass",
-            status = status,
-            batteryPercentage = glasses.batteryPercentage,
-            firmwareVersion = glasses.id,
-            modifier = Modifier.fillMaxWidth()
-        )
+        if (serviceError) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "The glasses service reported an error.",
+                color = ErrorRed,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 
@@ -184,7 +231,7 @@ private fun GlassDetailCard(
         ?: "Firmware version unavailable"
 
     Card(
-        modifier = modifier.padding(8.dp),
+        modifier = modifier,
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
@@ -228,7 +275,8 @@ private fun GlassDetailCard(
             Text(
                 text = firmwareLabel,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Start
             )
         }
     }
