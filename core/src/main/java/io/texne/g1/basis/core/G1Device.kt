@@ -22,8 +22,8 @@ internal class G1Device(
 ) {
 
     @SuppressLint("MissingPermission")
-    val name = scanResult.device.name
-    val address = scanResult.device.address
+    val name: String = scanResult.device.name ?: scanResult.device.address
+    val address: String = scanResult.device.address
 
     // state flow ----------------------------------------------------------------------------------
 

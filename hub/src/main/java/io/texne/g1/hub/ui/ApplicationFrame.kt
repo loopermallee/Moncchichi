@@ -61,8 +61,11 @@ fun ApplicationFrame() {
         }
     }
 
-    LaunchedEffect(state.connectedGlasses?.id) {
-        selectedId = state.connectedGlasses?.id
+    val connectedGlasses = state.connectedGlasses
+    val nearbyGlasses = state.nearbyGlasses
+
+    LaunchedEffect(connectedGlasses?.id) {
+        selectedId = connectedGlasses?.id
     }
 
     Column(
@@ -85,13 +88,13 @@ fun ApplicationFrame() {
             Button(onClick = { viewModel.scan() }) {
                 Text(if (state.scanning) "Scanning..." else "Scan for devices")
             }
-            if (state.connectedGlasses != null) {
-                Button(onClick = { viewModel.disconnect(state.connectedGlasses.id) }) {
+            if (connectedGlasses != null) {
+                Button(onClick = { viewModel.disconnect(connectedGlasses.id) }) {
                     Text("Disconnect")
                 }
             } else {
                 Button(onClick = {
-                    val target = selectedId ?: state.nearbyGlasses?.firstOrNull()?.id
+                    val target = selectedId ?: nearbyGlasses?.firstOrNull()?.id
                     if (target != null) {
                         viewModel.connect(target)
                     } else {
@@ -103,7 +106,7 @@ fun ApplicationFrame() {
             }
         }
 
-        val devices = state.nearbyGlasses ?: emptyList()
+        val devices = nearbyGlasses ?: emptyList()
         if (devices.isEmpty()) {
             Text(
                 text = if (state.scanning) "Scanning for glasses..." else "No glasses found",
@@ -137,7 +140,7 @@ fun ApplicationFrame() {
             maxLines = 3,
         )
         Button(
-            enabled = message.isNotBlank() && state.connectedGlasses != null,
+            enabled = message.isNotBlank() && connectedGlasses != null,
             onClick = {
                 viewModel.sendMessage(message)
                 Toast.makeText(context, "Message sent", Toast.LENGTH_SHORT).show()

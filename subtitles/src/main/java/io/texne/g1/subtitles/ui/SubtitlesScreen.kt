@@ -42,6 +42,7 @@ fun SubtitlesScreen(
 
     val viewModel = hiltViewModel<SubtitlesViewModel>()
     val state = viewModel.state.collectAsState().value
+    val connectedGlasses = state.glasses
 
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -50,7 +51,7 @@ fun SubtitlesScreen(
         Box(
             modifier = Modifier.fillMaxWidth().aspectRatio(2f)
         ) {
-            if(state.glasses == null) {
+            if(connectedGlasses == null) {
                 Box(
                     modifier = Modifier.background(Color.LightGray, RoundedCornerShape(16.dp)).fillMaxSize()
                         .clickable(state.hubInstalled, onClick = openHub),
@@ -78,10 +79,10 @@ fun SubtitlesScreen(
                     }
                 }
             } else {
-                GlassesCard(state.glasses, openHub)
+                GlassesCard(connectedGlasses, openHub)
             }
         }
-        if(state.glasses != null) {
+        if(connectedGlasses != null) {
             Button(
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if(state.listening) Color(150, 0, 0, 255) else Color.White

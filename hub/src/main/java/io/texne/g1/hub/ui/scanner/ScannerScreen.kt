@@ -40,6 +40,7 @@ fun ScannerScreen(
     connect: (id: String) -> Unit
 ) {
     val pullToRefreshState = rememberPullToRefreshState()
+    val glassesList = nearbyGlasses
 
     PullToRefreshBox(
         modifier = Modifier.fillMaxSize(),
@@ -50,15 +51,17 @@ fun ScannerScreen(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = if (
-                nearbyGlasses.isNullOrEmpty()
+                glassesList.isNullOrEmpty()
             ) Arrangement.Center else Arrangement.spacedBy(32.dp)
         ) {
             when {
-                nearbyGlasses.isNullOrEmpty().not() -> {
-                    items(nearbyGlasses!!.size) {
+                glassesList.isNullOrEmpty().not() -> {
+                    val nonNullGlasses = glassesList ?: emptyList()
+                    items(nonNullGlasses.size) { index ->
+                        val glasses = nonNullGlasses[index]
                         GlassesItem(
-                            nearbyGlasses[it],
-                            { connect(nearbyGlasses[it].id) }
+                            glasses,
+                            { connect(glasses.id) }
                         )
                     }
                 }
@@ -85,7 +88,7 @@ fun ScannerScreen(
                     }
                 }
 
-                nearbyGlasses != null -> {
+                glassesList != null -> {
                     item {
                         Box(
                             modifier = Modifier.fillMaxWidth(),
