@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.texne.g1.basis.client.G1ServiceCommon
-import io.texne.g1.basis.client.G1ServiceCommon.GlassesStatus
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
 import io.texne.g1.hub.model.Repository
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -20,28 +19,9 @@ class ApplicationViewModel @Inject constructor(
     private val repository: Repository
 ) : ViewModel() {
 
-    enum class DeviceStatus(val label: String) {
-        DISCONNECTED("Disconnected"),
-        CONNECTING("Connecting"),
-        CONNECTED("Connected"),
-        DISCONNECTING("Disconnecting"),
-        ERROR("Error")
-    }
-
-    data class Device(
-        val id: String?,
-        val name: String,
-        val status: DeviceStatus
-    ) {
-        val canPair: Boolean
-            get() = id != null && when (status) {
-                DeviceStatus.DISCONNECTED, DeviceStatus.ERROR -> true
-                DeviceStatus.CONNECTING, DeviceStatus.CONNECTED, DeviceStatus.DISCONNECTING -> false
-            }
-    }
-
     data class State(
-        val devices: List<Device> = emptyList(),
+        val glasses: G1ServiceCommon.Glasses? = null,
+        val serviceStatus: ServiceStatus = ServiceStatus.READY,
         val isLooking: Boolean = false,
         val serviceError: Boolean = false
     )
@@ -51,11 +31,12 @@ class ApplicationViewModel @Inject constructor(
 
     val state = repository.getServiceStateFlow()
         .map { serviceState ->
-            val glasses = serviceState?.glasses.orEmpty()
+            val status = serviceState?.status ?: ServiceStatus.READY
             State(
-                devices = glasses.map { it.toDevice() },
-                isLooking = serviceState?.status == ServiceStatus.LOOKING,
-                serviceError = serviceState?.status == ServiceStatus.ERROR
+                glasses = serviceState?.glasses?.firstOrNull(),
+                serviceStatus = status,
+                isLooking = status == ServiceStatus.LOOKING,
+                serviceError = status == ServiceStatus.ERROR
             )
         }
         .stateIn(viewModelScope, SharingStarted.Lazily, State())
@@ -70,36 +51,32 @@ class ApplicationViewModel @Inject constructor(
         }
     }
 
-    fun pair(id: String) {
+    fun connectGlasses() {
+        val glassesId = state.value.glasses?.id
+        if (glassesId == null) {
+            viewModelScope.launch {
+                _messages.emit("No glasses available to connect")
+            }
+            return
+        }
+
         viewModelScope.launch {
-            val result = runCatching { repository.connectGlasses(id) }
+            val result = runCatching { repository.connectGlasses(glassesId) }
             val success = result.getOrNull()
             if (success != true || result.isFailure) {
-                _messages.emit("Unable to pair with the selected glasses")
+                _messages.emit("Unable to connect to the selected glasses")
             }
         }
     }
 
-    fun reportMissingIdentifier() {
+    fun disconnectGlasses() {
+        val glassesId = state.value.glasses?.id
         viewModelScope.launch {
-            _messages.emit("Device identifier unavailable")
+            if (glassesId != null) {
+                repository.disconnectGlasses(glassesId)
+            } else {
+                repository.disconnectGlasses()
+            }
         }
-    }
-
-    private fun G1ServiceCommon.Glasses.toDevice(): Device {
-        val safeName = name?.takeIf { it.isNotBlank() } ?: "Unnamed glasses"
-        return Device(
-            id = id,
-            name = safeName,
-            status = status.toDeviceStatus()
-        )
-    }
-
-    private fun GlassesStatus.toDeviceStatus(): DeviceStatus = when (this) {
-        GlassesStatus.UNINITIALIZED, GlassesStatus.DISCONNECTED -> DeviceStatus.DISCONNECTED
-        GlassesStatus.CONNECTING -> DeviceStatus.CONNECTING
-        GlassesStatus.CONNECTED -> DeviceStatus.CONNECTED
-        GlassesStatus.DISCONNECTING -> DeviceStatus.DISCONNECTING
-        GlassesStatus.ERROR -> DeviceStatus.ERROR
     }
 }
