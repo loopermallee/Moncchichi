@@ -1,6 +1,10 @@
 # G1 Basis
 Open, multipurpose infrastructure for writing Android applications that talk to the [Even Realities G1](https://www.evenrealities.com/g1) glasses.
 
+## Progress
+
+- Null-safety clean-up: 100%
+
 ## Core
 The **core** module contains the source code to the core library. 
 This library allows for interfacing directly with the glasses through a simple abstraction that uses modern Android and Kotlin features like coroutines and Flow. 
@@ -102,8 +106,8 @@ data class G1Glasses(
     //    G1ServiceState.CONNECTED - the glasses are ready to use
     //    G1ServiceState.DISCONNECTING - the service is disconnecting from the glasses
     //    G1ServiceState.ERROR - an error ocurred while setting up or connecting the glasses
-  val batteryPercentage: Int,
-    // the percentage battery left of the side that has the least left
+  val batteryPercentage: Int?,
+    // the percentage battery left of the side that has the least left, or null if unknown
 )
 ```
 

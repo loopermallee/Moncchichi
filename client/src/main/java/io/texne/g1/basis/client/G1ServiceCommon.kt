@@ -24,7 +24,9 @@ abstract class G1ServiceCommon<ServiceInterface> constructor(
         val id: String,
         val name: String,
         val status: GlassesStatus,
-        val batteryPercentage: Int
+        // Battery information is optional in the AIDL contract (missing or -1),
+        // so we surface it as nullable to avoid misleading callers.
+        val batteryPercentage: Int?
     )
 
     enum class ServiceStatus { READY, LOOKING, LOOKED, ERROR }

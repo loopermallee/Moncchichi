@@ -63,7 +63,8 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
                                         id = glass.id ?: "",
                                         name = glass.name ?: glass.id.orEmpty(),
                                         status = status,
-                                        batteryPercentage = glass.batteryPercentage
+                                        // AIDL uses -1 when the battery percentage is unknown.
+                                        batteryPercentage = glass.batteryPercentage.takeIf { it >= 0 },
                                     )
                                 }
                             }

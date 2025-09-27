@@ -12,36 +12,43 @@ class Repository @Inject constructor(
     @ApplicationContext private val applicationContext: Context
 ) {
     fun getServiceStateFlow() =
-        service.state
+        boundService.state
 
     fun bindService(): Boolean {
-        service = G1ServiceManager.open(applicationContext) ?: return false
+        val manager = G1ServiceManager.open(applicationContext) ?: return false
+        service = manager
         return true
     }
 
-    fun unbindService() =
-        service.close()
+    fun unbindService() {
+        service?.close()
+        service = null
+    }
 
     fun startLooking() =
-        service.lookForGlasses()
+        boundService.lookForGlasses()
 
     suspend fun connectGlasses(id: String) =
-        service.connect(id)
+        boundService.connect(id)
 
     fun disconnectGlasses(id: String) =
-        service.disconnect(id)
+        boundService.disconnect(id)
 
     fun connectSelectedGlasses() =
-        service.connectPreferredGlasses()
+        boundService.connectPreferredGlasses()
 
     fun disconnectGlasses() =
-        service.disconnectPreferredGlasses()
+        boundService.disconnectPreferredGlasses()
 
     fun isConnected() =
-        service.isConnected()
+        boundService.isConnected()
 
     fun sendMessage(message: String) =
-        service.sendMessage(message)
+        boundService.sendMessage(message)
 
-    private lateinit var service: G1ServiceManager
+    private var service: G1ServiceManager? = null
+
+    // The hub UI should only touch the repository after bindService() succeeds, so we fail fast otherwise.
+    private val boundService: G1ServiceManager
+        get() = requireNotNull(service) { "G1ServiceManager is not bound; call bindService() before using the repository." }
 }
