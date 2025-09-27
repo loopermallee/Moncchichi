@@ -10,9 +10,9 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.os.ParcelUuid
 import android.util.Log
-import io.texne.g1.basis.core.G1State
 import io.texne.g1.basis.service.protocol.IG1Service
 import io.texne.g1.basis.service.protocol.IG1StateCallback
+import io.texne.g1.basis.service.protocol.G1ServiceState
 import io.texne.g1.basis.service.protocol.OperationCallback
 import java.util.UUID
 
@@ -173,7 +173,7 @@ class G1ServiceImpl : IG1Service.Stub() {
                 if (data.size >= 2) {
                     val connected = data[0].toInt() == 1
                     val battery = data[1].toInt() and 0xFF
-                    val status = if (connected) G1State.LOOKED else G1State.READY
+                    val status = if (connected) G1ServiceState.LOOKED else G1ServiceState.READY
                     Log.d(TAG, "State update: connected=$connected, battery=$battery")
                     stateCallback?.onStateChanged(status, null)
                 } else {

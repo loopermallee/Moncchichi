@@ -20,7 +20,6 @@ import com.loopermallee.moncchichi.bluetooth.BluetoothManager
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.nabinbhandari.android.permissions.PermissionHandler
 import com.nabinbhandari.android.permissions.Permissions
-import io.texne.g1.basis.core.G1State
 import io.texne.g1.basis.service.protocol.G1Glasses
 import io.texne.g1.basis.service.protocol.G1ServiceState
 import io.texne.g1.basis.service.protocol.IG1Service
@@ -265,10 +264,10 @@ class G1Service : Service() {
         coroutineScope.launch {
             state.collectLatest { internalState ->
                 val status = when (internalState.status) {
-                    ServiceStatus.READY -> G1State.READY
-                    ServiceStatus.LOOKING -> G1State.LOOKING
-                    ServiceStatus.LOOKED -> G1State.LOOKED
-                    ServiceStatus.ERROR -> -1
+                    ServiceStatus.READY -> G1ServiceState.READY
+                    ServiceStatus.LOOKING -> G1ServiceState.LOOKING
+                    ServiceStatus.LOOKED -> G1ServiceState.LOOKED
+                    ServiceStatus.ERROR -> G1ServiceState.ERROR
                 }
                 val activeDeviceId = internalState.selectedAddress
                     ?: internalState.devices.keys.firstOrNull()

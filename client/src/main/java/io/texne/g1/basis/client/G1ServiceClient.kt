@@ -47,16 +47,16 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
                 override fun onStateChange(newState: G1ServiceState?) {
                     if(newState != null) {
                         writableState.value = State(
-                            status = when(newState.status) {
+                            status = when(newState.getStatus()) {
                                 G1ServiceState.READY -> ServiceStatus.READY
                                 G1ServiceState.LOOKING -> ServiceStatus.LOOKING
                                 G1ServiceState.LOOKED -> ServiceStatus.LOOKED
                                 else -> ServiceStatus.ERROR
                             },
-                            glasses = newState.glasses.map { Glasses(
-                                id = it.id,
-                                name = it.name,
-                                status = when(it.connectionState) {
+                            glasses = newState.getGlasses()?.map { Glasses(
+                                id = it.getId(),
+                                name = it.getName(),
+                                status = when(it.getConnectionState()) {
                                     G1Glasses.UNINITIALIZED -> GlassesStatus.UNINITIALIZED
                                     G1Glasses.DISCONNECTED -> GlassesStatus.DISCONNECTED
                                     G1Glasses.CONNECTING -> GlassesStatus.CONNECTING
@@ -64,8 +64,8 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
                                     G1Glasses.DISCONNECTING -> GlassesStatus.DISCONNECTING
                                     else -> GlassesStatus.ERROR
                                 },
-                                batteryPercentage = it.batteryPercentage
-                            ) }
+                                batteryPercentage = it.getBatteryPercentage()
+                            ) } ?: emptyList()
                         )
                     }
                 }

@@ -4,12 +4,30 @@ import android.os.Parcel;
 import android.os.Parcelable;
 
 /**
- * Minimal stub implementation so AIDL parcelable compiles. Replace with real fields later.
+ * Parcelable representation of a discovered G1 glasses device exposed by the AIDL service.
  */
 public class G1Glasses implements Parcelable {
-    public G1Glasses() {}
+    public static final int UNINITIALIZED = 0;
+    public static final int DISCONNECTED = 1;
+    public static final int CONNECTING = 2;
+    public static final int CONNECTED = 3;
+    public static final int DISCONNECTING = 4;
+    public static final int ERROR = -1;
 
-    protected G1Glasses(Parcel in) {}
+    private String id;
+    private String name;
+    private int connectionState = UNINITIALIZED;
+    private int batteryPercentage = -1;
+
+    public G1Glasses() {
+    }
+
+    protected G1Glasses(Parcel in) {
+        id = in.readString();
+        name = in.readString();
+        connectionState = in.readInt();
+        batteryPercentage = in.readInt();
+    }
 
     public static final Creator<G1Glasses> CREATOR = new Creator<G1Glasses>() {
         @Override
@@ -30,6 +48,41 @@ public class G1Glasses implements Parcelable {
 
     @Override
     public void writeToParcel(Parcel dest, int flags) {
-        // No-op for stub implementation
+        dest.writeString(id);
+        dest.writeString(name);
+        dest.writeInt(connectionState);
+        dest.writeInt(batteryPercentage);
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public int getConnectionState() {
+        return connectionState;
+    }
+
+    public void setConnectionState(int connectionState) {
+        this.connectionState = connectionState;
+    }
+
+    public int getBatteryPercentage() {
+        return batteryPercentage;
+    }
+
+    public void setBatteryPercentage(int batteryPercentage) {
+        this.batteryPercentage = batteryPercentage;
     }
 }

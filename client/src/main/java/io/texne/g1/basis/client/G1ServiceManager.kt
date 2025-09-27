@@ -5,9 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
-import io.texne.g1.basis.core.G1State
 import io.texne.g1.basis.service.protocol.IG1Service
 import io.texne.g1.basis.service.protocol.IG1StateCallback
+import io.texne.g1.basis.service.protocol.G1ServiceState
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -39,9 +39,9 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
             service?.observeState(object : IG1StateCallback.Stub() {
                 override fun onStateChanged(status: Int, deviceId: String?) {
                     val serviceStatus = when (status) {
-                        G1State.READY -> ServiceStatus.READY
-                        G1State.LOOKING -> ServiceStatus.LOOKING
-                        G1State.LOOKED -> ServiceStatus.LOOKED
+                        G1ServiceState.READY -> ServiceStatus.READY
+                        G1ServiceState.LOOKING -> ServiceStatus.LOOKING
+                        G1ServiceState.LOOKED -> ServiceStatus.LOOKED
                         else -> ServiceStatus.ERROR
                     }
                     val glasses = if (deviceId != null) {
