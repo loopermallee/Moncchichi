@@ -34,15 +34,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
-private val Parchment = Color(0xFFF6E6C9)
-private val ParchmentDeep = Color(0xFFE4C99D)
-private val Ink = Color(0xFF2C1A0C)
-private val AccentBlue = Color(0xFF364968)
-private val AccentRust = Color(0xFF9C5221)
-private val ConnectedColor = Color(0xFF2F6F51)
-private val DisconnectedColor = Color(0xFF8A6B4F)
-private val ErrorColor = Color(0xFF9B2F2F)
-private val WarningColor = Color(0xFFD08A32)
+
+private object Bof4Palette {
+    val Midnight = Color(0xFF081726)
+    val Steel = Color(0xFF1F3D5B)
+    val Mist = Color(0xFFE9E2CE)
+    val Sand = Color(0xFFCDB894)
+    val Ember = Color(0xFFE39A3B)
+    val Sky = Color(0xFF6CA6D9)
+    val Verdant = Color(0xFF5D9479)
+    val Coral = Color(0xFFD9644C)
+    val Warning = Color(0xFFF2C74E)
+}
+
+private val ConnectedColor = Bof4Palette.Verdant
+private val DisconnectedColor = Bof4Palette.Sand
+private val ErrorColor = Bof4Palette.Coral
+private val WarningColor = Bof4Palette.Warning
 
 @Composable
 fun GlassesScreen(
@@ -80,11 +88,11 @@ fun GlassesScreen(
         else -> DisconnectedColor
     }
 
-    val buttonLabel = when {
-        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect"
-        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
-        primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
-        else -> "Reconnect"
+    val buttonLabel = when (primaryStatus) {
+        G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect"
+        G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
+        G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
+        else -> "Connect"
     }
 
     val showProgress = isLooking ||
@@ -97,7 +105,9 @@ fun GlassesScreen(
         else -> true
     }
 
-    Box(modifier = modifier.background(Parchment)) {
+    Box(
+        modifier = modifier.background(Bof4Palette.Midnight)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -105,103 +115,25 @@ fun GlassesScreen(
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            Surface(
-                color = ParchmentDeep,
-                shape = RoundedCornerShape(28.dp),
-                border = BorderStroke(2.dp, AccentBlue.copy(alpha = 0.6f))
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Guardian Sync",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = Ink,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "Breath of Fire IV Link",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = AccentRust,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
+            HeroHeader()
 
-            Surface(
-                color = ParchmentDeep,
-                shape = RoundedCornerShape(32.dp),
-                border = BorderStroke(2.dp, AccentBlue.copy(alpha = 0.45f))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
-                ) {
-                    ConnectionStatusPill(text = statusLabel, color = statusColor)
+            StatusPanel(
+                statusLabel = statusLabel,
+                statusColor = statusColor,
+                buttonLabel = buttonLabel,
+                onPrimaryAction = if (primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED) {
+                    disconnect
+                } else {
+                    connect
+                },
+                onRefresh = refresh,
+                enabled = isActionEnabled,
+                showProgress = showProgress,
+                isLooking = isLooking,
+                serviceError = serviceError
+            )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val onPrimaryAction = if (primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED) {
-                            disconnect
-                        } else {
-                            connect
-                        }
-                        Button(
-                            modifier = Modifier.weight(1f),
-                            onClick = onPrimaryAction,
-                            enabled = isActionEnabled,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = AccentBlue,
-                                contentColor = Parchment
-                            )
-                        ) {
-                            Text(buttonLabel, fontWeight = FontWeight.SemiBold)
-                        }
-
-                        OutlinedButton(
-                            modifier = Modifier.height(48.dp),
-                            onClick = refresh,
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = AccentRust
-                            ),
-                            border = BorderStroke(1.dp, AccentRust)
-                        ) {
-                            Text("Refresh", fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    if (showProgress) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = AccentBlue,
-                                strokeWidth = 2.dp
-                            )
-                            Text(
-                                text = if (isLooking) "Scanning nearby devices…" else "Updating connection…",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Ink
-                            )
-                        }
-                    }
-
-                    if (serviceError) {
-                        ServiceErrorBanner()
-                    }
-                }
-            }
-
-            HorizontalDivider(color = AccentBlue.copy(alpha = 0.25f))
+            HorizontalDivider(color = Bof4Palette.Sky.copy(alpha = 0.25f))
 
             val cardEntries = listOf(
                 "Left Glass" to glasses.getOrNull(0),
@@ -214,9 +146,120 @@ fun GlassesScreen(
                 }
             }
 
-    if (glasses.isEmpty()) {
-        NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking)
+            if (glasses.isEmpty()) {
+                NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking)
+            }
+        }
     }
+}
+
+@Composable
+private fun HeroHeader() {
+    Surface(
+        color = Bof4Palette.Steel.copy(alpha = 0.85f),
+        contentColor = Bof4Palette.Mist,
+        shape = RoundedCornerShape(28.dp),
+        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.55f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = "Guardian Sync",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Breath of Fire IV link",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = Bof4Palette.Ember
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusPanel(
+    statusLabel: String,
+    statusColor: Color,
+    buttonLabel: String,
+    onPrimaryAction: () -> Unit,
+    onRefresh: () -> Unit,
+    enabled: Boolean,
+    showProgress: Boolean,
+    isLooking: Boolean,
+    serviceError: Boolean
+) {
+    Surface(
+        color = Bof4Palette.Steel.copy(alpha = 0.9f),
+        shape = RoundedCornerShape(32.dp),
+        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.35f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            ConnectionStatusPill(text = statusLabel, color = statusColor)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = onPrimaryAction,
+                    enabled = enabled,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Bof4Palette.Sky,
+                        contentColor = Bof4Palette.Midnight
+                    )
+                ) {
+                    Text(buttonLabel, fontWeight = FontWeight.SemiBold)
+                }
+
+                OutlinedButton(
+                    modifier = Modifier.height(48.dp),
+                    onClick = onRefresh,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Bof4Palette.Ember
+                    ),
+                    border = BorderStroke(1.dp, Bof4Palette.Ember)
+                ) {
+                    Text("Refresh", fontWeight = FontWeight.Medium)
+                }
+            }
+
+            if (showProgress) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Bof4Palette.Sky,
+                        strokeWidth = 2.dp
+                    )
+                    Text(
+                        text = if (isLooking) {
+                            "Scanning nearby devices…"
+                        } else {
+                            "Updating connection…"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Bof4Palette.Mist
+                    )
+                }
+            }
+
+            if (serviceError) {
+                ServiceErrorBanner()
+            }
         }
     }
 }
@@ -225,9 +268,9 @@ fun GlassesScreen(
 private fun ConnectionStatusPill(text: String, color: Color) {
     Surface(
         color = color,
-        contentColor = Parchment,
+        contentColor = Bof4Palette.Midnight,
         shape = RoundedCornerShape(50),
-        border = BorderStroke(1.dp, Ink.copy(alpha = 0.25f))
+        border = BorderStroke(1.dp, Bof4Palette.Midnight.copy(alpha = 0.3f))
     ) {
         Text(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -242,7 +285,7 @@ private fun ConnectionStatusPill(text: String, color: Color) {
 private fun ServiceErrorBanner() {
     Surface(
         color = ErrorColor,
-        contentColor = Parchment,
+        contentColor = Bof4Palette.Mist,
         shape = RoundedCornerShape(16.dp)
     ) {
         Text(
@@ -287,8 +330,8 @@ private fun GlassesCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = ParchmentDeep),
-        border = BorderStroke(2.dp, AccentBlue.copy(alpha = 0.4f))
+        colors = CardDefaults.cardColors(containerColor = Bof4Palette.Steel.copy(alpha = 0.85f)),
+        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.3f))
     ) {
         Column(
             modifier = Modifier
@@ -299,14 +342,14 @@ private fun GlassesCard(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                color = AccentBlue,
+                color = Bof4Palette.Sky,
                 fontWeight = FontWeight.Bold
             )
 
             Text(
                 text = deviceName,
                 style = MaterialTheme.typography.headlineSmall,
-                color = Ink,
+                color = Bof4Palette.Mist,
                 fontWeight = FontWeight.SemiBold
             )
 
@@ -314,7 +357,7 @@ private fun GlassesCard(
                 Text(
                     text = "Connection Status",
                     style = MaterialTheme.typography.labelMedium,
-                    color = Ink.copy(alpha = 0.7f)
+                    color = Bof4Palette.Mist.copy(alpha = 0.7f)
                 )
                 Text(
                     text = statusLabel,
@@ -328,18 +371,18 @@ private fun GlassesCard(
                 Text(
                     text = "Battery",
                     style = MaterialTheme.typography.labelMedium,
-                    color = Ink.copy(alpha = 0.7f)
+                    color = Bof4Palette.Mist.copy(alpha = 0.7f)
                 )
                 LinearProgressIndicator(
                     progress = { batteryProgress },
-                    color = AccentBlue,
-                    trackColor = AccentBlue.copy(alpha = 0.2f),
+                    color = Bof4Palette.Sky,
+                    trackColor = Bof4Palette.Sky.copy(alpha = 0.2f),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
                     text = batteryText,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Ink,
+                    color = Bof4Palette.Mist,
                     fontWeight = FontWeight.Medium
                 )
             }
@@ -360,9 +403,9 @@ private fun NoGlassesMessage(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = ParchmentDeep,
+        color = Bof4Palette.Steel.copy(alpha = 0.85f),
         shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(2.dp, AccentBlue.copy(alpha = 0.3f))
+        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.25f))
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
@@ -372,13 +415,13 @@ private fun NoGlassesMessage(
             Text(
                 text = "No glasses detected",
                 style = MaterialTheme.typography.titleMedium,
-                color = Ink,
+                color = Bof4Palette.Mist,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
                 text = helperText,
                 style = MaterialTheme.typography.bodyMedium,
-                color = Ink.copy(alpha = 0.7f),
+                color = Bof4Palette.Mist.copy(alpha = 0.75f),
                 textAlign = TextAlign.Start
             )
         }
