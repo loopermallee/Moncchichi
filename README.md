@@ -11,6 +11,7 @@ Open, multipurpose infrastructure for writing Android applications that talk to 
 | **Stable BLE Pairing** | Refactor `G1BLEManager`/`G1Connector` for stable single-session connection (no redundant reconnect). | 🔄 40% complete |
 | **Debug Build** | Establish working `assembleDebug` pipeline to generate downloadable APK. | ✅ 100% complete |
 | **Material Components** | Standardize UI components on Material 1.12.0 and CardView 1.0.0. | 🔄 30% complete |
+| **Device Screen v2** | Breath of Fire IV themed management screen with auto-reconnect and refresh controls. | ✅ 100% complete (debug APK built via `./gradlew assembleDebug`) |
 
 ---
 

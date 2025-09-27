@@ -1,10 +1,11 @@
 package io.texne.g1.hub.ui.glasses
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,16 +14,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.BatteryAlert
-import androidx.compose.material.icons.outlined.BatteryChargingFull
-import androidx.compose.material.icons.outlined.BatteryFull
-import androidx.compose.material.icons.outlined.BatteryUnknown
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,272 +33,397 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.texne.g1.basis.client.G1ServiceCommon
+import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
 
-private val ConnectedGreen = Color(0xFF047A00)
-private val DisconnectedGray = Color(0xFF6D6D6D)
-private val ErrorRed = Color(0xFFB3261E)
-private val WarningOrange = Color(0xFFF57C00)
+private object Bof4Palette {
+    val Midnight = Color(0xFF081726)
+    val Steel = Color(0xFF1F3D5B)
+    val Mist = Color(0xFFE9E2CE)
+    val Sand = Color(0xFFCDB894)
+    val Ember = Color(0xFFE39A3B)
+    val Sky = Color(0xFF6CA6D9)
+    val Verdant = Color(0xFF5D9479)
+    val Coral = Color(0xFFD9644C)
+    val Warning = Color(0xFFF2C74E)
+}
+
+private val ConnectedColor = Bof4Palette.Verdant
+private val DisconnectedColor = Bof4Palette.Sand
+private val ErrorColor = Bof4Palette.Coral
+private val WarningColor = Bof4Palette.Warning
 
 @Composable
 fun GlassesScreen(
-    glasses: G1ServiceCommon.Glasses,
+    glasses: List<G1ServiceCommon.Glasses>,
+    serviceStatus: ServiceStatus,
     isLooking: Boolean,
     serviceError: Boolean,
     connect: () -> Unit,
     disconnect: () -> Unit,
+    refresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    val deviceName = glasses.name?.takeIf { it.isNotBlank() } ?: "Unnamed glasses"
-    val status = glasses.status
+    val primaryGlasses = glasses.firstOrNull()
+    val primaryStatus = primaryGlasses?.status
 
     val statusLabel = when {
         serviceError -> "Service Error"
-        status == G1ServiceCommon.GlassesStatus.CONNECTED -> "Glasses Online"
-        status == G1ServiceCommon.GlassesStatus.CONNECTING && isLooking -> "Looking for glasses…"
-        status == G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
-        status == G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
-        status == G1ServiceCommon.GlassesStatus.ERROR -> "Connection Error"
-        else -> "No Glasses Connected"
+        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED -> "Connected"
+        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting"
+        primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting"
+        isLooking -> "Scanning for glasses"
+        primaryStatus == G1ServiceCommon.GlassesStatus.ERROR -> "Connection Error"
+        primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTED -> "Disconnected"
+        else -> "Ready to connect"
     }
 
     val statusColor = when {
-        serviceError -> ErrorRed
-        status == G1ServiceCommon.GlassesStatus.CONNECTED -> ConnectedGreen
-        status == G1ServiceCommon.GlassesStatus.CONNECTING ||
-            status == G1ServiceCommon.GlassesStatus.DISCONNECTING -> WarningOrange
-        status == G1ServiceCommon.GlassesStatus.ERROR -> ErrorRed
-        else -> DisconnectedGray
+        serviceError -> ErrorColor
+        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED -> ConnectedColor
+        primaryStatus == G1ServiceCommon.GlassesStatus.ERROR -> ErrorColor
+        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTING ||
+            primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTING ||
+            isLooking -> WarningColor
+        else -> DisconnectedColor
     }
 
-    val buttonLabel = when {
-        status == G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect Glasses"
-        status == G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
-        status == G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
-        else -> "Connect Glasses"
+    val buttonLabel = when (primaryStatus) {
+        G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect"
+        G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
+        G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
+        else -> "Connect"
     }
 
-    val hasIdentifier = glasses.id?.isNotBlank() == true
-    val isActionEnabled = hasIdentifier && !serviceError && when (status) {
+    val showProgress = isLooking ||
+        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTING ||
+        primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTING
+
+    val isActionEnabled = !serviceError && when (primaryStatus) {
         G1ServiceCommon.GlassesStatus.CONNECTING,
         G1ServiceCommon.GlassesStatus.DISCONNECTING -> false
         else -> true
     }
 
-    val showProgress = status == G1ServiceCommon.GlassesStatus.CONNECTING ||
-        status == G1ServiceCommon.GlassesStatus.DISCONNECTING
-    val onPrimaryAction = if (status == G1ServiceCommon.GlassesStatus.CONNECTED) disconnect else connect
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(16.dp)
+    Box(
+        modifier = modifier.background(Bof4Palette.Midnight)
     ) {
-        Text(
-            text = "G1 Glasses",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = statusLabel,
-            color = statusColor,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = deviceName,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 24.dp, vertical = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            Button(
-                modifier = Modifier.weight(1f),
-                onClick = onPrimaryAction,
-                enabled = isActionEnabled
-            ) {
-                Text(buttonLabel)
-            }
-            if (showProgress) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
-                    color = statusColor,
-                    strokeWidth = 2.dp
-                )
-            }
-        }
+            HeroHeader()
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val isCompact = maxWidth < 600.dp
-            if (isCompact) {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    GlassDetailCard(
-                        title = "Left Glass",
-                        status = status,
-                        batteryPercentage = glasses.batteryPercentage,
-                        firmwareVersion = null,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    GlassDetailCard(
-                        title = "Right Glass",
-                        status = status,
-                        batteryPercentage = glasses.batteryPercentage,
-                        firmwareVersion = null,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    GlassDetailCard(
-                        title = "Left Glass",
-                        status = status,
-                        batteryPercentage = glasses.batteryPercentage,
-                        firmwareVersion = null,
-                        modifier = Modifier.weight(1f)
-                    )
-                    GlassDetailCard(
-                        title = "Right Glass",
-                        status = status,
-                        batteryPercentage = glasses.batteryPercentage,
-                        firmwareVersion = null,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-
-        if (!hasIdentifier) {
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "Device identifier unavailable",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            StatusPanel(
+                statusLabel = statusLabel,
+                statusColor = statusColor,
+                buttonLabel = buttonLabel,
+                onPrimaryAction = if (primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED) {
+                    disconnect
+                } else {
+                    connect
+                },
+                onRefresh = refresh,
+                enabled = isActionEnabled,
+                showProgress = showProgress,
+                isLooking = isLooking,
+                serviceError = serviceError
             )
-        }
 
-        if (serviceError) {
-            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = Bof4Palette.Sky.copy(alpha = 0.25f))
+
+            val cardEntries = listOf(
+                "Left Glass" to glasses.getOrNull(0),
+                "Right Glass" to glasses.getOrNull(1)
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                cardEntries.forEach { (title, glass) ->
+                    GlassesCard(title = title, glasses = glass)
+                }
+            }
+
+            if (glasses.isEmpty()) {
+                NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroHeader() {
+    Surface(
+        color = Bof4Palette.Steel.copy(alpha = 0.85f),
+        contentColor = Bof4Palette.Mist,
+        shape = RoundedCornerShape(28.dp),
+        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.55f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             Text(
-                text = "The glasses service reported an error.",
-                color = ErrorRed,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium
+                text = "Guardian Sync",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Breath of Fire IV link",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = Bof4Palette.Ember
             )
         }
     }
 }
 
 @Composable
-private fun GlassDetailCard(
-    title: String,
-    status: G1ServiceCommon.GlassesStatus,
-    batteryPercentage: Int?,
-    firmwareVersion: String?,
-    modifier: Modifier = Modifier
+private fun StatusPanel(
+    statusLabel: String,
+    statusColor: Color,
+    buttonLabel: String,
+    onPrimaryAction: () -> Unit,
+    onRefresh: () -> Unit,
+    enabled: Boolean,
+    showProgress: Boolean,
+    isLooking: Boolean,
+    serviceError: Boolean
 ) {
-    val (badgeColor, badgeText) = when (status) {
-        G1ServiceCommon.GlassesStatus.CONNECTED -> ConnectedGreen to "Online"
-        G1ServiceCommon.GlassesStatus.CONNECTING -> WarningOrange to "Connecting"
-        G1ServiceCommon.GlassesStatus.DISCONNECTING -> WarningOrange to "Disconnecting"
-        G1ServiceCommon.GlassesStatus.ERROR -> ErrorRed to "Error"
-        G1ServiceCommon.GlassesStatus.DISCONNECTED,
-        G1ServiceCommon.GlassesStatus.UNINITIALIZED -> DisconnectedGray to "Disconnected"
-    }
-
-    val batteryLabel = batteryPercentage?.let { "$it%" } ?: "Unknown"
-    val (batteryIcon, batteryTint) = when {
-        batteryPercentage == null -> Icons.Outlined.BatteryUnknown to MaterialTheme.colorScheme.onSurfaceVariant
-        batteryPercentage < 20 -> Icons.Outlined.BatteryAlert to ErrorRed
-        batteryPercentage < 50 -> Icons.Outlined.BatteryChargingFull to WarningOrange
-        else -> Icons.Outlined.BatteryFull to ConnectedGreen
-    }
-
-    val firmwareLabel = firmwareVersion?.takeIf { it.isNotBlank() }
-        ?.let { "Firmware version $it" }
-        ?: "Firmware version unavailable"
-
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    Surface(
+        color = Bof4Palette.Steel.copy(alpha = 0.9f),
+        shape = RoundedCornerShape(32.dp),
+        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 24.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            ConnectionStatusPill(text = statusLabel, color = statusColor)
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
+                Button(
                     modifier = Modifier.weight(1f),
-                    text = title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                StatusBadge(text = badgeText, backgroundColor = badgeColor)
+                    onClick = onPrimaryAction,
+                    enabled = enabled,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Bof4Palette.Sky,
+                        contentColor = Bof4Palette.Midnight
+                    )
+                ) {
+                    Text(buttonLabel, fontWeight = FontWeight.SemiBold)
+                }
+
+                OutlinedButton(
+                    modifier = Modifier.height(48.dp),
+                    onClick = onRefresh,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Bof4Palette.Ember
+                    ),
+                    border = BorderStroke(1.dp, Bof4Palette.Ember)
+                ) {
+                    Text("Refresh", fontWeight = FontWeight.Medium)
+                }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                androidx.compose.material3.Icon(
-                    imageVector = batteryIcon,
-                    contentDescription = "Battery",
-                    tint = batteryTint
-                )
-                Text(
-                    text = "Battery $batteryLabel",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold
-                )
+            if (showProgress) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Bof4Palette.Sky,
+                        strokeWidth = 2.dp
+                    )
+                    Text(
+                        text = if (isLooking) {
+                            "Scanning nearby devices…"
+                        } else {
+                            "Updating connection…"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Bof4Palette.Mist
+                    )
+                }
             }
 
-            Text(
-                text = firmwareLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Start
-            )
+            if (serviceError) {
+                ServiceErrorBanner()
+            }
         }
     }
 }
 
 @Composable
-private fun StatusBadge(
-    text: String,
-    backgroundColor: Color,
-    modifier: Modifier = Modifier
-) {
+private fun ConnectionStatusPill(text: String, color: Color) {
     Surface(
-        modifier = modifier,
-        color = backgroundColor,
-        contentColor = Color.White,
-        shape = RoundedCornerShape(50)
+        color = color,
+        contentColor = Bof4Palette.Midnight,
+        shape = RoundedCornerShape(50),
+        border = BorderStroke(1.dp, Bof4Palette.Midnight.copy(alpha = 0.3f))
     ) {
         Text(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             text = text,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold
         )
+    }
+}
+
+@Composable
+private fun ServiceErrorBanner() {
+    Surface(
+        color = ErrorColor,
+        contentColor = Bof4Palette.Mist,
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Text(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            text = "The glasses service reported an error. Please toggle Bluetooth and try again.",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun GlassesCard(
+    title: String,
+    glasses: G1ServiceCommon.Glasses?,
+    modifier: Modifier = Modifier
+) {
+    val deviceName = glasses?.name?.takeIf { it.isNotBlank() } ?: "Waiting for device…"
+    val batteryPercentage = glasses?.batteryPercentage?.takeIf { it in 0..100 }
+    val batteryText = batteryPercentage?.let { "$it%" } ?: "--"
+    val batteryProgress = batteryPercentage?.coerceIn(0, 100)?.div(100f) ?: 0f
+    val status = glasses?.status
+
+    val statusLabel = when (status) {
+        G1ServiceCommon.GlassesStatus.CONNECTED -> "Connected"
+        G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting"
+        G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting"
+        G1ServiceCommon.GlassesStatus.ERROR -> "Error"
+        G1ServiceCommon.GlassesStatus.DISCONNECTED -> "Disconnected"
+        G1ServiceCommon.GlassesStatus.UNINITIALIZED -> "Initializing"
+        null -> "Not detected"
+    }
+
+    val statusColor = when (status) {
+        G1ServiceCommon.GlassesStatus.CONNECTED -> ConnectedColor
+        G1ServiceCommon.GlassesStatus.ERROR -> ErrorColor
+        G1ServiceCommon.GlassesStatus.CONNECTING,
+        G1ServiceCommon.GlassesStatus.DISCONNECTING -> WarningColor
+        else -> DisconnectedColor
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = Bof4Palette.Steel.copy(alpha = 0.85f)),
+        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.3f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = Bof4Palette.Sky,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = deviceName,
+                style = MaterialTheme.typography.headlineSmall,
+                color = Bof4Palette.Mist,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Connection Status",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Bof4Palette.Mist.copy(alpha = 0.7f)
+                )
+                Text(
+                    text = statusLabel,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = statusColor,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Battery",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Bof4Palette.Mist.copy(alpha = 0.7f)
+                )
+                LinearProgressIndicator(
+                    progress = { batteryProgress },
+                    color = Bof4Palette.Sky,
+                    trackColor = Bof4Palette.Sky.copy(alpha = 0.2f),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = batteryText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Bof4Palette.Mist,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoGlassesMessage(
+    serviceStatus: ServiceStatus,
+    isLooking: Boolean
+) {
+    val helperText = when {
+        isLooking -> "Keep your glasses nearby while we scan."
+        serviceStatus == ServiceStatus.ERROR -> "Toggle Bluetooth or power-cycle your glasses, then refresh."
+        else -> "Turn on your glasses and tap Refresh to start pairing."
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Bof4Palette.Steel.copy(alpha = 0.85f),
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.25f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                text = "No glasses detected",
+                style = MaterialTheme.typography.titleMedium,
+                color = Bof4Palette.Mist,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = helperText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Bof4Palette.Mist.copy(alpha = 0.75f),
+                textAlign = TextAlign.Start
+            )
+        }
     }
 }
