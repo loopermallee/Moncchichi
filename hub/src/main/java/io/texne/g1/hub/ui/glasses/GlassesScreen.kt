@@ -1,7 +1,6 @@
 package io.texne.g1.hub.ui.glasses
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,25 +28,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
-import io.texne.g1.hub.R
-
-private val PrimaryAccent = Color(0xFF3DDCFF)
-private val SecondaryAccent = Color(0xFFF4C26C)
-private val OverlayStart = Color(0xCC06121F)
-private val OverlayEnd = Color(0xE6000000)
-private val ConnectedColor = Color(0xFF7AE2C2)
-private val DisconnectedColor = Color(0xFFB8C6D1)
-private val ErrorColor = Color(0xFFFF8A80)
-private val WarningColor = Color(0xFFFFB74D)
+private val Parchment = Color(0xFFF6E6C9)
+private val ParchmentDeep = Color(0xFFE4C99D)
+private val Ink = Color(0xFF2C1A0C)
+private val AccentBlue = Color(0xFF364968)
+private val AccentRust = Color(0xFF9C5221)
+private val ConnectedColor = Color(0xFF2F6F51)
+private val DisconnectedColor = Color(0xFF8A6B4F)
+private val ErrorColor = Color(0xFF9B2F2F)
+private val WarningColor = Color(0xFFD08A32)
 
 @Composable
 fun GlassesScreen(
@@ -102,19 +97,7 @@ fun GlassesScreen(
         else -> true
     }
 
-    Box(modifier = modifier) {
-        Image(
-            painter = painterResource(id = R.drawable.bof4_background),
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(OverlayStart, OverlayEnd)))
-        )
-
+    Box(modifier = modifier.background(Parchment)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -122,83 +105,103 @@ fun GlassesScreen(
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Guardian Sync",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Breath of Fire IV Link",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = SecondaryAccent,
-                    fontWeight = FontWeight.Medium
-                )
+            Surface(
+                color = ParchmentDeep,
+                shape = RoundedCornerShape(28.dp),
+                border = BorderStroke(2.dp, AccentBlue.copy(alpha = 0.6f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Guardian Sync",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Ink,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Breath of Fire IV Link",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = AccentRust,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
 
-            ConnectionStatusPill(text = statusLabel, color = statusColor)
-
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            Surface(
+                color = ParchmentDeep,
+                shape = RoundedCornerShape(32.dp),
+                border = BorderStroke(2.dp, AccentBlue.copy(alpha = 0.45f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    val onPrimaryAction = if (primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED) {
-                        disconnect
-                    } else {
-                        connect
-                    }
-                    Button(
-                        modifier = Modifier.weight(1f),
-                        onClick = onPrimaryAction,
-                        enabled = isActionEnabled,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = PrimaryAccent,
-                            contentColor = Color(0xFF042532)
-                        )
-                    ) {
-                        Text(buttonLabel, fontWeight = FontWeight.SemiBold)
-                    }
+                    ConnectionStatusPill(text = statusLabel, color = statusColor)
 
-                    OutlinedButton(
-                        modifier = Modifier.height(48.dp),
-                        onClick = refresh,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = SecondaryAccent
-                        ),
-                        border = BorderStroke(1.dp, SecondaryAccent)
-                    ) {
-                        Text("Refresh", fontWeight = FontWeight.Medium)
-                    }
-                }
-
-                if (showProgress) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = PrimaryAccent,
-                            strokeWidth = 2.dp
-                        )
-                        Text(
-                            text = if (isLooking) "Scanning nearby devices…" else "Updating connection…",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White
-                        )
-                    }
-                }
+                        val onPrimaryAction = if (primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED) {
+                            disconnect
+                        } else {
+                            connect
+                        }
+                        Button(
+                            modifier = Modifier.weight(1f),
+                            onClick = onPrimaryAction,
+                            enabled = isActionEnabled,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AccentBlue,
+                                contentColor = Parchment
+                            )
+                        ) {
+                            Text(buttonLabel, fontWeight = FontWeight.SemiBold)
+                        }
 
-                if (serviceError) {
-                    ServiceErrorBanner()
+                        OutlinedButton(
+                            modifier = Modifier.height(48.dp),
+                            onClick = refresh,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = AccentRust
+                            ),
+                            border = BorderStroke(1.dp, AccentRust)
+                        ) {
+                            Text("Refresh", fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    if (showProgress) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = AccentBlue,
+                                strokeWidth = 2.dp
+                            )
+                            Text(
+                                text = if (isLooking) "Scanning nearby devices…" else "Updating connection…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Ink
+                            )
+                        }
+                    }
+
+                    if (serviceError) {
+                        ServiceErrorBanner()
+                    }
                 }
             }
 
-            HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
+            HorizontalDivider(color = AccentBlue.copy(alpha = 0.25f))
 
             val cardEntries = listOf(
                 "Left Glass" to glasses.getOrNull(0),
@@ -211,9 +214,9 @@ fun GlassesScreen(
                 }
             }
 
-            if (glasses.isEmpty()) {
-                NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking)
-            }
+    if (glasses.isEmpty()) {
+        NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking)
+    }
         }
     }
 }
@@ -221,9 +224,10 @@ fun GlassesScreen(
 @Composable
 private fun ConnectionStatusPill(text: String, color: Color) {
     Surface(
-        color = color.copy(alpha = 0.85f),
-        contentColor = Color.Black,
-        shape = RoundedCornerShape(50)
+        color = color,
+        contentColor = Parchment,
+        shape = RoundedCornerShape(50),
+        border = BorderStroke(1.dp, Ink.copy(alpha = 0.25f))
     ) {
         Text(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -237,8 +241,8 @@ private fun ConnectionStatusPill(text: String, color: Color) {
 @Composable
 private fun ServiceErrorBanner() {
     Surface(
-        color = ErrorColor.copy(alpha = 0.9f),
-        contentColor = Color(0xFF3B0A06),
+        color = ErrorColor,
+        contentColor = Parchment,
         shape = RoundedCornerShape(16.dp)
     ) {
         Text(
@@ -283,8 +287,8 @@ private fun GlassesCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xAA0B1D2A)),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+        colors = CardDefaults.cardColors(containerColor = ParchmentDeep),
+        border = BorderStroke(2.dp, AccentBlue.copy(alpha = 0.4f))
     ) {
         Column(
             modifier = Modifier
@@ -295,14 +299,14 @@ private fun GlassesCard(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                color = SecondaryAccent,
+                color = AccentBlue,
                 fontWeight = FontWeight.Bold
             )
 
             Text(
                 text = deviceName,
                 style = MaterialTheme.typography.headlineSmall,
-                color = Color.White,
+                color = Ink,
                 fontWeight = FontWeight.SemiBold
             )
 
@@ -310,7 +314,7 @@ private fun GlassesCard(
                 Text(
                     text = "Connection Status",
                     style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.7f)
+                    color = Ink.copy(alpha = 0.7f)
                 )
                 Text(
                     text = statusLabel,
@@ -324,18 +328,18 @@ private fun GlassesCard(
                 Text(
                     text = "Battery",
                     style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.7f)
+                    color = Ink.copy(alpha = 0.7f)
                 )
                 LinearProgressIndicator(
                     progress = { batteryProgress },
-                    color = PrimaryAccent,
-                    trackColor = PrimaryAccent.copy(alpha = 0.25f),
+                    color = AccentBlue,
+                    trackColor = AccentBlue.copy(alpha = 0.2f),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
                     text = batteryText,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White,
+                    color = Ink,
                     fontWeight = FontWeight.Medium
                 )
             }
@@ -354,22 +358,29 @@ private fun NoGlassesMessage(
         else -> "Turn on your glasses and tap Refresh to start pairing."
     }
 
-    Column(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalAlignment = Alignment.Start
+        color = ParchmentDeep,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(2.dp, AccentBlue.copy(alpha = 0.3f))
     ) {
-        Text(
-            text = "No glasses detected",
-            style = MaterialTheme.typography.titleMedium,
-            color = Color.White,
-            fontWeight = FontWeight.SemiBold
-        )
-        Text(
-            text = helperText,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.8f),
-            textAlign = TextAlign.Start
-        )
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                text = "No glasses detected",
+                style = MaterialTheme.typography.titleMedium,
+                color = Ink,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = helperText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Ink.copy(alpha = 0.7f),
+                textAlign = TextAlign.Start
+            )
+        }
     }
 }
