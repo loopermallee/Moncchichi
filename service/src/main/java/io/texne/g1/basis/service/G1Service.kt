@@ -446,7 +446,7 @@ class G1Service : Service() {
         val notification: Notification = Notification.Builder(this, channelId)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(getString(R.string.notification_description))
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
