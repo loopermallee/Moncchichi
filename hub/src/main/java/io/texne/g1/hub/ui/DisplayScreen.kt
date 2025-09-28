@@ -1,9 +1,6 @@
 package io.texne.g1.hub.ui
 
-import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,7 +15,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,30 +28,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import dagger.hilt.android.AndroidEntryPoint
 import io.texne.g1.basis.client.G1ServiceCommon
-import io.texne.g1.hub.ui.theme.G1HubTheme
 import kotlinx.coroutines.flow.collectLatest
-
-@AndroidEntryPoint
-class DisplayActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        setContent {
-            G1HubTheme {
-                DisplayScreen(
-                    onBack = { finish() }
-                )
-            }
-        }
-    }
-}
 
 @Composable
 fun DisplayScreen(
-    onBack: () -> Unit,
     viewModel: ApplicationViewModel = hiltViewModel(),
+    modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
@@ -87,7 +66,7 @@ fun DisplayScreen(
     val scrollState = rememberScrollState()
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(scrollState)
@@ -140,12 +119,5 @@ fun DisplayScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
-        TextButton(
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(text = "Back to Device")
-        }
     }
 }

@@ -1,6 +1,5 @@
 package io.texne.g1.hub.ui
 
-import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -11,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,6 +26,7 @@ import kotlinx.coroutines.flow.collectLatest
 @Composable
 fun DeviceScreen(
     viewModel: ApplicationViewModel = hiltViewModel(),
+    modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
@@ -44,7 +43,7 @@ fun DeviceScreen(
     val scrollState = rememberScrollState()
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(scrollState),
@@ -62,15 +61,5 @@ fun DeviceScreen(
         )
 
         Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            onClick = {
-                context.startActivity(Intent(context, DisplayActivity::class.java))
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-        ) {
-            Text(text = "Open Display Screen")
-        }
     }
 }
