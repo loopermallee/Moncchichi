@@ -6,11 +6,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
 import io.texne.g1.hub.model.Repository
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -33,23 +31,6 @@ class ApplicationViewModel @Inject constructor(
 
     private val serviceStateFlow = repository.getServiceStateFlow()
 
-    private var autoReconnectJob: Job? = null
-
-    init {
-        viewModelScope.launch {
-            serviceStateFlow
-                .map { it?.status ?: ServiceStatus.READY }
-                .distinctUntilChanged()
-                .collect { status ->
-                    when (status) {
-                        ServiceStatus.READY,
-                        ServiceStatus.LOOKED -> attemptAutoReconnect(status)
-                        else -> Unit
-                    }
-                }
-        }
-    }
-
     val state = serviceStateFlow
         .map { serviceState ->
             val status = serviceState?.status ?: ServiceStatus.READY
@@ -62,42 +43,64 @@ class ApplicationViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.Lazily, State())
 
-    fun refreshDevices() {
+    fun lookForGlasses() {
         viewModelScope.launch {
             startLookingSafely(showMessage = true)
         }
     }
 
-    fun connectGlasses() {
+    fun connect(glassesId: String? = null, glassesName: String? = null) {
         viewModelScope.launch {
-            val glassesId = state.value.glasses.firstOrNull()?.id
             if (glassesId != null) {
-                val result = runCatching { repository.connectGlasses(glassesId) }
-                val success = result.getOrNull()
-                if (success != true || result.isFailure) {
-                    _messages.emit("Unable to connect to the selected glasses")
-                }
+                val label = glassesName?.takeIf { it.isNotBlank() } ?: "glasses"
+                _messages.emit("Connecting to $label…")
+            }
+            val result = if (glassesId != null) {
+                runCatching { repository.connectGlasses(glassesId) }
             } else {
-                val attempt = runCatching { repository.connectSelectedGlasses() }
-                if (attempt.isFailure) {
-                    _messages.emit("No glasses available to connect")
-                }
+                runCatching { repository.connectSelectedGlasses() }
+            }
+
+            val success = result.getOrNull()
+            if (result.isFailure || (success is Boolean && success != true)) {
+                _messages.emit("Unable to connect to the selected glasses")
             }
         }
     }
 
-    fun disconnectGlasses() {
-        val glassesId = state.value.glasses.firstOrNull()?.id
+    fun disconnect(glassesId: String? = null) {
         viewModelScope.launch {
-            if (glassesId != null) {
-                repository.disconnectGlasses(glassesId)
-            } else {
-                repository.disconnectGlasses()
+            val result = runCatching {
+                if (glassesId != null) {
+                    repository.disconnectGlasses(glassesId)
+                } else {
+                    repository.disconnectGlasses()
+                }
+            }
+
+            if (result.isFailure) {
+                _messages.emit("Unable to disconnect from the selected glasses")
             }
         }
     }
 
-    fun sendMessage(message: String, onResult: (Boolean) -> Unit = {}) {
+    fun refreshGlasses() {
+        viewModelScope.launch {
+            repository.disconnectGlasses()
+            val started = startLookingSafely(showMessage = false)
+            if (started) {
+                _messages.emit("Refreshing glasses…")
+            } else {
+                _messages.emit("Unable to refresh glasses")
+            }
+        }
+    }
+
+    fun displayText(
+        message: String,
+        glassesIds: List<String>,
+        onResult: (Boolean) -> Unit = {}
+    ) {
         val trimmedMessage = message.trim()
         if (trimmedMessage.isEmpty()) {
             viewModelScope.launch {
@@ -107,71 +110,64 @@ class ApplicationViewModel @Inject constructor(
             return
         }
 
-        val targetGlasses = state.value.glasses.firstOrNull()
-        val glassesId = targetGlasses?.id
-        val isConnected = targetGlasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED
-
         viewModelScope.launch {
-            if (glassesId == null || !isConnected) {
+            if (glassesIds.isEmpty()) {
                 _messages.emit("No device connected")
                 onResult(false)
                 return@launch
             }
 
-            val page = trimmedMessage.chunked(40).take(5)
-            val result = runCatching { repository.displayTextPage(glassesId, page) }
-            val success = result.getOrNull() == true
+            var allSuccess = true
+            for (id in glassesIds) {
+                val result = runCatching { repository.displayTextPage(id, listOf(trimmedMessage)) }
+                val success = result.getOrNull() == true
+                if (!success) {
+                    allSuccess = false
+                }
+            }
 
-            if (success) {
+            if (allSuccess) {
                 _messages.emit("Message sent")
             } else {
                 _messages.emit("Failed to send")
             }
 
-            onResult(success)
+            onResult(allSuccess)
         }
     }
 
-    fun stopDisplaying(onResult: (Boolean) -> Unit = {}) {
-        val targetGlasses = state.value.glasses.firstOrNull()
-        val glassesId = targetGlasses?.id
-        val isConnected = targetGlasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED
-
+    fun stopDisplaying(glassesIds: List<String>, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            if (glassesId == null || !isConnected) {
+            if (glassesIds.isEmpty()) {
                 _messages.emit("No device connected")
                 onResult(false)
                 return@launch
             }
 
-            val result = runCatching { repository.stopDisplaying(glassesId) }
-            val success = result.getOrNull() == true
-            if (success) _messages.emit("Stopped displaying") else _messages.emit("Failed to stop")
-            onResult(success)
+            var allSuccess = true
+            for (id in glassesIds) {
+                val result = runCatching { repository.stopDisplaying(id) }
+                val success = result.getOrNull() == true
+                if (!success) {
+                    allSuccess = false
+                }
+            }
+
+            if (allSuccess) {
+                _messages.emit("Stopped displaying")
+            } else {
+                _messages.emit("Failed to stop")
+            }
+            onResult(allSuccess)
         }
     }
 
     fun onScreenReady() {
-        attemptAutoReconnect(ServiceStatus.READY)
+        // No-op: user actions drive discovery and connection.
     }
 
     fun onBluetoothStateChanged(isOn: Boolean) {
-        if (isOn) attemptAutoReconnect(ServiceStatus.READY)
-    }
-
-    private fun attemptAutoReconnect(triggerStatus: ServiceStatus) {
-        autoReconnectJob?.cancel()
-        autoReconnectJob = viewModelScope.launch {
-            val started = if (triggerStatus == ServiceStatus.READY) {
-                startLookingSafely(showMessage = false)
-            } else {
-                true
-            }
-
-            if (started) {
-                runCatching { repository.connectSelectedGlasses() }
-            }
-        }
+        // No-op: waiting for explicit user actions.
     }
 
     private suspend fun startLookingSafely(showMessage: Boolean): Boolean {

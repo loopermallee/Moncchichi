@@ -175,7 +175,7 @@ class G1ServiceImpl : IG1Service.Stub() {
                     val battery = data[1].toInt() and 0xFF
                     val status = if (connected) G1ServiceState.LOOKED else G1ServiceState.READY
                     Log.d(TAG, "State update: connected=$connected, battery=$battery")
-                    stateCallback?.onStateChanged(status, null)
+                    stateCallback?.onStateChanged(status, emptyArray())
                 } else {
                     Log.w(TAG, "State update payload too short: ${'$'}{data.size}")
                 }
