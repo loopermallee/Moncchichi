@@ -35,7 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-private enum class DeviceSide(val prefix: String, val displayName: String, val defaultBattery: Int) {
+internal enum class DeviceSide(val prefix: String, val displayName: String, val defaultBattery: Int) {
     LEFT("left", "Left Glass", 82),
     RIGHT("right", "Right Glass", 67);
 
