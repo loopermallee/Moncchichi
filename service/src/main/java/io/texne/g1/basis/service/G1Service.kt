@@ -74,6 +74,7 @@ internal data class InternalDevice(
     val batteryPercentage: Int,
     val side: DeviceSide,
     val isMock: Boolean,
+    val firmwareVersion: String?,
 )
 
 private fun InternalDevice.toGlasses(): G1Glasses = G1Glasses().apply {
@@ -81,6 +82,7 @@ private fun InternalDevice.toGlasses(): G1Glasses = G1Glasses().apply {
     name = this@toGlasses.name
     connectionState = connectionState.toInt()
     batteryPercentage = batteryPercentage
+    firmwareVersion = this@toGlasses.firmwareVersion
 }
 
 private fun defaultDevices(): Map<String, InternalDevice> =
@@ -93,6 +95,7 @@ private fun defaultDevices(): Map<String, InternalDevice> =
             batteryPercentage = side.defaultBattery,
             side = side,
             isMock = true,
+            firmwareVersion = null,
         )
         device.id to device
     }
@@ -114,6 +117,7 @@ private fun buildDevicesSnapshot(
         }
         val name = result?.device?.name ?: previous?.name ?: side.displayName
         val battery = previous?.batteryPercentage ?: side.defaultBattery
+        val firmware = previous?.firmwareVersion
         val isMock = result == null || address == null
         val resolvedConnection = if (!isMock && address != null && address == selectedAddress) {
             connectionState
@@ -128,6 +132,7 @@ private fun buildDevicesSnapshot(
             batteryPercentage = battery,
             side = side,
             isMock = isMock,
+            firmwareVersion = firmware,
         )
     }
     return assignments.associateBy { it.id }
