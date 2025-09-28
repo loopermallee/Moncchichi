@@ -6,6 +6,7 @@ import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.android.HiltAndroidApp
 import dagger.hilt.components.SingletonComponent
+import io.texne.g1.hub.BuildConfig
 
 @Module
 @InstallIn(SingletonComponent::class)
