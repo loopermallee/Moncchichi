@@ -41,6 +41,7 @@ fun DeviceScreen(
 
     val scrollState = rememberScrollState()
     val statusHistory = remember { mutableStateMapOf<String, G1ServiceCommon.GlassesStatus>() }
+    val testMessages = remember { mutableStateMapOf<String, String>() }
 
     Column(
         modifier = modifier
@@ -57,6 +58,16 @@ fun DeviceScreen(
             connect = { id, name -> viewModel.connect(id, name) },
             disconnect = { id -> viewModel.disconnect(id) },
             refresh = viewModel::refreshGlasses,
+            testMessages = testMessages,
+            onTestMessageChange = { id, value -> testMessages[id] = value },
+            onSendTestMessage = { id, message, onResult ->
+                viewModel.displayText(message, listOf(id)) { success ->
+                    if (success) {
+                        testMessages[id] = ""
+                    }
+                    onResult(success)
+                }
+            },
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -69,6 +80,9 @@ fun DeviceScreen(
             val id = glass.id
             if (id != null) {
                 idsInState += id
+                if (!testMessages.containsKey(id)) {
+                    testMessages[id] = ""
+                }
                 val previous = statusHistory[id]
                 if (previous != null && previous != glass.status) {
                     if (previous == G1ServiceCommon.GlassesStatus.CONNECTING &&
@@ -98,6 +112,13 @@ fun DeviceScreen(
             val id = iterator.next()
             if (id !in idsInState) {
                 iterator.remove()
+            }
+        }
+        val messageIterator = testMessages.keys.iterator()
+        while (messageIterator.hasNext()) {
+            val id = messageIterator.next()
+            if (id !in idsInState) {
+                messageIterator.remove()
             }
         }
     }

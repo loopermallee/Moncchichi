@@ -64,6 +64,7 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
                                     name = name,
                                     status = connectionStatus,
                                     batteryPercentage = glass.batteryPercentage.takeIf { it >= 0 },
+                                    firmwareVersion = glass.firmwareVersion,
                                 )
                             )
                         }

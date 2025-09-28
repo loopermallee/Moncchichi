@@ -26,7 +26,8 @@ abstract class G1ServiceCommon<ServiceInterface> constructor(
         val status: GlassesStatus,
         // Battery information is optional in the AIDL contract (missing or -1),
         // so we surface it as nullable to avoid misleading callers.
-        val batteryPercentage: Int?
+        val batteryPercentage: Int?,
+        val firmwareVersion: String? = null,
     )
 
     enum class ServiceStatus { READY, LOOKING, LOOKED, ERROR }

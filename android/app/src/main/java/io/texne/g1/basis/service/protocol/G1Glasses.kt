@@ -11,6 +11,7 @@ class G1Glasses() : Parcelable {
     var name: String = ""
     var connectionState: Int = STATE_DISCONNECTED
     var batteryPercentage: Int = 0
+    var firmwareVersion: String = ""
     var isDisplaying: Boolean = false
     var isPaused: Boolean = false
     var scrollSpeed: Float = DEFAULT_SCROLL_SPEED
@@ -21,6 +22,7 @@ class G1Glasses() : Parcelable {
         name = parcel.readString().orEmpty()
         connectionState = parcel.readInt()
         batteryPercentage = parcel.readInt()
+        firmwareVersion = parcel.readString().orEmpty()
         isDisplaying = parcel.readByte() != 0.toByte()
         isPaused = parcel.readByte() != 0.toByte()
         scrollSpeed = parcel.readFloat()
@@ -32,6 +34,7 @@ class G1Glasses() : Parcelable {
         parcel.writeString(name)
         parcel.writeInt(connectionState)
         parcel.writeInt(batteryPercentage)
+        parcel.writeString(firmwareVersion)
         parcel.writeByte(if (isDisplaying) 1 else 0)
         parcel.writeByte(if (isPaused) 1 else 0)
         parcel.writeFloat(scrollSpeed)

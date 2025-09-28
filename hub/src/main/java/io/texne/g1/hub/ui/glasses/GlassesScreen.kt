@@ -24,6 +24,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -85,13 +86,15 @@ internal fun G1ServiceCommon.Glasses.statusText(): String = when (status) {
 internal fun G1ServiceCommon.Glasses.statusColor(): Color = when (status) {
     GlassesStatus.CONNECTED -> ConnectedColor
     GlassesStatus.CONNECTING, GlassesStatus.UNINITIALIZED, GlassesStatus.DISCONNECTING -> WarningColor
-    GlassesStatus.DISCONNECTED, GlassesStatus.ERROR -> ErrorColor
+    GlassesStatus.DISCONNECTED -> DisconnectedColor
+    GlassesStatus.ERROR -> ErrorColor
 }
 
 internal fun G1ServiceCommon.Glasses.batteryLabel(): String =
     batteryPercentage?.takeIf { it >= 0 }?.let { "$it%" } ?: "Unknown"
 
-internal fun G1ServiceCommon.Glasses.firmwareLabel(): String = "Unknown"
+internal fun G1ServiceCommon.Glasses.firmwareLabel(): String =
+    firmwareVersion?.takeIf { it.isNotBlank() } ?: "Unknown"
 
 @Composable
 fun GlassesScreen(
@@ -102,6 +105,9 @@ fun GlassesScreen(
     connect: (String, String?) -> Unit,
     disconnect: (String) -> Unit,
     refresh: () -> Unit,
+    testMessages: Map<String, String>,
+    onTestMessageChange: (String, String) -> Unit,
+    onSendTestMessage: (String, String, (Boolean) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val sortedGlasses = glasses.sortedBy { it.displayName() }
@@ -138,10 +144,25 @@ fun GlassesScreen(
                 }
 
                 items(sortedGlasses, key = { it.id ?: it.name ?: it.hashCode() }) { glass ->
+                    val glassesId = glass.id
+                    val testMessage = glassesId?.let { id -> testMessages[id] } ?: ""
+                    val messageChanged: (String) -> Unit = { newValue ->
+                        if (glassesId != null) {
+                            onTestMessageChange(glassesId, newValue)
+                        }
+                    }
+                    val sendMessage = glassesId?.let { id ->
+                        { message: String, onResult: (Boolean) -> Unit ->
+                            onSendTestMessage(id, message, onResult)
+                        }
+                    }
                     GlassesCard(
                         glasses = glass,
                         onConnect = { id, name -> connect(id, name) },
                         onDisconnect = { id -> disconnect(id) },
+                        testMessage = testMessage,
+                        onTestMessageChange = messageChanged,
+                        onSendTestMessage = sendMessage,
                     )
                 }
             } else {
@@ -312,6 +333,9 @@ private fun GlassesCard(
     glasses: G1ServiceCommon.Glasses,
     onConnect: (String, String?) -> Unit,
     onDisconnect: (String) -> Unit,
+    testMessage: String,
+    onTestMessageChange: (String) -> Unit,
+    onSendTestMessage: ((String, (Boolean) -> Unit) -> Unit)?,
 ) {
     val displayName = glasses.displayName()
     val statusColor = glasses.statusColor()
@@ -379,6 +403,34 @@ private fun GlassesCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = Bof4Mist.copy(alpha = 0.8f)
             )
+
+            if (glasses.status == GlassesStatus.CONNECTED && onSendTestMessage != null) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = testMessage,
+                        onValueChange = onTestMessageChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Test message") },
+                        minLines = 1,
+                    )
+
+                    Button(
+                        onClick = {
+                            onSendTestMessage(testMessage) { success ->
+                                if (success) {
+                                    onTestMessageChange("")
+                                }
+                            }
+                        },
+                        enabled = testMessage.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Send Test Message")
+                    }
+                }
+            }
 
             val buttonLabel: String
             val buttonEnabled: Boolean

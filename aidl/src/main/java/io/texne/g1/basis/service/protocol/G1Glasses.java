@@ -18,6 +18,7 @@ public class G1Glasses implements Parcelable {
     private String name;
     private int connectionState = UNINITIALIZED;
     private int batteryPercentage = -1;
+    private String firmwareVersion;
 
     public G1Glasses() {
     }
@@ -27,6 +28,7 @@ public class G1Glasses implements Parcelable {
         name = in.readString();
         connectionState = in.readInt();
         batteryPercentage = in.readInt();
+        firmwareVersion = in.readString();
     }
 
     public static final Creator<G1Glasses> CREATOR = new Creator<G1Glasses>() {
@@ -52,6 +54,7 @@ public class G1Glasses implements Parcelable {
         dest.writeString(name);
         dest.writeInt(connectionState);
         dest.writeInt(batteryPercentage);
+        dest.writeString(firmwareVersion);
     }
 
     public String getId() {
@@ -84,5 +87,13 @@ public class G1Glasses implements Parcelable {
 
     public void setBatteryPercentage(int batteryPercentage) {
         this.batteryPercentage = batteryPercentage;
+    }
+
+    public String getFirmwareVersion() {
+        return firmwareVersion;
+    }
+
+    public void setFirmwareVersion(String firmwareVersion) {
+        this.firmwareVersion = firmwareVersion;
     }
 }
