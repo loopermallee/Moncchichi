@@ -3,4 +3,7 @@
     <string name="notification_channel_name">Basis Service</string>
     <string name="notification_channel_description">Notifications about the service managing the G1 glasses</string>
     <string name="notification_text">The Basis service for G1 glasses is running.</string>
+    <string name="notification_title">G1 Glasses Service</string>
+    <string name="notification_description">Running in background</string>
 </resources>
+

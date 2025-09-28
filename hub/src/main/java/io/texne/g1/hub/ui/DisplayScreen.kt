@@ -4,14 +4,17 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -32,9 +35,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.texne.g1.basis.client.G1ServiceCommon
+import io.texne.g1.hub.ui.glasses.batteryLabel
+import io.texne.g1.hub.ui.glasses.displayName
+import io.texne.g1.hub.ui.glasses.firmwareLabel
+import io.texne.g1.hub.ui.glasses.statusColor
+import io.texne.g1.hub.ui.glasses.statusText
 import kotlinx.coroutines.flow.collectLatest
 
 @Composable
@@ -49,9 +58,20 @@ fun DisplayScreen(
     var lastSentPreview by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedTargetId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val connectedGlasses = state.glasses.filter { it.status == G1ServiceCommon.GlassesStatus.CONNECTED }
+    val sortedGlasses = remember(state.glasses) {
+        state.glasses.sortedBy { it.displayName() }
+    }
+    val connectedGlasses = remember(sortedGlasses) {
+        sortedGlasses.filter { it.status == G1ServiceCommon.GlassesStatus.CONNECTED }
+    }
     val connectableGlasses = remember(connectedGlasses) {
         connectedGlasses.filter { !it.id.isNullOrBlank() }
+    }
+    val allConnected = remember(sortedGlasses) {
+        sortedGlasses.isNotEmpty() &&
+            sortedGlasses.all {
+                it.status == G1ServiceCommon.GlassesStatus.CONNECTED && !it.id.isNullOrBlank()
+            }
     }
     val targetIds = remember(connectableGlasses, selectedTargetId) {
         if (connectableGlasses.isEmpty()) {
@@ -94,7 +114,12 @@ fun DisplayScreen(
             fontWeight = FontWeight.SemiBold
         )
 
-        if (state.glasses.isNotEmpty()) {
+        ConnectionStatusPanel(
+            glasses = sortedGlasses,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        if (sortedGlasses.isNotEmpty()) {
             Text(
                 text = "Choose where to send",
                 style = MaterialTheme.typography.titleSmall,
@@ -111,7 +136,9 @@ fun DisplayScreen(
                 FilterChip(
                     selected = allSelected && targetIds.isNotEmpty(),
                     onClick = { selectedTargetId = null },
-                    label = { Text("All connected") },
+                    label = {
+                        Text(if (allConnected) "All connected" else "Connected devices")
+                    },
                     enabled = connectableGlasses.isNotEmpty(),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
@@ -127,12 +154,7 @@ fun DisplayScreen(
                             selectedTargetId = if (isSelected) null else glassesId
                         },
                         enabled = glassesId != null,
-                        label = {
-                            val label = glasses.name?.takeIf { it.isNotBlank() }
-                                ?: glassesId?.takeIf { it.isNotBlank() }
-                                ?: "Unknown Glasses"
-                            Text(label)
-                        },
+                        label = { Text(glasses.displayName()) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                         )
@@ -215,8 +237,101 @@ fun DisplayScreen(
         }
 
         if (targetIds.isEmpty()) {
+            if (connectedGlasses.isEmpty()) {
+                Text(
+                    text = "Connect to your glasses from the Device screen to send a message.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionStatusPanel(
+    glasses: List<G1ServiceCommon.Glasses>,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        tonalElevation = 2.dp,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Text(
-                text = "Connect to your glasses from the Device screen to send a message.",
+                text = "Connection status",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            if (glasses.isEmpty()) {
+                Text(
+                    text = "No glasses discovered. Use the Device tab to scan for nearby glasses.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                glasses.forEachIndexed { index, glassesItem ->
+                    GlassesStatusRow(glassesItem)
+                    if (index < glasses.lastIndex) {
+                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GlassesStatusRow(glasses: G1ServiceCommon.Glasses) {
+    val statusColor = glasses.statusColor()
+    val statusText = glasses.statusText()
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .background(color = statusColor, shape = CircleShape)
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = glasses.displayName(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = statusColor,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = "Battery: ${glasses.batteryLabel()}",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Firmware: ${glasses.firmwareLabel()}",
                 style = MaterialTheme.typography.bodyMedium
             )
         }

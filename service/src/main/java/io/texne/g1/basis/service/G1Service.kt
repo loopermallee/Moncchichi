@@ -244,10 +244,8 @@ class G1Service : Service() {
         override fun observeState(callback: IG1StateCallback?) = registerStateCallback(callback)
 
         override fun lookForGlasses() {
-            if (state.value.status == ServiceStatus.LOOKING) {
-                return
-            }
             withPermissions {
+                bluetoothManager.stopScan()
                 state.value = state.value.copy(status = ServiceStatus.LOOKING)
                 bluetoothManager.startScan()
             }
@@ -280,7 +278,7 @@ class G1Service : Service() {
                         copy(devices = updatedDevices, selectedAddress = address)
                     }
                     coroutineScope.launch {
-                        val LAST_CONNECTED_ID = androidx.datastore.preferences.core.stringPreferencesKey("last_connected_id")
+                        val LAST_CONNECTED_ID = stringPreferencesKey("last_connected_id")
                         applicationContext.dataStore.edit { prefs ->
                             prefs[LAST_CONNECTED_ID] = address
                         }
@@ -433,64 +431,58 @@ class G1Service : Service() {
         val notificationChannel = NotificationChannel(
             channelId,
             getString(R.string.notification_channel_name),
-            NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply {
-            description = getString(R.string.notification_channel_description)
-        }
+            NotificationManager.IMPORTANCE_LOW
+        )
         notificationManager.createNotificationChannel(notificationChannel)
 
-        val notification = Notification.Builder(this, channelId)
-            .setSmallIcon(R.mipmap.ic_service_foreground)
-            .setContentTitle(getString(R.string.notification_channel_name))
-            .setContentText(getString(R.string.notification_text))
-            .setContentIntent(
-                PendingIntent.getActivity(
-                    this,
-                    0,
-                    Intent(this, G1Service::class.java),
-                    PendingIntent.FLAG_IMMUTABLE,
-                ),
-            )
+        val notificationIntent = Intent(this, javaClass)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification: Notification = Notification.Builder(this, channelId)
+            .setContentTitle(getString(R.string.notification_title))
+            .setContentText(getString(R.string.notification_description))
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                0xC0FFEE,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
+            startForeground(1337, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
-            startForeground(0xC0FFEE, notification)
+            startForeground(1337, notification)
         }
     }
 
     private fun withPermissions(block: () -> Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                arrayOf(
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.POST_NOTIFICATIONS,
-                )
-            } else {
-                arrayOf(
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                    Manifest.permission.BLUETOOTH_SCAN,
-                )
-            }
-            Permissions.check(
-                this@G1Service,
-                permissions,
-                "Please provide the permissions so the service can interact with the G1 glasses",
-                Permissions.Options().setCreateNewTask(true),
-                object : PermissionHandler() {
-                    override fun onGranted() {
-                        block()
-                    }
-                },
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.ACCESS_FINE_LOCATION,
             )
         } else {
-            block()
+            arrayOf(
+                Manifest.permission.BLUETOOTH,
+                Manifest.permission.BLUETOOTH_ADMIN,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            )
         }
+
+        Permissions.check(
+            this,
+            permissions,
+            null,
+            null,
+            object : PermissionHandler() {
+                override fun onGranted() {
+                    block()
+                }
+            }
+        )
     }
 }
