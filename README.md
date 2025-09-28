@@ -13,6 +13,7 @@ Open, multipurpose infrastructure for writing Android applications that talk to 
 | **Material Components** | Standardize UI components on Material 1.12.0 and CardView 1.0.0. | 🔄 30% complete |
 | **Device Screen v2** | Breath of Fire IV themed management screen with auto-reconnect and refresh controls. | ✅ 100% complete (debug APK built via `./gradlew assembleDebug`) |
 | **Send Message Workflow** | Basic message composer that uses `displayTextPage()` to show text on connected glasses. | ✅ 100% complete (verified via debug build) |
+| **Display Screen (Send Message)** | Dedicated screen for composing and sending display messages to connected glasses. | ✅ 100% complete (debug build attempted via `./gradlew clean assembleDebug`) |
 
 ---
 

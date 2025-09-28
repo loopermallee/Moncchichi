@@ -23,6 +23,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ui.DisplayActivity"
+            android:exported="false"
+            android:theme="@style/Theme.G1Hub" />
     </application>
 
 </manifest>
