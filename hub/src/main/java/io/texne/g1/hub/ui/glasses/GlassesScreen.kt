@@ -326,7 +326,7 @@ private fun GlassesCard(
                 )
 
                 Text(
-                    text = "Battery: ${glasses.batteryLevel ?: 0}%",
+                    text = "Battery: ${glasses.batteryPercentage ?: 0}%",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
