@@ -5,18 +5,23 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -27,8 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.texne.g1.basis.client.G1ServiceCommon
+import io.texne.g1.basis.client.G1ServiceCommon.GlassesStatus
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
 import io.texne.g1.hub.ui.theme.Bof4Coral
 import io.texne.g1.hub.ui.theme.Bof4Midnight
@@ -38,11 +45,53 @@ import io.texne.g1.hub.ui.theme.Bof4Sky
 import io.texne.g1.hub.ui.theme.Bof4Steel
 import io.texne.g1.hub.ui.theme.Bof4Verdant
 import io.texne.g1.hub.ui.theme.Bof4Warning
+import java.util.Locale
 
 private val ConnectedColor = Bof4Verdant
 private val DisconnectedColor = Bof4Sand
 private val ErrorColor = Bof4Coral
 private val WarningColor = Bof4Warning
+
+private val GenericNameRegex = Regex("^(left|right)([-_][a-z0-9]+)?$", RegexOption.IGNORE_CASE)
+
+internal fun G1ServiceCommon.Glasses.displayName(): String {
+    val id = id?.takeIf { it.isNotBlank() }
+    val rawName = name?.takeIf { it.isNotBlank() }
+    val lowerId = id?.lowercase(Locale.US)
+    val lowerName = rawName?.lowercase(Locale.US)
+    val isGenericName = lowerName != null && (lowerId == lowerName || GenericNameRegex.matches(lowerName))
+    val sideLabel = when {
+        lowerName?.startsWith("left") == true || lowerId?.startsWith("left") == true -> "Left Glasses"
+        lowerName?.startsWith("right") == true || lowerId?.startsWith("right") == true -> "Right Glasses"
+        else -> null
+    }
+    return when {
+        rawName != null && !isGenericName -> rawName
+        sideLabel != null -> sideLabel
+        id != null -> id
+        else -> "Unknown Glasses"
+    }
+}
+
+internal fun G1ServiceCommon.Glasses.statusText(): String = when (status) {
+    GlassesStatus.CONNECTED -> "Connected"
+    GlassesStatus.CONNECTING -> "Connecting"
+    GlassesStatus.DISCONNECTING -> "Disconnecting"
+    GlassesStatus.ERROR -> "Connection Error"
+    GlassesStatus.DISCONNECTED -> "Disconnected"
+    GlassesStatus.UNINITIALIZED -> "Initializing"
+}
+
+internal fun G1ServiceCommon.Glasses.statusColor(): Color = when (status) {
+    GlassesStatus.CONNECTED -> ConnectedColor
+    GlassesStatus.CONNECTING, GlassesStatus.UNINITIALIZED, GlassesStatus.DISCONNECTING -> WarningColor
+    GlassesStatus.DISCONNECTED, GlassesStatus.ERROR -> ErrorColor
+}
+
+internal fun G1ServiceCommon.Glasses.batteryLabel(): String =
+    batteryPercentage?.takeIf { it >= 0 }?.let { "$it%" } ?: "Unknown"
+
+internal fun G1ServiceCommon.Glasses.firmwareLabel(): String = "Unknown"
 
 @Composable
 fun GlassesScreen(
@@ -50,90 +99,58 @@ fun GlassesScreen(
     serviceStatus: ServiceStatus,
     isLooking: Boolean,
     serviceError: Boolean,
-    connect: (String?) -> Unit,
-    disconnect: (String?) -> Unit,
+    connect: (String, String?) -> Unit,
+    disconnect: (String) -> Unit,
     refresh: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    val connectionStatuses = glasses.map { it.status }
-    val connectedCount = connectionStatuses.count { it == G1ServiceCommon.GlassesStatus.CONNECTED }
-    val hasConnecting = connectionStatuses.any { it == G1ServiceCommon.GlassesStatus.CONNECTING }
-    val hasDisconnecting = connectionStatuses.any { it == G1ServiceCommon.GlassesStatus.DISCONNECTING }
-    val hasError = serviceError || connectionStatuses.any { it == G1ServiceCommon.GlassesStatus.ERROR }
-
-    val statusLabel = when {
-        serviceError -> "Service Error"
-        hasDisconnecting -> "Disconnecting…"
-        hasConnecting -> "Connecting…"
-        isLooking -> "Scanning for glasses"
-        connectedCount > 0 && connectedCount == glasses.size -> "All glasses connected"
-        connectedCount > 0 -> "$connectedCount of ${glasses.size} connected"
-        glasses.isNotEmpty() -> "Glasses discovered"
-        else -> "Ready to connect"
-    }
-
-    val statusColor = when {
-        hasError -> ErrorColor
-        connectedCount > 0 && connectedCount == glasses.size -> ConnectedColor
-        connectedCount > 0 -> Bof4Sky
-        hasConnecting || hasDisconnecting || isLooking -> WarningColor
-        else -> DisconnectedColor
-    }
-
-    val shouldDisconnect = connectedCount > 0 || hasDisconnecting
-    val buttonLabel = when {
-        hasDisconnecting -> "Disconnecting…"
-        shouldDisconnect -> "Disconnect"
-        hasConnecting -> "Connecting…"
-        else -> "Connect"
-    }
-
-    val showProgress = isLooking || hasConnecting || hasDisconnecting
-
-    val isActionEnabled = !serviceError && !hasConnecting && !hasDisconnecting
-
+    val sortedGlasses = glasses.sortedBy { it.displayName() }
     Box(
         modifier = modifier
             .fillMaxWidth()
             .background(Bof4Midnight)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 32.dp),
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            HeroHeader()
+            item { HeroHeader() }
 
-            StatusPanel(
-                statusLabel = statusLabel,
-                statusColor = statusColor,
-                buttonLabel = buttonLabel,
-                onPrimaryAction = if (shouldDisconnect) {
-                    { disconnect(null) }
-                } else {
-                    { connect(null) }
-                },
-                onRefresh = refresh,
-                enabled = isActionEnabled,
-                showProgress = showProgress,
-                isLooking = isLooking,
-                serviceError = serviceError
-            )
+            item {
+                StatusPanel(
+                    glasses = sortedGlasses,
+                    status = serviceStatus,
+                    isLooking = isLooking,
+                    serviceError = serviceError,
+                    onRefresh = refresh,
+                )
+            }
 
-            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                glasses.forEach { glass ->
+            if (sortedGlasses.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Available Glasses",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Bof4Mist,
+                    )
+                }
+
+                items(sortedGlasses, key = { it.id ?: it.name ?: it.hashCode() }) { glass ->
                     GlassesCard(
                         glasses = glass,
-                        onConnect = connect,
-                        onDisconnect = disconnect,
+                        onConnect = { id, name -> connect(id, name) },
+                        onDisconnect = { id -> disconnect(id) },
                     )
+                }
+            } else {
+                item {
+                    NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking)
                 }
             }
 
-            if (glasses.isEmpty()) {
-                NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking)
-            }
+            item { Spacer(modifier = Modifier.height(8.dp)) }
         }
     }
 }
@@ -167,23 +184,43 @@ private fun HeroHeader() {
             Text(
                 text = "Discover, pair, and manage your G1 glasses with a single tap.",
                 style = MaterialTheme.typography.bodyMedium
-        )
+            )
+        }
     }
-}
 }
 
 @Composable
 private fun StatusPanel(
-    statusLabel: String,
-    statusColor: Color,
-    buttonLabel: String,
-    onPrimaryAction: () -> Unit,
-    onRefresh: () -> Unit,
-    enabled: Boolean,
-    showProgress: Boolean,
+    glasses: List<G1ServiceCommon.Glasses>,
+    status: ServiceStatus,
     isLooking: Boolean,
-    serviceError: Boolean
+    serviceError: Boolean,
+    onRefresh: () -> Unit,
 ) {
+    val connectionStatuses = glasses.map { it.status }
+    val connectedCount = connectionStatuses.count { it == GlassesStatus.CONNECTED }
+    val hasConnecting = connectionStatuses.any { it == GlassesStatus.CONNECTING || it == GlassesStatus.UNINITIALIZED }
+    val hasError = serviceError || connectionStatuses.any { it == GlassesStatus.ERROR }
+
+    val statusLabel = when {
+        serviceError -> "Service Error"
+        hasError -> "Attention Needed"
+        hasConnecting -> "Connecting to glasses"
+        isLooking -> "Scanning for glasses"
+        connectedCount > 0 && connectedCount == glasses.size -> "All glasses connected"
+        connectedCount > 0 -> "$connectedCount of ${glasses.size} connected"
+        status == ServiceStatus.LOOKING -> "Scanning for glasses"
+        status == ServiceStatus.LOOKED && glasses.isEmpty() -> "No glasses discovered"
+        else -> "Ready to scan"
+    }
+
+    val statusColor = when {
+        serviceError || hasError -> ErrorColor
+        connectedCount > 0 && connectedCount == glasses.size -> ConnectedColor
+        hasConnecting || isLooking -> WarningColor
+        else -> DisconnectedColor
+    }
+
     Surface(
         color = Bof4Steel.copy(alpha = 0.85f),
         contentColor = Bof4Mist,
@@ -219,40 +256,7 @@ private fun StatusPanel(
                 )
             }
 
-            if (showProgress) {
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp),
-                    color = statusColor,
-                    trackColor = statusColor.copy(alpha = 0.2f)
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(
-                    onClick = onPrimaryAction,
-                    enabled = enabled,
-                    colors = ButtonDefaults.buttonColors(containerColor = statusColor.copy(alpha = 0.85f)),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(buttonLabel)
-                }
-
-                OutlinedButton(
-                    onClick = onRefresh,
-                    enabled = !serviceError,
-                    border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f)),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Refresh")
-                }
-            }
-
-            if (isLooking) {
+            if (isLooking || hasConnecting) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -263,12 +267,41 @@ private fun StatusPanel(
                         color = statusColor,
                         strokeWidth = 3.dp
                     )
-
                     Text(
-                        text = "Scanning for nearby G1 glasses…",
+                        text = if (isLooking) {
+                            "Scanning for nearby G1 glasses…"
+                        } else {
+                            "Connecting to selected glasses…"
+                        },
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
+            }
+
+            Divider(color = Bof4Sky.copy(alpha = 0.35f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Discovered: ${glasses.size}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "Connected: $connectedCount",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
+            OutlinedButton(
+                onClick = onRefresh,
+                enabled = !serviceError,
+                border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Refresh")
             }
         }
     }
@@ -277,9 +310,14 @@ private fun StatusPanel(
 @Composable
 private fun GlassesCard(
     glasses: G1ServiceCommon.Glasses,
-    onConnect: (String?) -> Unit,
-    onDisconnect: (String?) -> Unit,
+    onConnect: (String, String?) -> Unit,
+    onDisconnect: (String) -> Unit,
 ) {
+    val displayName = glasses.displayName()
+    val statusColor = glasses.statusColor()
+    val statusText = glasses.statusText()
+    val glassesId = glasses.id
+
     Card(
         colors = CardDefaults.cardColors(
             containerColor = Bof4Steel.copy(alpha = 0.7f),
@@ -292,113 +330,94 @@ private fun GlassesCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            val displayName = glasses.name?.takeIf { it.isNotBlank() }
-                ?: glasses.id?.takeIf { it.isNotBlank() }
-                ?: "Unknown Glasses"
-
-            Text(
-                text = displayName,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            val (statusLabel, statusColor) = when (glasses.status) {
-                G1ServiceCommon.GlassesStatus.CONNECTED -> "Connected" to ConnectedColor
-                G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…" to WarningColor
-                G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…" to WarningColor
-                G1ServiceCommon.GlassesStatus.ERROR -> "Connection failed" to ErrorColor
-                G1ServiceCommon.GlassesStatus.DISCONNECTED -> "Disconnected" to DisconnectedColor
-                G1ServiceCommon.GlassesStatus.UNINITIALIZED -> "Ready to connect" to DisconnectedColor
-            }
-
-            Surface(
-                color = statusColor.copy(alpha = 0.12f),
-                contentColor = statusColor,
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, statusColor.copy(alpha = 0.6f))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = statusLabel,
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
+                        .size(12.dp)
+                        .background(color = statusColor, shape = CircleShape)
+                )
+
+                Text(
+                    text = displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
-            val batteryLabel = glasses.batteryPercentage?.takeIf { it >= 0 }?.let { "$it%" }
-                ?: "Unknown"
             Text(
-                text = "Battery: $batteryLabel",
-                style = MaterialTheme.typography.bodyMedium
+                text = statusText,
+                color = statusColor,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold
             )
 
-            val safeId = glasses.id?.takeIf { it.isNotBlank() } ?: "Unknown ID"
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Battery: ${glasses.batteryLabel()}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                Text(
+                    text = "Firmware: ${glasses.firmwareLabel()}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
             Text(
-                text = "ID: $safeId",
+                text = "ID: ${glassesId ?: "Unknown"}",
                 style = MaterialTheme.typography.bodySmall,
                 color = Bof4Mist.copy(alpha = 0.8f)
             )
 
-            val glassesId = glasses.id
-            if (!glassesId.isNullOrBlank()) {
-                when (glasses.status) {
-                    G1ServiceCommon.GlassesStatus.CONNECTED -> {
-                        OutlinedButton(
-                            modifier = Modifier.padding(top = 12.dp),
-                            onClick = { onDisconnect(glassesId) },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Bof4Mist),
-                        ) {
-                            Text("Disconnect")
-                        }
-                    }
-
-                    G1ServiceCommon.GlassesStatus.CONNECTING,
-                    G1ServiceCommon.GlassesStatus.DISCONNECTING -> {
-                        LinearProgressIndicator(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            color = statusColor.copy(alpha = 0.8f)
-                        )
-                    }
-
-                    G1ServiceCommon.GlassesStatus.ERROR -> {
-                        Button(
-                            modifier = Modifier.padding(top = 12.dp),
-                            onClick = { onConnect(glassesId) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = ErrorColor,
-                                contentColor = Color.White,
-                            ),
-                        ) {
-                            Text("Retry")
-                        }
-                    }
-
-                    G1ServiceCommon.GlassesStatus.DISCONNECTED,
-                    G1ServiceCommon.GlassesStatus.UNINITIALIZED -> {
-                        val label = if (glasses.status == G1ServiceCommon.GlassesStatus.UNINITIALIZED) {
-                            "Connect"
-                        } else {
-                            "Retry"
-                        }
-                        Button(
-                            modifier = Modifier.padding(top = 12.dp),
-                            onClick = { onConnect(glassesId) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Bof4Verdant,
-                                contentColor = Color.White,
-                            ),
-                        ) {
-                            Text(label)
-                        }
-                    }
+            val buttonLabel: String
+            val buttonEnabled: Boolean
+            val onClick: (() -> Unit)?
+            when (glasses.status) {
+                GlassesStatus.CONNECTED -> {
+                    buttonLabel = "Disconnect"
+                    buttonEnabled = glassesId != null
+                    onClick = glassesId?.let { id -> { onDisconnect(id) } }
                 }
+
+                GlassesStatus.CONNECTING, GlassesStatus.DISCONNECTING -> {
+                    buttonLabel = if (glasses.status == GlassesStatus.CONNECTING) "Connecting…" else "Disconnecting…"
+                    buttonEnabled = false
+                    onClick = null
+                }
+
+                GlassesStatus.ERROR, GlassesStatus.DISCONNECTED -> {
+                    buttonLabel = "Retry"
+                    buttonEnabled = glassesId != null
+                    onClick = glassesId?.let { id -> { onConnect(id, displayName) } }
+                }
+
+                GlassesStatus.UNINITIALIZED -> {
+                    buttonLabel = "Connect"
+                    buttonEnabled = glassesId != null
+                    onClick = glassesId?.let { id -> { onConnect(id, displayName) } }
+                }
+            }
+
+            Button(
+                onClick = { onClick?.invoke() },
+                enabled = buttonEnabled,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = statusColor.copy(alpha = if (buttonEnabled) 0.85f else 0.5f)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(buttonLabel)
             }
         }
     }
@@ -424,18 +443,18 @@ private fun NoGlassesMessage(
         color = Bof4Steel.copy(alpha = 0.8f),
         contentColor = Bof4Mist,
         shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.45f))
+        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
                 text = "No glasses detected",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.SemiBold
             )
 
             Text(

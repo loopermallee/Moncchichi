@@ -49,8 +49,12 @@ class ApplicationViewModel @Inject constructor(
         }
     }
 
-    fun connect(glassesId: String? = null) {
+    fun connect(glassesId: String? = null, glassesName: String? = null) {
         viewModelScope.launch {
+            if (glassesId != null) {
+                val label = glassesName?.takeIf { it.isNotBlank() } ?: "glasses"
+                _messages.emit("Connecting to $label…")
+            }
             val result = if (glassesId != null) {
                 runCatching { repository.connectGlasses(glassesId) }
             } else {
@@ -80,10 +84,22 @@ class ApplicationViewModel @Inject constructor(
         }
     }
 
+    fun refreshGlasses() {
+        viewModelScope.launch {
+            repository.disconnectGlasses()
+            val started = startLookingSafely(showMessage = false)
+            if (started) {
+                _messages.emit("Refreshing glasses…")
+            } else {
+                _messages.emit("Unable to refresh glasses")
+            }
+        }
+    }
+
     fun displayText(
         message: String,
         glassesIds: List<String>,
-        onResult: (Boolean) -> Unit = {}
+        onResult: (Boolean) -> Unit = {},
     ) {
         val trimmedMessage = message.trim()
         if (trimmedMessage.isEmpty()) {
@@ -101,9 +117,10 @@ class ApplicationViewModel @Inject constructor(
                 return@launch
             }
 
+            val page = trimmedMessage.chunked(40).take(5)
             var allSuccess = true
             for (id in glassesIds) {
-                val result = runCatching { repository.displayTextPage(id, listOf(trimmedMessage)) }
+                val result = runCatching { repository.displayTextPage(id, page) }
                 val success = result.getOrNull() == true
                 if (!success) {
                     allSuccess = false
