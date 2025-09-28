@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.le.ScanResult
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -34,6 +35,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
+private enum class DeviceSide(val prefix: String, val displayName: String, val defaultBattery: Int) {
+    LEFT("left", "Left Glass", 82),
+    RIGHT("right", "Right Glass", 67);
+
+    fun buildId(address: String?): String {
+        val suffix = address
+            ?.takeLast(4)
+            ?.replace(":", "")
+            ?.lowercase()
+            ?: "mock"
+        return "$prefix-$suffix"
+    }
+}
+
 private fun DeviceManager.ConnectionState.toInt(): Int =
     when (this) {
         DeviceManager.ConnectionState.DISCONNECTED -> G1Glasses.DISCONNECTED
@@ -51,16 +66,78 @@ private fun ServiceStatus.toInt(): Int =
         ServiceStatus.ERROR -> G1ServiceState.ERROR
     }
 
+internal data class InternalDevice(
+    val id: String,
+    val address: String?,
+    val name: String,
+    val connectionState: DeviceManager.ConnectionState,
+    val batteryPercentage: Int,
+    val side: DeviceSide,
+    val isMock: Boolean,
+)
+
 private fun InternalDevice.toGlasses(): G1Glasses = G1Glasses().apply {
-    id = address
+    id = this@toGlasses.id
     name = this@toGlasses.name
     connectionState = connectionState.toInt()
-    batteryPercentage = -1
+    batteryPercentage = batteryPercentage
+}
+
+private fun defaultDevices(): Map<String, InternalDevice> =
+    DeviceSide.values().associate { side ->
+        val device = InternalDevice(
+            id = side.buildId(null),
+            address = null,
+            name = side.displayName,
+            connectionState = DeviceManager.ConnectionState.DISCONNECTED,
+            batteryPercentage = side.defaultBattery,
+            side = side,
+            isMock = true,
+        )
+        device.id to device
+    }
+
+private fun buildDevicesSnapshot(
+    scanResults: List<ScanResult>,
+    previousState: InternalState,
+    selectedAddress: String?,
+    connectionState: DeviceManager.ConnectionState,
+): Map<String, InternalDevice> {
+    val assignments = DeviceSide.values().mapIndexed { index, side ->
+        val result = scanResults.getOrNull(index)
+        val previous = previousState.devices.values.firstOrNull { it.side == side }
+        val address = result?.device?.address ?: previous?.address
+        val resolvedId = when {
+            address != null -> side.buildId(address)
+            previous != null -> previous.id
+            else -> side.buildId(null)
+        }
+        val name = result?.device?.name ?: previous?.name ?: side.displayName
+        val battery = previous?.batteryPercentage ?: side.defaultBattery
+        val isMock = result == null || address == null
+        val resolvedConnection = if (!isMock && address != null && address == selectedAddress) {
+            connectionState
+        } else {
+            DeviceManager.ConnectionState.DISCONNECTED
+        }
+        InternalDevice(
+            id = resolvedId,
+            address = address,
+            name = name,
+            connectionState = resolvedConnection,
+            batteryPercentage = battery,
+            side = side,
+            isMock = isMock,
+        )
+    }
+    return assignments.associateBy { it.id }
 }
 
 private fun InternalState.toState(): G1ServiceState = G1ServiceState().apply {
     status = this@toState.status.toInt()
-    glasses = this@toState.devices.values.map { it.toGlasses() }.toTypedArray()
+    glasses = DeviceSide.values().mapNotNull { side ->
+        this@toState.devices.values.firstOrNull { it.side == side }?.toGlasses()
+    }.toTypedArray()
 }
 
 enum class ServiceStatus {
@@ -70,15 +147,9 @@ enum class ServiceStatus {
     ERROR,
 }
 
-internal data class InternalDevice(
-    val address: String,
-    val name: String,
-    val connectionState: DeviceManager.ConnectionState,
-)
-
 internal data class InternalState(
     val status: ServiceStatus = ServiceStatus.READY,
-    val devices: Map<String, InternalDevice> = emptyMap(),
+    val devices: Map<String, InternalDevice> = defaultDevices(),
     val selectedAddress: String? = null,
 )
 
@@ -99,17 +170,24 @@ class G1Service : Service() {
         observeBluetooth()
         coroutineScope.launch {
             bluetoothManager.devices.collectLatest { results ->
-                state.value = state.value.copy(
-                    status = if (results.isEmpty()) ServiceStatus.READY else ServiceStatus.LOOKED,
-                    devices = results.associate { result ->
-                        result.device.address to InternalDevice(
-                            address = result.device.address,
-                            name = result.device.name ?: result.device.address,
-                            connectionState = if (bluetoothManager.selectedAddress.value == result.device.address &&
-                                bluetoothManager.isConnected()
-                            ) DeviceManager.ConnectionState.CONNECTED else DeviceManager.ConnectionState.DISCONNECTED,
-                        )
-                    },
+                val current = state.value
+                val selectedAddress = bluetoothManager.selectedAddress.value
+                val connectionState = bluetoothManager.connectionState.value
+                val devices = buildDevicesSnapshot(
+                    scanResults = results,
+                    previousState = current,
+                    selectedAddress = selectedAddress,
+                    connectionState = connectionState,
+                )
+                val hasDiscoveredDevice = devices.values.any { !it.isMock }
+                val nextStatus = when {
+                    current.status == ServiceStatus.LOOKING && !hasDiscoveredDevice -> ServiceStatus.LOOKING
+                    hasDiscoveredDevice -> ServiceStatus.LOOKED
+                    else -> ServiceStatus.READY
+                }
+                state.value = current.copy(
+                    status = nextStatus,
+                    devices = devices,
                 )
             }
         }
@@ -139,14 +217,15 @@ class G1Service : Service() {
         coroutineScope.launch {
             bluetoothManager.connectionState.collectLatest { connection ->
                 val address = bluetoothManager.selectedAddress.value
-                state.value = state.value.copy(
-                    devices = state.value.devices.mapValues { entry ->
-                        if (entry.key == address) {
-                            entry.value.copy(connectionState = connection)
-                        } else {
-                            entry.value.copy(connectionState = DeviceManager.ConnectionState.DISCONNECTED)
-                        }
-                    },
+                val current = state.value
+                val updatedDevices = current.devices.values.associate { device ->
+                    val isSelected = address != null && device.address == address
+                    val resolvedState = if (isSelected) connection else DeviceManager.ConnectionState.DISCONNECTED
+                    val updated = device.copy(connectionState = resolvedState)
+                    updated.id to updated
+                }
+                state.value = current.copy(
+                    devices = updatedDevices,
                     selectedAddress = address,
                 )
             }
@@ -175,7 +254,10 @@ class G1Service : Service() {
         }
 
         override fun connectGlasses(id: String?, callback: OperationCallback?) {
-            val address = id ?: state.value.selectedAddress
+            val address = resolveDeviceAddress(id)
+                ?: state.value.selectedAddress
+                ?: state.value.devices.values.firstOrNull { !it.isMock }?.address
+                ?: state.value.devices.values.firstOrNull()?.address
             if (address == null) {
                 callback?.onResult(false)
                 return
@@ -185,6 +267,18 @@ class G1Service : Service() {
                 if (!result) {
                     callback?.onResult(false)
                 } else {
+                    state.value = state.value.run {
+                        val updatedDevices = devices.values.associate { device ->
+                            val isTarget = device.address == address
+                            val updated = if (isTarget) {
+                                device.copy(connectionState = DeviceManager.ConnectionState.CONNECTING)
+                            } else {
+                                device.copy(connectionState = DeviceManager.ConnectionState.DISCONNECTED)
+                            }
+                            updated.id to updated
+                        }
+                        copy(devices = updatedDevices, selectedAddress = address)
+                    }
                     coroutineScope.launch {
                         val LAST_CONNECTED_ID = androidx.datastore.preferences.core.stringPreferencesKey("last_connected_id")
                         applicationContext.dataStore.edit { prefs ->
@@ -213,7 +307,25 @@ class G1Service : Service() {
         }
 
         override fun disconnectGlasses(id: String?, callback: OperationCallback?) {
-            bluetoothManager.disconnect()
+            val address = resolveDeviceAddress(id) ?: state.value.selectedAddress
+            val shouldDisconnect = address != null && state.value.selectedAddress == address
+            if (shouldDisconnect) {
+                bluetoothManager.disconnect()
+            }
+            if (address != null) {
+                state.value = state.value.run {
+                    val updatedDevices = devices.values.associate { device ->
+                        val matches = device.address == address || device.id == id
+                        val updated = if (matches) {
+                            device.copy(connectionState = DeviceManager.ConnectionState.DISCONNECTED)
+                        } else {
+                            device
+                        }
+                        updated.id to updated
+                    }
+                    copy(devices = updatedDevices)
+                }
+            }
             callback?.onResult(true)
         }
 
@@ -234,9 +346,15 @@ class G1Service : Service() {
         }
 
         override fun connectPreferredGlasses() {
-            val preferred = state.value.selectedAddress ?: state.value.devices.keys.firstOrNull()
-            if (preferred != null) {
-                connectGlasses(preferred, null)
+            val preferredAddress = state.value.selectedAddress
+            if (preferredAddress != null) {
+                connectGlasses(preferredAddress, null)
+                return
+            }
+            val firstAvailable = state.value.devices.values.firstOrNull { !it.isMock && it.address != null }
+            val identifier = firstAvailable?.address
+            if (identifier != null) {
+                connectGlasses(identifier, null)
             }
         }
 
@@ -269,11 +387,25 @@ class G1Service : Service() {
                     ServiceStatus.LOOKED -> G1ServiceState.LOOKED
                     ServiceStatus.ERROR -> G1ServiceState.ERROR
                 }
-                val activeDeviceId = internalState.selectedAddress
-                    ?: internalState.devices.keys.firstOrNull()
-                callback.onStateChanged(status, activeDeviceId)
+                val glasses = DeviceSide.values().mapNotNull { side ->
+                    internalState.devices.values.firstOrNull { it.side == side }?.toGlasses()
+                }.toTypedArray()
+                callback.onStateChanged(status, glasses)
             }
         }
+    }
+
+    private fun resolveDeviceAddress(idOrAddress: String?): String? {
+        if (idOrAddress.isNullOrEmpty()) {
+            return null
+        }
+        val current = state.value
+        val fromId = current.devices[idOrAddress]?.address
+        if (fromId != null) {
+            return fromId
+        }
+        val byAddress = current.devices.values.firstOrNull { it.address == idOrAddress }?.address
+        return byAddress ?: idOrAddress
     }
 
     private fun commonDisplayTextPage(page: Array<out String?>?, callback: OperationCallback?) {

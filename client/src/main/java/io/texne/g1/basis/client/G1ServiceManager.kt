@@ -5,9 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import io.texne.g1.basis.service.protocol.G1Glasses
+import io.texne.g1.basis.service.protocol.G1ServiceState
 import io.texne.g1.basis.service.protocol.IG1Service
 import io.texne.g1.basis.service.protocol.IG1StateCallback
-import io.texne.g1.basis.service.protocol.G1ServiceState
+import kotlin.collections.buildList
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -37,30 +39,34 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
         ) {
             service = IG1Service.Stub.asInterface(binder)
             service?.observeState(object : IG1StateCallback.Stub() {
-                override fun onStateChanged(status: Int, deviceId: String?) {
+                override fun onStateChanged(status: Int, glassesPayload: Array<out G1Glasses>?) {
                     val serviceStatus = when (status) {
                         G1ServiceState.READY -> ServiceStatus.READY
                         G1ServiceState.LOOKING -> ServiceStatus.LOOKING
                         G1ServiceState.LOOKED -> ServiceStatus.LOOKED
                         else -> ServiceStatus.ERROR
                     }
-                    val glasses = if (deviceId != null) {
-                        val glassesStatus = when (serviceStatus) {
-                            ServiceStatus.LOOKED -> GlassesStatus.CONNECTED
-                            ServiceStatus.LOOKING -> GlassesStatus.CONNECTING
-                            else -> GlassesStatus.DISCONNECTED
-                        }
-                        listOf(
-                            Glasses(
-                                id = deviceId,
-                                name = deviceId,
-                                status = glassesStatus,
-                                // Battery level is unknown at discovery time.
-                                batteryPercentage = null,
+                    val glasses = buildList {
+                        glassesPayload?.forEach { glass ->
+                            val connectionStatus = when (glass.connectionState) {
+                                G1Glasses.UNINITIALIZED -> GlassesStatus.UNINITIALIZED
+                                G1Glasses.DISCONNECTED -> GlassesStatus.DISCONNECTED
+                                G1Glasses.CONNECTING -> GlassesStatus.CONNECTING
+                                G1Glasses.CONNECTED -> GlassesStatus.CONNECTED
+                                G1Glasses.DISCONNECTING -> GlassesStatus.DISCONNECTING
+                                else -> GlassesStatus.ERROR
+                            }
+                            val id = glass.id
+                            val name = glass.name ?: id
+                            add(
+                                Glasses(
+                                    id = id,
+                                    name = name,
+                                    status = connectionStatus,
+                                    batteryPercentage = glass.batteryPercentage.takeIf { it >= 0 },
+                                )
                             )
-                        )
-                    } else {
-                        emptyList()
+                        }
                     }
                     writableState.value = State(
                         status = serviceStatus,
