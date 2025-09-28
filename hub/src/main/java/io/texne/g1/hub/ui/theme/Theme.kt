@@ -1,56 +1,36 @@
 package io.texne.g1.hub.ui.theme
 
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+private val Bof4ColorScheme = darkColorScheme(
+    primary = Bof4Verdant,
+    onPrimary = Bof4Midnight,
+    primaryContainer = Color(0xFF77A98B),
+    onPrimaryContainer = Bof4Midnight,
+    secondary = Bof4Sky,
+    onSecondary = Bof4Midnight,
+    secondaryContainer = Color(0xFF80B4E0),
+    onSecondaryContainer = Bof4Midnight,
+    tertiary = Bof4Ember,
+    onTertiary = Bof4Midnight,
+    background = Bof4Midnight,
+    onBackground = Bof4Mist,
+    surface = Bof4Steel,
+    onSurface = Bof4Mist,
+    surfaceVariant = Color(0xFF274967),
+    onSurfaceVariant = Bof4Sand,
+    outline = Bof4Sky.copy(alpha = 0.6f),
+    error = Bof4Coral,
+    onError = Bof4Mist
 )
 
 @Composable
-fun G1HubTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
+fun G1HubTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = Bof4ColorScheme,
         typography = Typography,
         content = content
     )

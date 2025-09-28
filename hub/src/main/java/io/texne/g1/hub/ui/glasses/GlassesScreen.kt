@@ -30,23 +30,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
+import io.texne.g1.hub.ui.theme.Bof4Coral
+import io.texne.g1.hub.ui.theme.Bof4Midnight
+import io.texne.g1.hub.ui.theme.Bof4Mist
+import io.texne.g1.hub.ui.theme.Bof4Sand
+import io.texne.g1.hub.ui.theme.Bof4Sky
+import io.texne.g1.hub.ui.theme.Bof4Steel
+import io.texne.g1.hub.ui.theme.Bof4Verdant
+import io.texne.g1.hub.ui.theme.Bof4Warning
 
-private object Bof4Palette {
-    val Midnight = Color(0xFF081726)
-    val Steel = Color(0xFF1F3D5B)
-    val Mist = Color(0xFFE9E2CE)
-    val Sand = Color(0xFFCDB894)
-    val Ember = Color(0xFFE39A3B)
-    val Sky = Color(0xFF6CA6D9)
-    val Verdant = Color(0xFF5D9479)
-    val Coral = Color(0xFFD9644C)
-    val Warning = Color(0xFFF2C74E)
-}
-
-private val ConnectedColor = Bof4Palette.Verdant
-private val DisconnectedColor = Bof4Palette.Sand
-private val ErrorColor = Bof4Palette.Coral
-private val WarningColor = Bof4Palette.Warning
+private val ConnectedColor = Bof4Verdant
+private val DisconnectedColor = Bof4Sand
+private val ErrorColor = Bof4Coral
+private val WarningColor = Bof4Warning
 
 @Composable
 fun GlassesScreen(
@@ -103,7 +99,7 @@ fun GlassesScreen(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(Bof4Palette.Midnight)
+            .background(Bof4Midnight)
     ) {
         Column(
             modifier = Modifier
@@ -136,7 +132,12 @@ fun GlassesScreen(
 
             Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 cardEntries.forEach { (title, glass) ->
-                    GlassesCard(title = title, glasses = glass)
+                    GlassesCard(
+                        title = title,
+                        glasses = glass,
+                        onConnect = connect,
+                        onDisconnect = disconnect
+                    )
                 }
             }
 
@@ -150,10 +151,10 @@ fun GlassesScreen(
 @Composable
 private fun HeroHeader() {
     Surface(
-        color = Bof4Palette.Steel.copy(alpha = 0.85f),
-        contentColor = Bof4Palette.Mist,
+        color = Bof4Steel.copy(alpha = 0.85f),
+        contentColor = Bof4Mist,
         shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.55f))
+        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
     ) {
         Column(
             modifier = Modifier
@@ -176,9 +177,9 @@ private fun HeroHeader() {
             Text(
                 text = "Discover, pair, and manage your G1 glasses with a single tap.",
                 style = MaterialTheme.typography.bodyMedium
-            )
-        }
+        )
     }
+}
 }
 
 @Composable
@@ -194,10 +195,10 @@ private fun StatusPanel(
     serviceError: Boolean
 ) {
     Surface(
-        color = Bof4Palette.Steel.copy(alpha = 0.85f),
-        contentColor = Bof4Palette.Mist,
+        color = Bof4Steel.copy(alpha = 0.85f),
+        contentColor = Bof4Mist,
         shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.55f))
+        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
     ) {
         Column(
             modifier = Modifier
@@ -254,7 +255,7 @@ private fun StatusPanel(
                 OutlinedButton(
                     onClick = onRefresh,
                     enabled = !serviceError,
-                    border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.55f)),
+                    border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f)),
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Refresh")
@@ -286,14 +287,16 @@ private fun StatusPanel(
 @Composable
 private fun GlassesCard(
     title: String,
-    glasses: G1ServiceCommon.Glasses?
+    glasses: G1ServiceCommon.Glasses?,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = Bof4Palette.Steel.copy(alpha = 0.7f),
-            contentColor = Bof4Palette.Mist
+            containerColor = Bof4Steel.copy(alpha = 0.7f),
+            contentColor = Bof4Mist
         ),
-        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.35f)),
         shape = RoundedCornerShape(24.dp)
     ) {
         Column(
@@ -308,27 +311,79 @@ private fun GlassesCard(
                 fontWeight = FontWeight.SemiBold
             )
 
-            if (glasses == null) {
+            val (statusLabel, statusColor) = when (glasses?.status) {
+                G1ServiceCommon.GlassesStatus.CONNECTED -> "Connected" to ConnectedColor
+                G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting" to WarningColor
+                G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting" to WarningColor
+                G1ServiceCommon.GlassesStatus.ERROR -> "Connection Error" to ErrorColor
+                G1ServiceCommon.GlassesStatus.DISCONNECTED -> "Disconnected" to DisconnectedColor
+                G1ServiceCommon.GlassesStatus.UNINITIALIZED -> "Initializing" to DisconnectedColor
+                null -> "No glasses detected" to DisconnectedColor
+            }
+
+            val glassesName = glasses?.name?.takeIf { it.isNotBlank() } ?: "Unnamed glasses"
+            if (glasses != null) {
                 Text(
-                    text = "No glasses detected",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            } else {
-                Text(
-                    text = glasses.name ?: "Unnamed glasses",
+                    text = glassesName,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
-
+            } else {
                 Text(
-                    text = "Status: ${glasses.status.name}",
+                    text = "Awaiting discovery",
                     style = MaterialTheme.typography.bodyMedium
                 )
+            }
 
+            Surface(
+                color = statusColor.copy(alpha = 0.12f),
+                contentColor = statusColor,
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, statusColor.copy(alpha = 0.6f))
+            ) {
                 Text(
-                    text = "Battery: ${glasses.batteryPercentage ?: 0}%",
-                    style = MaterialTheme.typography.bodyMedium
+                    text = statusLabel,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
+            }
+
+            val batteryLabel = glasses?.batteryPercentage?.takeIf { it >= 0 }?.let { "$it%" }
+                ?: "Unknown"
+            Text(
+                text = "Battery: $batteryLabel",
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            val actionLabel = when (glasses?.status) {
+                G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect"
+                G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
+                G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
+                else -> "Connect"
+            }
+            val actionEnabled = when (glasses?.status) {
+                G1ServiceCommon.GlassesStatus.CONNECTING,
+                G1ServiceCommon.GlassesStatus.DISCONNECTING -> false
+                else -> true
+            }
+
+            Button(
+                onClick = {
+                    if (glasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED) {
+                        onDisconnect()
+                    } else {
+                        onConnect()
+                    }
+                },
+                enabled = actionEnabled,
+                colors = ButtonDefaults.buttonColors(containerColor = statusColor.copy(alpha = 0.85f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(actionLabel)
             }
         }
     }
@@ -351,10 +406,10 @@ private fun NoGlassesMessage(
     }
 
     Surface(
-        color = Bof4Palette.Steel.copy(alpha = 0.8f),
-        contentColor = Bof4Palette.Mist,
+        color = Bof4Steel.copy(alpha = 0.8f),
+        contentColor = Bof4Mist,
         shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.dp, Bof4Palette.Sky.copy(alpha = 0.45f))
+        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.45f))
     ) {
         Column(
             modifier = Modifier

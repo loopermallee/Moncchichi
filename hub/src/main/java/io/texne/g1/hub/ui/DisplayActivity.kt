@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import io.texne.g1.basis.client.G1ServiceCommon
+import io.texne.g1.hub.ui.theme.G1HubTheme
 import kotlinx.coroutines.flow.collectLatest
 
 @AndroidEntryPoint
@@ -41,9 +43,11 @@ class DisplayActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            DisplayScreen(
-                onBack = { finish() }
-            )
+            G1HubTheme {
+                DisplayScreen(
+                    onBack = { finish() }
+                )
+            }
         }
     }
 }
@@ -85,6 +89,7 @@ fun DisplayScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
             .verticalScroll(scrollState)
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
@@ -115,6 +120,16 @@ fun DisplayScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(text = "Send Message")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            onClick = { viewModel.stopDisplaying() },
+            enabled = canSendMessage,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Stop Displaying")
         }
 
         if (!canSendMessage) {
