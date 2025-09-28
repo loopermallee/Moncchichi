@@ -50,8 +50,8 @@ fun GlassesScreen(
     serviceStatus: ServiceStatus,
     isLooking: Boolean,
     serviceError: Boolean,
-    connect: () -> Unit,
-    disconnect: () -> Unit,
+    connect: (String?) -> Unit,
+    disconnect: (String?) -> Unit,
     refresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -63,8 +63,8 @@ fun GlassesScreen(
 
     val statusLabel = when {
         serviceError -> "Service Error"
-        hasDisconnecting -> "Disconnecting"
-        hasConnecting -> "Connecting"
+        hasDisconnecting -> "Disconnecting…"
+        hasConnecting -> "Connecting…"
         isLooking -> "Scanning for glasses"
         connectedCount > 0 && connectedCount == glasses.size -> "All glasses connected"
         connectedCount > 0 -> "$connectedCount of ${glasses.size} connected"
@@ -109,7 +109,11 @@ fun GlassesScreen(
                 statusLabel = statusLabel,
                 statusColor = statusColor,
                 buttonLabel = buttonLabel,
-                onPrimaryAction = if (shouldDisconnect) disconnect else connect,
+                onPrimaryAction = if (shouldDisconnect) {
+                    { disconnect(null) }
+                } else {
+                    { connect(null) }
+                },
                 onRefresh = refresh,
                 enabled = isActionEnabled,
                 showProgress = showProgress,
@@ -119,7 +123,11 @@ fun GlassesScreen(
 
             Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 glasses.forEach { glass ->
-                    GlassesCard(glasses = glass)
+                    GlassesCard(
+                        glasses = glass,
+                        onConnect = connect,
+                        onDisconnect = disconnect,
+                    )
                 }
             }
 
@@ -268,7 +276,9 @@ private fun StatusPanel(
 
 @Composable
 private fun GlassesCard(
-    glasses: G1ServiceCommon.Glasses
+    glasses: G1ServiceCommon.Glasses,
+    onConnect: (String?) -> Unit,
+    onDisconnect: (String?) -> Unit,
 ) {
     Card(
         colors = CardDefaults.cardColors(
@@ -296,11 +306,11 @@ private fun GlassesCard(
 
             val (statusLabel, statusColor) = when (glasses.status) {
                 G1ServiceCommon.GlassesStatus.CONNECTED -> "Connected" to ConnectedColor
-                G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting" to WarningColor
-                G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting" to WarningColor
-                G1ServiceCommon.GlassesStatus.ERROR -> "Connection Error" to ErrorColor
+                G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…" to WarningColor
+                G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…" to WarningColor
+                G1ServiceCommon.GlassesStatus.ERROR -> "Connection failed" to ErrorColor
                 G1ServiceCommon.GlassesStatus.DISCONNECTED -> "Disconnected" to DisconnectedColor
-                G1ServiceCommon.GlassesStatus.UNINITIALIZED -> "Initializing" to DisconnectedColor
+                G1ServiceCommon.GlassesStatus.UNINITIALIZED -> "Ready to connect" to DisconnectedColor
             }
 
             Surface(
@@ -333,6 +343,63 @@ private fun GlassesCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = Bof4Mist.copy(alpha = 0.8f)
             )
+
+            val glassesId = glasses.id
+            if (!glassesId.isNullOrBlank()) {
+                when (glasses.status) {
+                    G1ServiceCommon.GlassesStatus.CONNECTED -> {
+                        OutlinedButton(
+                            modifier = Modifier.padding(top = 12.dp),
+                            onClick = { onDisconnect(glassesId) },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Bof4Mist),
+                        ) {
+                            Text("Disconnect")
+                        }
+                    }
+
+                    G1ServiceCommon.GlassesStatus.CONNECTING,
+                    G1ServiceCommon.GlassesStatus.DISCONNECTING -> {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            color = statusColor.copy(alpha = 0.8f)
+                        )
+                    }
+
+                    G1ServiceCommon.GlassesStatus.ERROR -> {
+                        Button(
+                            modifier = Modifier.padding(top = 12.dp),
+                            onClick = { onConnect(glassesId) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = ErrorColor,
+                                contentColor = Color.White,
+                            ),
+                        ) {
+                            Text("Retry")
+                        }
+                    }
+
+                    G1ServiceCommon.GlassesStatus.DISCONNECTED,
+                    G1ServiceCommon.GlassesStatus.UNINITIALIZED -> {
+                        val label = if (glasses.status == G1ServiceCommon.GlassesStatus.UNINITIALIZED) {
+                            "Connect"
+                        } else {
+                            "Retry"
+                        }
+                        Button(
+                            modifier = Modifier.padding(top = 12.dp),
+                            onClick = { onConnect(glassesId) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Bof4Verdant,
+                                contentColor = Color.White,
+                            ),
+                        ) {
+                            Text(label)
+                        }
+                    }
+                }
+            }
         }
     }
 }
