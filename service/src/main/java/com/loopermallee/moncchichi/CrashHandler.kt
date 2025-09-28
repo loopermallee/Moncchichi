@@ -23,7 +23,7 @@ class CrashHandler private constructor(private val context: Context) : Thread.Un
     private fun showDialog(trace: String) {
         val textView = TextView(context).apply {
             text = trace
-            isSelectable = true // allows copy
+            setTextIsSelectable(true)
             setPadding(16, 16, 16, 16)
         }
         val scrollView = ScrollView(context).apply { addView(textView) }
