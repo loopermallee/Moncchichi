@@ -97,6 +97,41 @@ class ApplicationViewModel @Inject constructor(
         }
     }
 
+    fun sendMessage(message: String, onResult: (Boolean) -> Unit = {}) {
+        val trimmedMessage = message.trim()
+        if (trimmedMessage.isEmpty()) {
+            viewModelScope.launch {
+                _messages.emit("Message cannot be empty")
+            }
+            onResult(false)
+            return
+        }
+
+        val targetGlasses = state.value.glasses.firstOrNull()
+        val glassesId = targetGlasses?.id
+        val isConnected = targetGlasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED
+
+        viewModelScope.launch {
+            if (glassesId == null || !isConnected) {
+                _messages.emit("No device connected")
+                onResult(false)
+                return@launch
+            }
+
+            val page = trimmedMessage.chunked(40).take(5)
+            val result = runCatching { repository.displayTextPage(glassesId, page) }
+            val success = result.getOrNull() == true
+
+            if (success) {
+                _messages.emit("Message sent")
+            } else {
+                _messages.emit("Failed to send")
+            }
+
+            onResult(success)
+        }
+    }
+
     fun onScreenReady() {
         attemptAutoReconnect(ServiceStatus.READY)
     }
