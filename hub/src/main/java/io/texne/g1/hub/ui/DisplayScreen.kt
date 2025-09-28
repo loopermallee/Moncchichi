@@ -50,18 +50,24 @@ fun DisplayScreen(
     var selectedTargetId by rememberSaveable { mutableStateOf<String?>(null) }
 
     val connectedGlasses = state.glasses.filter { it.status == G1ServiceCommon.GlassesStatus.CONNECTED }
-    val targetIds = remember(connectedGlasses, selectedTargetId) {
-        if (connectedGlasses.isEmpty()) {
+    val connectableGlasses = remember(connectedGlasses) {
+        connectedGlasses.filter { !it.id.isNullOrBlank() }
+    }
+    val targetIds = remember(connectableGlasses, selectedTargetId) {
+        if (connectableGlasses.isEmpty()) {
             emptyList()
         } else if (selectedTargetId == null) {
-            connectedGlasses.map { it.id }
+            connectableGlasses.mapNotNull { it.id }
         } else {
-            connectedGlasses.firstOrNull { it.id == selectedTargetId }?.let { listOf(it.id) } ?: emptyList()
+            connectableGlasses.firstOrNull { it.id == selectedTargetId }
+                ?.id
+                ?.let { listOf(it) }
+                ?: emptyList()
         }
     }
 
-    LaunchedEffect(connectedGlasses.map { it.id }) {
-        if (selectedTargetId != null && connectedGlasses.none { it.id == selectedTargetId }) {
+    LaunchedEffect(connectableGlasses.mapNotNull { it.id }) {
+        if (selectedTargetId != null && connectableGlasses.none { it.id == selectedTargetId }) {
             selectedTargetId = null
         }
     }
@@ -106,20 +112,26 @@ fun DisplayScreen(
                     selected = allSelected && targetIds.isNotEmpty(),
                     onClick = { selectedTargetId = null },
                     label = { Text("All connected") },
+                    enabled = connectableGlasses.isNotEmpty(),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                     )
                 )
 
-                connectedGlasses.forEach { glasses ->
-                    val isSelected = selectedTargetId == glasses.id
+                connectableGlasses.forEach { glasses ->
+                    val glassesId = glasses.id
+                    val isSelected = selectedTargetId == glassesId
                     FilterChip(
                         selected = isSelected,
                         onClick = {
-                            selectedTargetId = if (isSelected) null else glasses.id
+                            selectedTargetId = if (isSelected) null else glassesId
                         },
+                        enabled = glassesId != null,
                         label = {
-                            Text(glasses.name.takeIf { it.isNotBlank() } ?: glasses.id)
+                            val label = glasses.name?.takeIf { it.isNotBlank() }
+                                ?: glassesId?.takeIf { it.isNotBlank() }
+                                ?: "Unknown Glasses"
+                            Text(label)
                         },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)

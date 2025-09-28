@@ -284,7 +284,9 @@ private fun GlassesCard(
                 .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            val displayName = glasses.name.takeIf { it.isNotBlank() } ?: glasses.id
+            val displayName = glasses.name?.takeIf { it.isNotBlank() }
+                ?: glasses.id?.takeIf { it.isNotBlank() }
+                ?: "Unknown Glasses"
 
             Text(
                 text = displayName,
@@ -325,8 +327,9 @@ private fun GlassesCard(
                 style = MaterialTheme.typography.bodyMedium
             )
 
+            val safeId = glasses.id?.takeIf { it.isNotBlank() } ?: "Unknown ID"
             Text(
-                text = "ID: ${glasses.id}",
+                text = "ID: $safeId",
                 style = MaterialTheme.typography.bodySmall,
                 color = Bof4Mist.copy(alpha = 0.8f)
             )
