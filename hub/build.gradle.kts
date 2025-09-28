@@ -23,6 +23,7 @@ android {
         enableAggregatingTask = false
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
     composeOptions {
