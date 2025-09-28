@@ -2,10 +2,12 @@ package io.texne.g1.hub.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
-
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+val Bof4Midnight = Color(0xFF081726)
+val Bof4Steel = Color(0xFF1F3D5B)
+val Bof4Mist = Color(0xFFE9E2CE)
+val Bof4Sand = Color(0xFFCDB894)
+val Bof4Ember = Color(0xFFE39A3B)
+val Bof4Sky = Color(0xFF6CA6D9)
+val Bof4Verdant = Color(0xFF5D9479)
+val Bof4Coral = Color(0xFFD9644C)
+val Bof4Warning = Color(0xFFF2C74E)

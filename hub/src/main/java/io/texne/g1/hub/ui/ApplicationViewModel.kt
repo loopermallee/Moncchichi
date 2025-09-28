@@ -132,8 +132,31 @@ class ApplicationViewModel @Inject constructor(
         }
     }
 
+    fun stopDisplaying(onResult: (Boolean) -> Unit = {}) {
+        val targetGlasses = state.value.glasses.firstOrNull()
+        val glassesId = targetGlasses?.id
+        val isConnected = targetGlasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED
+
+        viewModelScope.launch {
+            if (glassesId == null || !isConnected) {
+                _messages.emit("No device connected")
+                onResult(false)
+                return@launch
+            }
+
+            val result = runCatching { repository.stopDisplaying(glassesId) }
+            val success = result.getOrNull() == true
+            if (success) _messages.emit("Stopped displaying") else _messages.emit("Failed to stop")
+            onResult(success)
+        }
+    }
+
     fun onScreenReady() {
         attemptAutoReconnect(ServiceStatus.READY)
+    }
+
+    fun onBluetoothStateChanged(isOn: Boolean) {
+        if (isOn) attemptAutoReconnect(ServiceStatus.READY)
     }
 
     private fun attemptAutoReconnect(triggerStatus: ServiceStatus) {
