@@ -55,46 +55,42 @@ fun GlassesScreen(
     refresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val primaryGlasses = glasses.firstOrNull()
-    val primaryStatus = primaryGlasses?.status
+    val connectionStatuses = glasses.map { it.status }
+    val connectedCount = connectionStatuses.count { it == G1ServiceCommon.GlassesStatus.CONNECTED }
+    val hasConnecting = connectionStatuses.any { it == G1ServiceCommon.GlassesStatus.CONNECTING }
+    val hasDisconnecting = connectionStatuses.any { it == G1ServiceCommon.GlassesStatus.DISCONNECTING }
+    val hasError = serviceError || connectionStatuses.any { it == G1ServiceCommon.GlassesStatus.ERROR }
 
     val statusLabel = when {
         serviceError -> "Service Error"
-        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED -> "Connected"
-        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting"
-        primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting"
+        hasDisconnecting -> "Disconnecting"
+        hasConnecting -> "Connecting"
         isLooking -> "Scanning for glasses"
-        primaryStatus == G1ServiceCommon.GlassesStatus.ERROR -> "Connection Error"
-        primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTED -> "Disconnected"
+        connectedCount > 0 && connectedCount == glasses.size -> "All glasses connected"
+        connectedCount > 0 -> "$connectedCount of ${glasses.size} connected"
+        glasses.isNotEmpty() -> "Glasses discovered"
         else -> "Ready to connect"
     }
 
     val statusColor = when {
-        serviceError -> ErrorColor
-        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED -> ConnectedColor
-        primaryStatus == G1ServiceCommon.GlassesStatus.ERROR -> ErrorColor
-        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTING ||
-            primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTING ||
-            isLooking -> WarningColor
+        hasError -> ErrorColor
+        connectedCount > 0 && connectedCount == glasses.size -> ConnectedColor
+        connectedCount > 0 -> Bof4Sky
+        hasConnecting || hasDisconnecting || isLooking -> WarningColor
         else -> DisconnectedColor
     }
 
-    val buttonLabel = when (primaryStatus) {
-        G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect"
-        G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
-        G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
+    val shouldDisconnect = connectedCount > 0 || hasDisconnecting
+    val buttonLabel = when {
+        hasDisconnecting -> "Disconnecting…"
+        shouldDisconnect -> "Disconnect"
+        hasConnecting -> "Connecting…"
         else -> "Connect"
     }
 
-    val showProgress = isLooking ||
-        primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTING ||
-        primaryStatus == G1ServiceCommon.GlassesStatus.DISCONNECTING
+    val showProgress = isLooking || hasConnecting || hasDisconnecting
 
-    val isActionEnabled = !serviceError && when (primaryStatus) {
-        G1ServiceCommon.GlassesStatus.CONNECTING,
-        G1ServiceCommon.GlassesStatus.DISCONNECTING -> false
-        else -> true
-    }
+    val isActionEnabled = !serviceError && !hasConnecting && !hasDisconnecting
 
     Box(
         modifier = modifier
@@ -113,11 +109,7 @@ fun GlassesScreen(
                 statusLabel = statusLabel,
                 statusColor = statusColor,
                 buttonLabel = buttonLabel,
-                onPrimaryAction = if (primaryStatus == G1ServiceCommon.GlassesStatus.CONNECTED) {
-                    disconnect
-                } else {
-                    connect
-                },
+                onPrimaryAction = if (shouldDisconnect) disconnect else connect,
                 onRefresh = refresh,
                 enabled = isActionEnabled,
                 showProgress = showProgress,
@@ -125,19 +117,9 @@ fun GlassesScreen(
                 serviceError = serviceError
             )
 
-            val cardEntries = listOf(
-                "Left Glass" to glasses.getOrNull(0),
-                "Right Glass" to glasses.getOrNull(1)
-            )
-
             Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                cardEntries.forEach { (title, glass) ->
-                    GlassesCard(
-                        title = title,
-                        glasses = glass,
-                        onConnect = connect,
-                        onDisconnect = disconnect
-                    )
+                glasses.forEach { glass ->
+                    GlassesCard(glasses = glass)
                 }
             }
 
@@ -286,10 +268,7 @@ private fun StatusPanel(
 
 @Composable
 private fun GlassesCard(
-    title: String,
-    glasses: G1ServiceCommon.Glasses?,
-    onConnect: () -> Unit,
-    onDisconnect: () -> Unit
+    glasses: G1ServiceCommon.Glasses
 ) {
     Card(
         colors = CardDefaults.cardColors(
@@ -305,34 +284,21 @@ private fun GlassesCard(
                 .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            val displayName = glasses.name.takeIf { it.isNotBlank() } ?: glasses.id
+
             Text(
-                text = title,
+                text = displayName,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
 
-            val (statusLabel, statusColor) = when (glasses?.status) {
+            val (statusLabel, statusColor) = when (glasses.status) {
                 G1ServiceCommon.GlassesStatus.CONNECTED -> "Connected" to ConnectedColor
                 G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting" to WarningColor
                 G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting" to WarningColor
                 G1ServiceCommon.GlassesStatus.ERROR -> "Connection Error" to ErrorColor
                 G1ServiceCommon.GlassesStatus.DISCONNECTED -> "Disconnected" to DisconnectedColor
                 G1ServiceCommon.GlassesStatus.UNINITIALIZED -> "Initializing" to DisconnectedColor
-                null -> "No glasses detected" to DisconnectedColor
-            }
-
-            val glassesName = glasses?.name?.takeIf { it.isNotBlank() } ?: "Unnamed glasses"
-            if (glasses != null) {
-                Text(
-                    text = glassesName,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-            } else {
-                Text(
-                    text = "Awaiting discovery",
-                    style = MaterialTheme.typography.bodyMedium
-                )
             }
 
             Surface(
@@ -352,39 +318,18 @@ private fun GlassesCard(
                 )
             }
 
-            val batteryLabel = glasses?.batteryPercentage?.takeIf { it >= 0 }?.let { "$it%" }
+            val batteryLabel = glasses.batteryPercentage?.takeIf { it >= 0 }?.let { "$it%" }
                 ?: "Unknown"
             Text(
                 text = "Battery: $batteryLabel",
                 style = MaterialTheme.typography.bodyMedium
             )
 
-            val actionLabel = when (glasses?.status) {
-                G1ServiceCommon.GlassesStatus.CONNECTED -> "Disconnect"
-                G1ServiceCommon.GlassesStatus.CONNECTING -> "Connecting…"
-                G1ServiceCommon.GlassesStatus.DISCONNECTING -> "Disconnecting…"
-                else -> "Connect"
-            }
-            val actionEnabled = when (glasses?.status) {
-                G1ServiceCommon.GlassesStatus.CONNECTING,
-                G1ServiceCommon.GlassesStatus.DISCONNECTING -> false
-                else -> true
-            }
-
-            Button(
-                onClick = {
-                    if (glasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED) {
-                        onDisconnect()
-                    } else {
-                        onConnect()
-                    }
-                },
-                enabled = actionEnabled,
-                colors = ButtonDefaults.buttonColors(containerColor = statusColor.copy(alpha = 0.85f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(actionLabel)
-            }
+            Text(
+                text = "ID: ${glasses.id}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Bof4Mist.copy(alpha = 0.8f)
+            )
         }
     }
 }

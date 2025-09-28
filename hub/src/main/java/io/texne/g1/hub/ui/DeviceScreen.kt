@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,10 +29,6 @@ fun DeviceScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
-    LaunchedEffect(Unit) {
-        viewModel.onScreenReady()
-    }
-
     LaunchedEffect(Unit) {
         viewModel.messages.collectLatest { message ->
             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -54,9 +49,9 @@ fun DeviceScreen(
             serviceStatus = state.serviceStatus,
             isLooking = state.isLooking,
             serviceError = state.serviceError,
-            connect = viewModel::connectGlasses,
-            disconnect = viewModel::disconnectGlasses,
-            refresh = viewModel::refreshDevices,
+            connect = viewModel::connect,
+            disconnect = viewModel::disconnect,
+            refresh = viewModel::lookForGlasses,
             modifier = Modifier.fillMaxWidth()
         )
 
