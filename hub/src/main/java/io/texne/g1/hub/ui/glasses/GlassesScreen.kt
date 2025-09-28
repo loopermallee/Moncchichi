@@ -6,20 +6,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -63,7 +59,6 @@ fun GlassesScreen(
     refresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val scrollState = rememberScrollState()
     val primaryGlasses = glasses.firstOrNull()
     val primaryStatus = primaryGlasses?.status
 
@@ -106,12 +101,13 @@ fun GlassesScreen(
     }
 
     Box(
-        modifier = modifier.background(Bof4Palette.Midnight)
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Bof4Palette.Midnight)
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
+                .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
@@ -132,8 +128,6 @@ fun GlassesScreen(
                 isLooking = isLooking,
                 serviceError = serviceError
             )
-
-            HorizontalDivider(color = Bof4Palette.Sky.copy(alpha = 0.25f))
 
             val cardEntries = listOf(
                 "Left Glass" to glasses.getOrNull(0),

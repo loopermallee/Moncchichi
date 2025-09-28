@@ -46,6 +46,9 @@ class Repository @Inject constructor(
     fun sendMessage(message: String) =
         boundService.sendMessage(message)
 
+    suspend fun displayTextPage(id: String, page: List<String>) =
+        boundService.displayTextPage(id, page)
+
     private var service: G1ServiceManager? = null
 
     // The hub UI should only touch the repository after bindService() succeeds, so we fail fast otherwise.
