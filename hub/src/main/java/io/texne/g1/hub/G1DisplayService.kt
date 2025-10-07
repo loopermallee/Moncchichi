@@ -36,8 +36,8 @@ class G1DisplayService : Service() {
     }
 
     class G1Binder : Binder() {
-        fun pingBinder() {
-            Log.d("G1Service", "pingBinder() called")
+        fun heartbeat() {
+            Log.d("G1Service", "heartbeat() called")
         }
     }
 }

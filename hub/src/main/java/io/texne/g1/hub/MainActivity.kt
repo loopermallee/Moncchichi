@@ -134,7 +134,7 @@ class MainActivity : AppCompatActivity() {
 
     private suspend fun g1PingService(): String = withContext(Dispatchers.IO) {
         return@withContext try {
-            binder?.pingBinder() ?: throw IllegalStateException("Binder unavailable")
+            binder?.heartbeat() ?: throw IllegalStateException("Binder unavailable")
             Log.d("Boot", "Ping OK")
             "G1 Display ready ✅"
         } catch (t: Throwable) {
