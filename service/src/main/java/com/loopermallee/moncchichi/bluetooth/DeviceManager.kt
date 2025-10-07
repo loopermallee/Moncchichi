@@ -56,6 +56,67 @@ internal class DeviceManager(
     private var lastAckTimestamp: Long = 0L
     private var currentDeviceAddress: String? = null
 
+    private val gattCallback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            when (newState) {
+                BluetoothProfile.STATE_CONNECTED -> {
+                    Log.d(TAG, "onConnectionStateChange: connected")
+                    writableConnectionState.value = ConnectionState.CONNECTED
+                    updateState(gatt.device, G1ConnectionState.CONNECTED)
+                    currentDeviceAddress = gatt.device.address
+                    gatt.discoverServices()
+                }
+                BluetoothProfile.STATE_CONNECTING -> {
+                    writableConnectionState.value = ConnectionState.CONNECTING
+                    updateState(gatt.device, G1ConnectionState.CONNECTING)
+                }
+                BluetoothProfile.STATE_DISCONNECTING -> {
+                    writableConnectionState.value = ConnectionState.DISCONNECTING
+                    updateState(gatt.device, G1ConnectionState.WAITING_FOR_RECONNECT)
+                }
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    Log.d(TAG, "onConnectionStateChange: disconnected")
+                    stopHeartbeat()
+                    clearConnection()
+                    writableConnectionState.value = ConnectionState.DISCONNECTED
+                    val targetState = if (manualDisconnect.getAndSet(false)) {
+                        G1ConnectionState.DISCONNECTED
+                    } else {
+                        G1ConnectionState.WAITING_FOR_RECONNECT
+                    }
+                    updateState(gatt.device, targetState)
+                }
+            }
+        }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.w(TAG, "onServicesDiscovered: failure status=$status")
+                writableConnectionState.value = ConnectionState.ERROR
+                return
+            }
+            val uartService = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
+            if (uartService == null) {
+                Log.w(TAG, "UART service not available on device")
+                writableConnectionState.value = ConnectionState.ERROR
+                return
+            }
+            initializeCharacteristics(gatt, uartService)
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+        ) {
+            if (characteristic.uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
+                val payload = characteristic.value
+                writableIncoming.tryEmit(payload)
+                awaitingAck.set(false)
+                lastAckTimestamp = SystemClock.elapsedRealtime()
+            }
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
         if (writableConnectionState.value == ConnectionState.CONNECTING ||
@@ -68,66 +129,7 @@ internal class DeviceManager(
         updateState(device, G1ConnectionState.CONNECTING)
         writableConnectionState.value = ConnectionState.CONNECTING
         currentDeviceAddress = device.address
-        bluetoothGatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
-            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-                when (newState) {
-                    BluetoothProfile.STATE_CONNECTED -> {
-                        Log.d(TAG, "onConnectionStateChange: connected")
-                        writableConnectionState.value = ConnectionState.CONNECTED
-                        updateState(gatt.device, G1ConnectionState.CONNECTED)
-                        currentDeviceAddress = gatt.device.address
-                        gatt.discoverServices()
-                    }
-                    BluetoothProfile.STATE_CONNECTING -> {
-                        writableConnectionState.value = ConnectionState.CONNECTING
-                        updateState(gatt.device, G1ConnectionState.CONNECTING)
-                    }
-                    BluetoothProfile.STATE_DISCONNECTING -> {
-                        writableConnectionState.value = ConnectionState.DISCONNECTING
-                        updateState(gatt.device, G1ConnectionState.WAITING_FOR_RECONNECT)
-                    }
-                    BluetoothProfile.STATE_DISCONNECTED -> {
-                        Log.d(TAG, "onConnectionStateChange: disconnected")
-                        stopHeartbeat()
-                        clearConnection()
-                        writableConnectionState.value = ConnectionState.DISCONNECTED
-                        val targetState = if (manualDisconnect.getAndSet(false)) {
-                            G1ConnectionState.DISCONNECTED
-                        } else {
-                            G1ConnectionState.WAITING_FOR_RECONNECT
-                        }
-                        updateState(gatt.device, targetState)
-                    }
-                }
-            }
-
-            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                if (status != BluetoothGatt.GATT_SUCCESS) {
-                    Log.w(TAG, "onServicesDiscovered: failure status=$status")
-                    writableConnectionState.value = ConnectionState.ERROR
-                    return
-                }
-                val uartService = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
-                if (uartService == null) {
-                    Log.w(TAG, "UART service not available on device")
-                    writableConnectionState.value = ConnectionState.ERROR
-                    return
-                }
-                initializeCharacteristics(gatt, uartService)
-            }
-
-            override fun onCharacteristicChanged(
-                gatt: BluetoothGatt,
-                characteristic: BluetoothGattCharacteristic,
-            ) {
-                if (characteristic.uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
-                    val payload = characteristic.value
-                    writableIncoming.tryEmit(payload)
-                    awaitingAck.set(false)
-                    lastAckTimestamp = SystemClock.elapsedRealtime()
-                }
-            }
-        })
+        bluetoothGatt = device.connectGatt(context, false, gattCallback)
     }
 
     @SuppressLint("MissingPermission")
@@ -267,6 +269,38 @@ internal class DeviceManager(
         deviceStates.entries
             .filter { it.value == G1ConnectionState.WAITING_FOR_RECONNECT }
             .forEach { entry -> deviceStates[entry.key] = G1ConnectionState.DISCONNECTED }
+    }
+
+    suspend fun tryReconnect(
+        context: Context,
+        maxAttempts: Int = 5,
+        intervalMs: Long = 10_000L,
+    ): Boolean {
+        repeat(maxAttempts) { attempt ->
+            Log.i(TAG, "Reconnect attempt ${attempt + 1} of $maxAttempts")
+            var success = false
+            for (device in subDevices) {
+                try {
+                    updateState(device, G1ConnectionState.CONNECTING)
+                    val gatt = device.connectGatt(context, false, gattCallback)
+                    if (gatt != null) {
+                        bluetoothGatt = gatt
+                        currentDeviceAddress = device.address
+                        Log.i(TAG, "Reconnected to ${device.address}")
+                        success = true
+                        break
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Reconnect failed: ${e.message}")
+                }
+            }
+            if (success) {
+                return true
+            }
+            delay(intervalMs)
+        }
+        Log.e(TAG, "All reconnect attempts failed.")
+        return false
     }
 
     private companion object {

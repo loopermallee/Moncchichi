@@ -14,6 +14,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,6 +31,8 @@ class G1DisplayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        startHeartbeatMonitoring()
+        monitorReconnection()
         serviceScope.launch {
             deviceManager.connectionState.collectLatest { connection ->
                 val nextState = when (connection) {
@@ -84,6 +87,24 @@ class G1DisplayService : Service() {
                     Log.e(TAG, "Heartbeat error: ${e.message}")
                     if (deviceManager.anyWaitingForReconnect()) {
                         connectionStateFlow.value = G1ConnectionState.WAITING_FOR_RECONNECT
+                    }
+                }
+            }
+        }
+    }
+
+    private fun monitorReconnection() {
+        serviceScope.launch {
+            connectionStateFlow.collect { state ->
+                if (state == G1ConnectionState.WAITING_FOR_RECONNECT) {
+                    Log.w(TAG, "Lost connection — starting auto-reconnect sequence")
+                    val reconnected = deviceManager.tryReconnect(applicationContext)
+                    if (reconnected) {
+                        connectionStateFlow.value = G1ConnectionState.CONNECTED
+                        Log.i(TAG, "Reconnected successfully.")
+                    } else {
+                        Log.e(TAG, "Failed to reconnect automatically.")
+                        connectionStateFlow.value = G1ConnectionState.DISCONNECTED
                     }
                 }
             }
