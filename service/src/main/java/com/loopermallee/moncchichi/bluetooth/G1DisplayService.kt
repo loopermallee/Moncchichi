@@ -71,7 +71,7 @@ class G1DisplayService : Service() {
             while (true) {
                 delay(8_000)
                 try {
-                    if (binder.pingBinder()) {
+                    if (binder.checkBinderHeartbeat()) {
                         Log.d(TAG, "Heartbeat OK")
                     } else if (deviceManager.anyWaitingForReconnect()) {
                         Log.w(TAG, "Lost heartbeat, marking WAITING_FOR_RECONNECT")
@@ -95,10 +95,10 @@ class G1DisplayService : Service() {
         val stateFlow: StateFlow<G1ConnectionState> = readableStateFlow
 
         fun heartbeat() {
-            pingBinder()
+            checkBinderHeartbeat()
         }
 
-        fun pingBinder(): Boolean {
+        fun checkBinderHeartbeat(): Boolean {
             val isConnected = deviceManager.isConnected()
             return when {
                 deviceManager.anyWaitingForReconnect() -> {
