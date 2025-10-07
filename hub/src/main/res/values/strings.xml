@@ -1,10 +1,7 @@
 <resources>
-    <string name="app_name">G1 Hub</string>
-    <string name="app_boot_status_initial">Moncchichi starting…</string>
-    <string name="app_boot_status_rendering">Rendering UI…</string>
-    <string name="app_boot_status_binding">Binding G1 service…</string>
-    <string name="app_boot_status_waiting">Waiting for service response…</string>
-    <string name="app_boot_status_timeout">Service bind timeout. UI is responsive.</string>
-    <string name="app_boot_status_ready">Ready.</string>
-    <string name="app_boot_status_failed">Unable to bind service.</string>
+    <string name="app_name">Moncchichi</string>
+    <string name="boot_wait">Starting Moncchichi…</string>
+    <string name="boot_service_binding">Binding display service…</string>
+    <string name="boot_service_connected">Display service connected</string>
+    <string name="boot_service_timeout">Service bind timeout</string>
 </resources>

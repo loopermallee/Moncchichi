@@ -59,6 +59,8 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.icons.extended)
+    implementation(libs.coroutines.android)
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
     implementation(project(":service"))

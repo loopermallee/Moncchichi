@@ -1,50 +1,38 @@
 package io.texne.g1.hub
 
-import android.bluetooth.BluetoothAdapter
-import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
 import android.os.StrictMode
 import android.util.Log
-import android.view.View
-import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.widget.TextView
-import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.lifecycleScope
-import dagger.hilt.android.AndroidEntryPoint
-import io.texne.g1.hub.model.Repository
-import io.texne.g1.hub.ui.ApplicationFrame
-import io.texne.g1.hub.ui.ApplicationViewModel
-import javax.inject.Inject
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
-@AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
-    @Inject
-    lateinit var repository: Repository
+    private lateinit var status: TextView
+    private var bound = false
 
-    private val viewModel: ApplicationViewModel by viewModels()
-
-    private lateinit var statusView: TextView
-    private lateinit var rootView: FrameLayout
-    private var composeAttached = false
-
-    private val bluetoothReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
-                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
-                if (state == BluetoothAdapter.STATE_ON) {
-                    viewModel.onBluetoothStateChanged(true)
-                }
-            }
+    private val conn = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            bound = true
+            ServiceRepository.setConnected()
+            Log.d("Boot", "Service connected on binder thread")
+            runOnUiThread { status.setText(R.string.boot_service_connected) }
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            bound = false
+            ServiceRepository.setDisconnected()
+            Log.w("Boot", "Service disconnected")
         }
     }
 
@@ -59,60 +47,60 @@ class MainActivity : AppCompatActivity() {
         )
 
         setContentView(R.layout.activity_main)
-        statusView = findViewById(R.id.boot_status)
-        rootView = findViewById(R.id.root)
-        statusView.text = getString(R.string.app_boot_status_rendering)
+        status = findViewById(R.id.status)
 
-        registerReceiver(bluetoothReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        when (ServiceRepository.state.value) {
+            ServiceState.IDLE, ServiceState.DISCONNECTED -> status.setText(R.string.boot_wait)
+            ServiceState.BINDING -> status.setText(R.string.boot_service_binding)
+            ServiceState.CONNECTED -> status.setText(R.string.boot_service_connected)
+            ServiceState.ERROR -> status.text = "Error"
+        }
 
         lifecycleScope.launch {
-            statusView.text = getString(R.string.app_boot_status_binding)
-            Log.d("Boot", "Attempting to bind service")
-            val bound = repository.bindService()
-            if (!bound) {
-                Log.e("Boot", "Unable to bind service")
-                statusView.text = getString(R.string.app_boot_status_failed)
-                return@launch
-            }
+            ServiceRepository.setBinding()
+            status.setText(R.string.boot_service_binding)
 
-            attachComposeIfNeeded()
-
-            statusView.text = getString(R.string.app_boot_status_waiting)
-            val firstState = withTimeoutOrNull(5000) {
-                repository.getServiceStateFlow()
-                    .filterNotNull()
-                    .first()
-            }
-
-            if (firstState == null) {
+            val ok = withTimeoutOrNull(5000) { bindServiceAwait() } ?: false
+            if (!ok) {
                 Log.e("Boot", "Service bind timeout")
-                statusView.text = getString(R.string.app_boot_status_timeout)
-            } else {
-                Log.d("Boot", "Service connected, status=${firstState.status}")
-                statusView.text = getString(R.string.app_boot_status_ready)
-                statusView.visibility = View.GONE
+                ServiceRepository.setError()
+                status.setText(R.string.boot_service_timeout)
+            }
+        }
+    }
+
+    private suspend fun bindServiceAwait(): Boolean = suspendCancellableCoroutine { cont ->
+        val intent = Intent(this, G1DisplayService::class.java)
+        val started = bindService(intent, conn, Context.BIND_AUTO_CREATE)
+        if (!started) {
+            cont.resume(false)
+            return@suspendCancellableCoroutine
+        }
+        lifecycleScope.launch(Dispatchers.Default) {
+            repeat(100) {
+                if (bound) {
+                    if (!cont.isCompleted) cont.resume(true)
+                    return@launch
+                }
+                delay(50)
+            }
+            if (!cont.isCompleted) cont.resume(bound)
+        }
+        cont.invokeOnCancellation {
+            if (bound) {
+                unbindService(conn)
+                bound = false
+                ServiceRepository.setDisconnected()
             }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(bluetoothReceiver)
-        repository.unbindService()
-    }
-
-    private fun attachComposeIfNeeded() {
-        if (composeAttached) {
-            return
+        if (bound) {
+            unbindService(conn)
+            bound = false
+            ServiceRepository.setDisconnected()
         }
-        val composeView = ComposeView(this).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            setContent { ApplicationFrame() }
-        }
-        rootView.addView(composeView, 0)
-        composeAttached = true
     }
 }
