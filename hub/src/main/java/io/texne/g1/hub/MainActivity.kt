@@ -178,15 +178,21 @@ class MainActivity : AppCompatActivity() {
         connectionStateJob = lifecycleScope.launch {
             g1Binder.stateFlow.collectLatest { state ->
                 when (state) {
-                    G1ConnectionState.WAITING_FOR_RECONNECT -> {
-                        status.text = "Connection lost, attempting to reconnect..."
-                    }
                     G1ConnectionState.CONNECTED -> {
                         if (lastConnectionState == G1ConnectionState.WAITING_FOR_RECONNECT) {
-                            status.text = "Moncchichi ready to use 🎉"
+                            delay(500)
                         }
+                        status.text = "Moncchichi ready 🎉"
                     }
-                    else -> Unit
+                    G1ConnectionState.WAITING_FOR_RECONNECT -> {
+                        status.text = "Reconnecting..."
+                    }
+                    G1ConnectionState.DISCONNECTED -> {
+                        status.text = "Connection lost"
+                    }
+                    else -> {
+                        status.text = "Connecting..."
+                    }
                 }
                 lastConnectionState = state
             }
