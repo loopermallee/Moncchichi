@@ -15,22 +15,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private var bound = false
+    private var binder: G1DisplayService.G1Binder? = null
 
     private val conn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             bound = true
+            binder = service as? G1DisplayService.G1Binder
             ServiceRepository.setConnected()
             Log.d("Boot", "Service connected on binder thread")
             runOnUiThread { status.setText(R.string.boot_service_connected) }
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             bound = false
+            binder = null
             ServiceRepository.setDisconnected()
             Log.w("Boot", "Service disconnected")
         }
@@ -67,6 +71,28 @@ class MainActivity : AppCompatActivity() {
                 status.setText(R.string.boot_service_timeout)
             }
         }
+
+        lifecycleScope.launch {
+            ServiceRepository.state.collect { state ->
+                when (state) {
+                    ServiceState.CONNECTED -> {
+                        Log.d("Boot", "Repository state = CONNECTED")
+                        status.text = "Connected. Initializing data..."
+                        delay(1000)
+                        try {
+                            val msg = g1PingService()
+                            status.text = msg
+                        } catch (t: Throwable) {
+                            status.text = "Ping failed: ${t.message}"
+                        }
+                    }
+                    ServiceState.DISCONNECTED -> status.text = "Disconnected"
+                    ServiceState.ERROR -> status.text = "Error - check logs"
+                    ServiceState.BINDING -> status.setText(R.string.boot_service_binding)
+                    else -> Unit
+                }
+            }
+        }
     }
 
     private suspend fun bindServiceAwait(): Boolean = suspendCancellableCoroutine { cont ->
@@ -90,6 +116,7 @@ class MainActivity : AppCompatActivity() {
             if (bound) {
                 unbindService(conn)
                 bound = false
+                binder = null
                 ServiceRepository.setDisconnected()
             }
         }
@@ -100,7 +127,19 @@ class MainActivity : AppCompatActivity() {
         if (bound) {
             unbindService(conn)
             bound = false
+            binder = null
             ServiceRepository.setDisconnected()
+        }
+    }
+
+    private suspend fun g1PingService(): String = withContext(Dispatchers.IO) {
+        return@withContext try {
+            binder?.heartbeat() ?: throw IllegalStateException("Binder unavailable")
+            Log.d("Boot", "Ping OK")
+            "G1 Display ready ✅"
+        } catch (t: Throwable) {
+            Log.e("Boot", "Ping failed", t)
+            "Ping failed ❌"
         }
     }
 }

@@ -12,6 +12,7 @@ import kotlinx.coroutines.cancel
 
 class G1DisplayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val binder = G1Binder()
 
     override fun onCreate() {
         super.onCreate()
@@ -20,7 +21,7 @@ class G1DisplayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder {
         Log.d("G1Service", "onBind()")
-        return Binder()
+        return binder
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -32,5 +33,11 @@ class G1DisplayService : Service() {
         Log.d("G1Service", "onDestroy()")
         scope.cancel()
         super.onDestroy()
+    }
+
+    class G1Binder : Binder() {
+        fun heartbeat() {
+            Log.d("G1Service", "heartbeat() called")
+        }
     }
 }
