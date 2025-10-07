@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -169,6 +170,7 @@ class G1Service : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.d("G1Service", "onCreate")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             withPermissions { ensureForegroundNotification() }
         }
@@ -201,6 +203,7 @@ class G1Service : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onBind(intent: Intent?): IBinder? {
+        Log.d("G1Service", "onBind action=${intent?.action}")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             applicationContext.startForegroundService(Intent(applicationContext, G1Service::class.java))
         } else {

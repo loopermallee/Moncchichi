@@ -6,21 +6,42 @@ import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.basis.client.G1ServiceManager
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 @Singleton
 class Repository @Inject constructor(
     @ApplicationContext private val applicationContext: Context
 ) {
-    fun getServiceStateFlow() =
-        boundService.state
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private val _serviceState = MutableStateFlow<G1ServiceCommon.State?>(null)
+    private var stateJob: Job? = null
+
+    fun getServiceStateFlow(): StateFlow<G1ServiceCommon.State?> = _serviceState
 
     fun bindService(): Boolean {
         val manager = G1ServiceManager.open(applicationContext) ?: return false
         service = manager
+        stateJob?.cancel()
+        stateJob = scope.launch {
+            manager.state.collect { value ->
+                _serviceState.value = value
+            }
+        }
         return true
     }
 
     fun unbindService() {
+        stateJob?.cancel()
+        stateJob = null
+        _serviceState.value = null
         service?.close()
         service = null
     }
