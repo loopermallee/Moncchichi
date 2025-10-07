@@ -4,4 +4,17 @@
     <string name="boot_service_binding">Binding display service…</string>
     <string name="boot_service_connected">Display service connected</string>
     <string name="boot_service_timeout">Service bind timeout</string>
+    <string name="notification_title">Moncchichi Display Link</string>
+    <string name="notification_connected">Connected to G1 glasses</string>
+    <string name="notification_reconnecting">Reconnecting to G1 glasses…</string>
+    <string name="notification_waiting">Waiting for G1 glasses</string>
+    <string name="notification_connecting">Connecting to G1 glasses…</string>
+    <string name="notification_disconnected">Display link idle</string>
+    <string name="notification_channel_name">Display connectivity</string>
+    <string name="notification_channel_description">Keeps the G1 display connection active</string>
+    <string name="status_connected_green">Connected 🟢</string>
+    <string name="status_reconnecting_yellow">Reconnecting 🟡</string>
+    <string name="status_waiting_red">Waiting for reconnect 🔴</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_disconnected">Disconnected</string>
 </resources>
