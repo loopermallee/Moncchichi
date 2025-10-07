@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
+import com.loopermallee.moncchichi.service.G1DisplayService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -109,7 +110,6 @@ class MainActivity : AppCompatActivity() {
                     G1ConnectionState.CONNECTED -> getString(R.string.status_connected_green)
                     G1ConnectionState.RECONNECTING -> getString(R.string.status_reconnecting_yellow)
                     G1ConnectionState.WAITING_FOR_RECONNECT -> getString(R.string.status_waiting_red)
-                    G1ConnectionState.CONNECTING -> getString(R.string.status_connecting)
                     G1ConnectionState.DISCONNECTED -> getString(R.string.status_disconnected)
                 }
             }

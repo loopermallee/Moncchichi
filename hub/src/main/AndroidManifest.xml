@@ -25,9 +25,9 @@
         </activity>
 
         <service
-            android:name=".G1DisplayService"
+            android:name=".service.G1DisplayService"
             android:exported="true"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|dataSync" />
     </application>
 
 </manifest>

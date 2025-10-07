@@ -12,10 +12,14 @@ import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -26,10 +30,10 @@ private const val RECONNECT_TAG = "[Reconnect]"
 
 class DeviceManager(
     private val context: Context,
-    private val scope: CoroutineScope,
 ) {
-    private val _state = MutableStateFlow(G1ConnectionState.DISCONNECTED)
-    val state: StateFlow<G1ConnectionState> = _state.asStateFlow()
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _stateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
+    val state: StateFlow<G1ConnectionState> = _stateFlow.asStateFlow()
 
     private val transactionQueue = G1TransactionQueue(scope)
     private val connectionMutex = Mutex()
@@ -39,6 +43,8 @@ class DeviceManager(
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
     private var notifyCharacteristic: BluetoothGattCharacteristic? = null
     private var trackedDevice: BluetoothDevice? = null
+    @Volatile
+    private var isInitializing = false
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -52,7 +58,7 @@ class DeviceManager(
                     completeWaiters(true)
                 }
                 BluetoothProfile.STATE_CONNECTING -> {
-                    updateState(G1ConnectionState.CONNECTING)
+                    updateState(G1ConnectionState.RECONNECTING)
                 }
                 BluetoothProfile.STATE_DISCONNECTING -> {
                     updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
@@ -79,9 +85,11 @@ class DeviceManager(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
-            if (characteristic.uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
-                MoncchichiLogger.d(DEVICE_MANAGER_TAG, "Notification received (${characteristic.value.size} bytes)")
-            }
+            val uuid = characteristic.uuid.toString()
+            MoncchichiLogger.debug(
+                "[BLEEvent]",
+                "Characteristic changed: $uuid, value=${characteristic.value.toHexString()}",
+            )
         }
     }
 
@@ -93,21 +101,7 @@ class DeviceManager(
     @SuppressLint("MissingPermission")
     suspend fun connect(device: BluetoothDevice): Boolean {
         trackedDevice = device
-        return connectionMutex.withLock {
-            updateState(G1ConnectionState.CONNECTING)
-            MoncchichiLogger.i(DEVICE_MANAGER_TAG, "Connecting to ${device.address}")
-            bluetoothGatt?.close()
-            bluetoothGatt = device.connectGatt(context, false, gattCallback)
-            if (bluetoothGatt == null) {
-                MoncchichiLogger.e(DEVICE_MANAGER_TAG, "connectGatt returned null")
-                updateState(G1ConnectionState.DISCONNECTED)
-                false
-            } else {
-                val deferred = CompletableDeferred<Boolean>()
-                connectionWaiters += deferred
-                withTimeoutOrNull(20_000L) { deferred.await() } ?: false
-            }
-        }
+        return connectDevice(device)
     }
 
     fun currentDevice(): BluetoothDevice? = trackedDevice
@@ -125,25 +119,9 @@ class DeviceManager(
         updateState(G1ConnectionState.DISCONNECTED)
     }
 
-    suspend fun reconnect(maxAttempts: Int = 5, intervalMs: Long = 10_000L): Boolean {
-        val device = trackedDevice ?: return false
-        MoncchichiLogger.i(RECONNECT_TAG, "entering WAITING_FOR_RECONNECT")
-        updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
-        var backoff = intervalMs
-        repeat(maxAttempts) { attempt ->
-            MoncchichiLogger.i(RECONNECT_TAG, "attempt #${attempt + 1}")
-            updateState(G1ConnectionState.RECONNECTING)
-            val success = connect(device)
-            if (success) {
-                MoncchichiLogger.i(RECONNECT_TAG, "attempt #${attempt + 1} succeeded")
-                return true
-            }
-            delay(backoff)
-            backoff = min(backoff * 2, 30_000L)
-        }
-        MoncchichiLogger.e(RECONNECT_TAG, "all attempts exhausted")
-        updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
-        return false
+    suspend fun reconnect(maxRetries: Int = 5): Boolean {
+        if (trackedDevice == null) return false
+        return reconnectWithBackoff(maxRetries)
     }
 
     suspend fun sendHeartbeat(): Boolean {
@@ -173,7 +151,10 @@ class DeviceManager(
     fun close() {
         transactionQueue.close()
         disconnect()
+        shutdown()
     }
+
+    fun shutdown() = scope.cancel("DeviceManager destroyed")
 
     private suspend fun sendCommand(payload: ByteArray, label: String): Boolean {
         return transactionQueue.run(label) {
@@ -228,9 +209,9 @@ class DeviceManager(
     }
 
     private fun updateState(newState: G1ConnectionState) {
-        if (_state.value == newState) return
-        MoncchichiLogger.i(DEVICE_MANAGER_TAG, "State ${_state.value} -> $newState")
-        _state.value = newState
+        if (_stateFlow.value == newState) return
+        MoncchichiLogger.i(DEVICE_MANAGER_TAG, "State ${_stateFlow.value} -> $newState")
+        _stateFlow.value = newState
     }
 
     private fun completeWaiters(success: Boolean) {
@@ -241,5 +222,69 @@ class DeviceManager(
             }
         }
         connectionWaiters.clear()
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun connectDevice(device: BluetoothDevice): Boolean {
+        val proceed = synchronized(this) {
+            if (isInitializing) {
+                MoncchichiLogger.w(DEVICE_MANAGER_TAG, "connectDevice skipped: initialization in progress")
+                false
+            } else {
+                isInitializing = true
+                true
+            }
+        }
+        if (!proceed) return false
+        return try {
+            connectionMutex.withLock {
+                updateState(G1ConnectionState.RECONNECTING)
+                MoncchichiLogger.i(DEVICE_MANAGER_TAG, "Connecting to ${device.address}")
+                bluetoothGatt?.close()
+                bluetoothGatt = device.connectGatt(context, false, gattCallback)
+                if (bluetoothGatt == null) {
+                    MoncchichiLogger.e(DEVICE_MANAGER_TAG, "connectGatt returned null")
+                    updateState(G1ConnectionState.DISCONNECTED)
+                    false
+                } else {
+                    val deferred = CompletableDeferred<Boolean>()
+                    connectionWaiters += deferred
+                    withTimeoutOrNull(20_000L) { deferred.await() } ?: false
+                }
+            }
+        } finally {
+            isInitializing = false
+        }
+    }
+
+    private suspend fun reconnectWithBackoff(maxRetries: Int = 5): Boolean {
+        var delayMs = 2_000L
+        repeat(maxRetries) { attempt ->
+            MoncchichiLogger.debug(RECONNECT_TAG, "Attempt ${attempt + 1}")
+            if (tryReconnectInternal()) return true
+            delay(delayMs)
+            delayMs = min(delayMs * 2, 30_000L)
+        }
+        updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
+        return false
+    }
+
+    private suspend fun tryReconnectInternal(): Boolean {
+        val device = trackedDevice ?: return false
+        return connectDevice(device)
+    }
+
+    fun tryReconnect() {
+        if (trackedDevice == null) return
+        scope.launch {
+            reconnectWithBackoff()
+        }
+    }
+
+    private fun ByteArray?.toHexString(): String {
+        val data = this ?: return "null"
+        return data.joinToString(separator = "") { byte ->
+            ((byte.toInt() and 0xFF).toString(16)).padStart(2, '0')
+        }
     }
 }
