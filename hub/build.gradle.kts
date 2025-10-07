@@ -63,7 +63,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
-    implementation(project(":service"))
     implementation(project(":client"))
 
     kapt(libs.hilt.android.compiler)

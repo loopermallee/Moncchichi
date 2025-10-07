@@ -6,127 +6,68 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
-import android.os.StrictMode
-import android.util.Log
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
-import com.loopermallee.moncchichi.bluetooth.G1DisplayService as BluetoothG1DisplayService
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private var bound = false
-    private var binder: BluetoothG1DisplayService.G1Binder? = null
+    private var binder: G1DisplayService.G1Binder? = null
     private var connectionStateJob: Job? = null
-    private var lastConnectionState: G1ConnectionState? = null
 
-    private val conn = object : ServiceConnection {
+    private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             bound = true
-            binder = service as? BluetoothG1DisplayService.G1Binder
+            binder = service as? G1DisplayService.G1Binder
             ServiceRepository.setConnected()
-            Log.d("Boot", "Service connected on binder thread")
-            runOnUiThread { status.setText(R.string.boot_service_connected) }
+            status.setText(R.string.boot_service_connected)
             observeConnectionState()
         }
+
         override fun onServiceDisconnected(name: ComponentName?) {
             bound = false
             binder = null
             ServiceRepository.setDisconnected()
-            Log.w("Boot", "Service disconnected")
             connectionStateJob?.cancel()
             connectionStateJob = null
-            lastConnectionState = null
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        StrictMode.setThreadPolicy(
-            StrictMode.ThreadPolicy.Builder()
-                .detectAll()
-                .penaltyLog()
-                .build()
-        )
-
         setContentView(R.layout.activity_main)
         status = findViewById(R.id.status)
 
-        when (ServiceRepository.state.value) {
-            ServiceState.IDLE, ServiceState.DISCONNECTED -> status.setText(R.string.boot_wait)
-            ServiceState.BINDING -> status.setText(R.string.boot_service_binding)
-            ServiceState.CONNECTED -> status.setText(R.string.boot_service_connected)
-            ServiceState.ERROR -> status.text = "Error"
-        }
-
+        status.setText(R.string.boot_wait)
         lifecycleScope.launch {
             ServiceRepository.setBinding()
             status.setText(R.string.boot_service_binding)
-
-            val ok = withTimeoutOrNull(5000) { bindServiceAwait() } ?: false
+            val ok = withTimeoutOrNull(5_000L) { bindServiceAwait() } ?: false
             if (!ok) {
-                Log.e("Boot", "Service bind timeout")
                 ServiceRepository.setError()
                 status.setText(R.string.boot_service_timeout)
-            }
-        }
-
-        lifecycleScope.launch {
-            ServiceRepository.state.collect { state ->
-                Log.d("Boot", "Collecting state = $state on thread ${Thread.currentThread().name}")
-                when (state) {
-                    ServiceState.CONNECTED -> {
-                        Log.d("Boot", "Repository state = CONNECTED")
-                        status.text = "Connected. Initializing data..."
-                        delay(1000)
-                        try {
-                            val msg = g1PingService()
-                            withContext(Dispatchers.Main) {
-                                status.text = msg
-                            }
-
-                            if (msg.contains("ready")) {
-                                Log.d("Boot", "Scheduling final transition to ready state")
-                                delay(1500)
-                                withContext(Dispatchers.Main) {
-                                    status.text = "Moncchichi ready to use 🎉"
-                                }
-                            } else {
-                                Log.d("Boot", "No 'ready' message match; staying on tick screen")
-                            }
-                        } catch (t: Throwable) {
-                            status.text = "Ping failed: ${t.message}"
-                        }
-                    }
-                    ServiceState.DISCONNECTED -> status.text = "Disconnected"
-                    ServiceState.ERROR -> status.text = "Error - check logs"
-                    ServiceState.BINDING -> status.setText(R.string.boot_service_binding)
-                    else -> Unit
-                }
             }
         }
     }
 
     private suspend fun bindServiceAwait(): Boolean = suspendCancellableCoroutine { cont ->
-        val intent = Intent(this, BluetoothG1DisplayService::class.java)
-        val started = bindService(intent, conn, Context.BIND_AUTO_CREATE)
+        val intent = Intent(this, G1DisplayService::class.java)
+        val started = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         if (!started) {
             cont.resume(false)
             return@suspendCancellableCoroutine
         }
-        lifecycleScope.launch(Dispatchers.Default) {
-            repeat(100) {
+        lifecycleScope.launch {
+            repeat(60) {
                 if (bound) {
                     if (!cont.isCompleted) cont.resume(true)
                     return@launch
@@ -137,39 +78,26 @@ class MainActivity : AppCompatActivity() {
         }
         cont.invokeOnCancellation {
             if (bound) {
-                unbindService(conn)
+                unbindService(serviceConnection)
                 bound = false
                 binder = null
                 ServiceRepository.setDisconnected()
                 connectionStateJob?.cancel()
                 connectionStateJob = null
-                lastConnectionState = null
             }
         }
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         if (bound) {
-            unbindService(conn)
+            unbindService(serviceConnection)
             bound = false
             binder = null
             ServiceRepository.setDisconnected()
         }
         connectionStateJob?.cancel()
         connectionStateJob = null
-        lastConnectionState = null
-    }
-
-    private suspend fun g1PingService(): String = withContext(Dispatchers.IO) {
-        return@withContext try {
-            binder?.heartbeat() ?: throw IllegalStateException("Binder unavailable")
-            Log.d("Boot", "Ping OK")
-            "G1 Display ready ✅"
-        } catch (t: Throwable) {
-            Log.e("Boot", "Ping failed", t)
-            "Ping failed ❌"
-        }
+        super.onDestroy()
     }
 
     private fun observeConnectionState() {
@@ -177,24 +105,13 @@ class MainActivity : AppCompatActivity() {
         connectionStateJob?.cancel()
         connectionStateJob = lifecycleScope.launch {
             g1Binder.stateFlow.collectLatest { state ->
-                when (state) {
-                    G1ConnectionState.CONNECTED -> {
-                        if (lastConnectionState == G1ConnectionState.WAITING_FOR_RECONNECT) {
-                            delay(500)
-                        }
-                        status.text = "Moncchichi ready 🎉"
-                    }
-                    G1ConnectionState.WAITING_FOR_RECONNECT -> {
-                        status.text = "Reconnecting..."
-                    }
-                    G1ConnectionState.DISCONNECTED -> {
-                        status.text = "Connection lost"
-                    }
-                    else -> {
-                        status.text = "Connecting..."
-                    }
+                status.text = when (state) {
+                    G1ConnectionState.CONNECTED -> getString(R.string.status_connected_green)
+                    G1ConnectionState.RECONNECTING -> getString(R.string.status_reconnecting_yellow)
+                    G1ConnectionState.WAITING_FOR_RECONNECT -> getString(R.string.status_waiting_red)
+                    G1ConnectionState.CONNECTING -> getString(R.string.status_connecting)
+                    G1ConnectionState.DISCONNECTED -> getString(R.string.status_disconnected)
                 }
-                lastConnectionState = state
             }
         }
     }
