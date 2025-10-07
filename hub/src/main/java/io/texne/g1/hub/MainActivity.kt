@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             ServiceRepository.state.collect { state ->
+                Log.d("Boot", "Collecting state = $state on thread ${Thread.currentThread().name}")
                 when (state) {
                     ServiceState.CONNECTED -> {
                         Log.d("Boot", "Repository state = CONNECTED")
@@ -81,7 +82,19 @@ class MainActivity : AppCompatActivity() {
                         delay(1000)
                         try {
                             val msg = g1PingService()
-                            status.text = msg
+                            withContext(Dispatchers.Main) {
+                                status.text = msg
+                            }
+
+                            if (msg.contains("ready")) {
+                                Log.d("Boot", "Scheduling final transition to ready state")
+                                delay(1500)
+                                withContext(Dispatchers.Main) {
+                                    status.text = "Moncchichi ready to use 🎉"
+                                }
+                            } else {
+                                Log.d("Boot", "No 'ready' message match; staying on tick screen")
+                            }
                         } catch (t: Throwable) {
                             status.text = "Ping failed: ${t.message}"
                         }
