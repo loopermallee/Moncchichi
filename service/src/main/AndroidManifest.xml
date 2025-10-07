@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application>
         <service
+            android:name=".bluetooth.G1DisplayService"
+            android:exported="true"
+            android:foregroundServiceType="connectedDevice" />
+        <service
             android:name=".G1Service"
             android:foregroundServiceType="connectedDevice"
             android:permission="io.texne.g1.basis.permission.CONNECT_TO_SERVICE"

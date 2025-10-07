@@ -11,8 +11,12 @@ import android.util.Log
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
+import com.loopermallee.moncchichi.bluetooth.G1DisplayService as BluetoothG1DisplayService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -22,21 +26,27 @@ import kotlin.coroutines.resume
 class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private var bound = false
-    private var binder: G1DisplayService.G1Binder? = null
+    private var binder: BluetoothG1DisplayService.G1Binder? = null
+    private var connectionStateJob: Job? = null
+    private var lastConnectionState: G1ConnectionState? = null
 
     private val conn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             bound = true
-            binder = service as? G1DisplayService.G1Binder
+            binder = service as? BluetoothG1DisplayService.G1Binder
             ServiceRepository.setConnected()
             Log.d("Boot", "Service connected on binder thread")
             runOnUiThread { status.setText(R.string.boot_service_connected) }
+            observeConnectionState()
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             bound = false
             binder = null
             ServiceRepository.setDisconnected()
             Log.w("Boot", "Service disconnected")
+            connectionStateJob?.cancel()
+            connectionStateJob = null
+            lastConnectionState = null
         }
     }
 
@@ -109,7 +119,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private suspend fun bindServiceAwait(): Boolean = suspendCancellableCoroutine { cont ->
-        val intent = Intent(this, G1DisplayService::class.java)
+        val intent = Intent(this, BluetoothG1DisplayService::class.java)
         val started = bindService(intent, conn, Context.BIND_AUTO_CREATE)
         if (!started) {
             cont.resume(false)
@@ -131,6 +141,9 @@ class MainActivity : AppCompatActivity() {
                 bound = false
                 binder = null
                 ServiceRepository.setDisconnected()
+                connectionStateJob?.cancel()
+                connectionStateJob = null
+                lastConnectionState = null
             }
         }
     }
@@ -143,6 +156,9 @@ class MainActivity : AppCompatActivity() {
             binder = null
             ServiceRepository.setDisconnected()
         }
+        connectionStateJob?.cancel()
+        connectionStateJob = null
+        lastConnectionState = null
     }
 
     private suspend fun g1PingService(): String = withContext(Dispatchers.IO) {
@@ -153,6 +169,27 @@ class MainActivity : AppCompatActivity() {
         } catch (t: Throwable) {
             Log.e("Boot", "Ping failed", t)
             "Ping failed ❌"
+        }
+    }
+
+    private fun observeConnectionState() {
+        val g1Binder = binder ?: return
+        connectionStateJob?.cancel()
+        connectionStateJob = lifecycleScope.launch {
+            g1Binder.stateFlow.collectLatest { state ->
+                when (state) {
+                    G1ConnectionState.WAITING_FOR_RECONNECT -> {
+                        status.text = "Connection lost, attempting to reconnect..."
+                    }
+                    G1ConnectionState.CONNECTED -> {
+                        if (lastConnectionState == G1ConnectionState.WAITING_FOR_RECONNECT) {
+                            status.text = "Moncchichi ready to use 🎉"
+                        }
+                    }
+                    else -> Unit
+                }
+                lastConnectionState = state
+            }
         }
     }
 }

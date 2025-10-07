@@ -37,7 +37,7 @@ internal class DeviceManager(
         ERROR,
     }
 
-    private val writableConnectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
+    private val writableConnectionState = globalConnectionState
     val connectionState = writableConnectionState.asStateFlow()
 
     private val writableIncoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 32)
@@ -52,7 +52,9 @@ internal class DeviceManager(
     private var heartbeatJob: Job? = null
     private var heartbeatTimeoutJob: Job? = null
     private val awaitingAck = AtomicBoolean(false)
+    private val manualDisconnect = AtomicBoolean(false)
     private var lastAckTimestamp: Long = 0L
+    private var currentDeviceAddress: String? = null
 
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
@@ -62,26 +64,39 @@ internal class DeviceManager(
             Log.d(TAG, "connect: already connected or connecting")
             return
         }
+        addDevice(device)
+        updateState(device, G1ConnectionState.CONNECTING)
         writableConnectionState.value = ConnectionState.CONNECTING
+        currentDeviceAddress = device.address
         bluetoothGatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
                         Log.d(TAG, "onConnectionStateChange: connected")
                         writableConnectionState.value = ConnectionState.CONNECTED
+                        updateState(gatt.device, G1ConnectionState.CONNECTED)
+                        currentDeviceAddress = gatt.device.address
                         gatt.discoverServices()
                     }
                     BluetoothProfile.STATE_CONNECTING -> {
                         writableConnectionState.value = ConnectionState.CONNECTING
+                        updateState(gatt.device, G1ConnectionState.CONNECTING)
                     }
                     BluetoothProfile.STATE_DISCONNECTING -> {
                         writableConnectionState.value = ConnectionState.DISCONNECTING
+                        updateState(gatt.device, G1ConnectionState.WAITING_FOR_RECONNECT)
                     }
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         Log.d(TAG, "onConnectionStateChange: disconnected")
                         stopHeartbeat()
                         clearConnection()
                         writableConnectionState.value = ConnectionState.DISCONNECTED
+                        val targetState = if (manualDisconnect.getAndSet(false)) {
+                            G1ConnectionState.DISCONNECTED
+                        } else {
+                            G1ConnectionState.WAITING_FOR_RECONNECT
+                        }
+                        updateState(gatt.device, targetState)
                     }
                 }
             }
@@ -171,16 +186,21 @@ internal class DeviceManager(
     fun disconnect() {
         stopHeartbeat()
         writableConnectionState.value = ConnectionState.DISCONNECTING
+        manualDisconnect.set(true)
         bluetoothGatt?.disconnect()
         bluetoothGatt?.close()
         clearConnection()
         writableConnectionState.value = ConnectionState.DISCONNECTED
+        currentDeviceAddress?.let { address ->
+            deviceStates[address] = G1ConnectionState.DISCONNECTED
+        }
     }
 
     private fun clearConnection() {
         bluetoothGatt = null
         writeCharacteristic = null
         readCharacteristic = null
+        currentDeviceAddress = null
     }
 
     suspend fun sendText(message: String): Boolean {
@@ -225,4 +245,33 @@ internal class DeviceManager(
 
     fun isConnected(): Boolean =
         writableConnectionState.value == ConnectionState.CONNECTED
+
+    fun addDevice(device: BluetoothDevice) {
+        if (subDevices.none { it.address == device.address }) {
+            subDevices.add(device)
+        }
+        deviceStates[device.address] = deviceStates[device.address] ?: G1ConnectionState.DISCONNECTED
+    }
+
+    fun updateState(device: BluetoothDevice, newState: G1ConnectionState) {
+        deviceStates[device.address] = newState
+    }
+
+    fun allConnected(): Boolean =
+        deviceStates.isNotEmpty() && deviceStates.values.all { it == G1ConnectionState.CONNECTED }
+
+    fun anyWaitingForReconnect(): Boolean =
+        deviceStates.values.any { it == G1ConnectionState.WAITING_FOR_RECONNECT }
+
+    fun resetDisconnected() {
+        deviceStates.entries
+            .filter { it.value == G1ConnectionState.WAITING_FOR_RECONNECT }
+            .forEach { entry -> deviceStates[entry.key] = G1ConnectionState.DISCONNECTED }
+    }
+
+    private companion object {
+        private val subDevices = mutableListOf<BluetoothDevice>()
+        private val deviceStates = mutableMapOf<String, G1ConnectionState>()
+        private val globalConnectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
+    }
 }
