@@ -1,8 +1,5 @@
 <resources>
     <style name="Theme.Moncchichi" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/purple_500</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">@color/teal_200</item>
-        <item name="android:statusBarColor">?attr/colorPrimary</item>
+        <item name="android:windowBackground">@color/white</item>
     </style>
 </resources>
