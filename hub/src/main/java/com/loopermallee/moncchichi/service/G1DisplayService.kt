@@ -70,6 +70,7 @@ class G1DisplayService : Service() {
                 updateNotification(state)
                 when (state) {
                     G1ConnectionState.WAITING_FOR_RECONNECT -> scheduleReconnects()
+                    G1ConnectionState.RECONNECTING -> scheduleReconnects()
                     G1ConnectionState.DISCONNECTED -> reconnectJob?.cancel()
                     G1ConnectionState.CONNECTED -> reconnectJob?.cancel()
                 }
