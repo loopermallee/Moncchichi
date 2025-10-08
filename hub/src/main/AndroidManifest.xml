@@ -1,37 +1,18 @@
-<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_CONNECT"
-        android:usesPermissionFlags="neverForLocation" />
-
     <application
-        android:name=".MoncchichiApp"
-        android:label="@string/app_name"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="MoncchichiTest"
         android:theme="@android:style/Theme.DeviceDefault">
 
-        <!-- Failsafe Diagnostic Activity -->
         <activity
-            android:name=".FailsafeMainActivity"
-            android:exported="true"
-            android:process=":failsafe"
-            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            android:name=".TestActivity"
+            android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Keep normal main activity disabled for now -->
-        <!-- <activity android:name=".MainActivity" android:exported="true" /> -->
-
-        <service
-            android:name=".service.G1DisplayService"
-            android:exported="false"
-            android:foregroundServiceType="connectedDevice|dataSync" />
     </application>
 
 </manifest>
