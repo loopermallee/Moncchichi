@@ -4,19 +4,16 @@ plugins {
 }
 
 android {
-    namespace "io.texne.g1.basis.service"
-
-    compileSdk 35
+    namespace "com.loopermallee.moncchichi.service"
+    compileSdk 34
 
     defaultConfig {
-        minSdk 26
-        targetSdk 35
-
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        consumerProguardFiles "consumer-rules.pro"
+        minSdk 24
+        targetSdk 34
     }
 
     buildFeatures {
+        viewBinding true
         buildConfig true
         aidl true
         resValues true
@@ -33,8 +30,9 @@ android {
 
     sourceSets {
         main {
-            res.srcDirs += ['src/main/res']
             manifest.srcFile 'src/main/AndroidManifest.xml'
+            java.srcDirs = ['src/main/java']
+            res.srcDirs = ['src/main/res']
         }
     }
 }
@@ -43,6 +41,10 @@ dependencies {
     implementation project(':core')
     implementation project(':client')
     implementation project(':aidl')
+    implementation project(':hub')
+
+    // ensure this line exists so service module can access app resources
+    implementation project(':app')
 
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
