@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.loopermallee.moncchichi"
+    namespace = "com.loopermallee.moncchichi.client"
     compileSdk = 35
 
     defaultConfig {

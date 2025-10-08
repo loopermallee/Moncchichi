@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.loopermallee.moncchichi"
+    namespace = "com.loopermallee.moncchichi.subtitles"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.loopermallee.moncchichi"
+        applicationId = "com.loopermallee.moncchichi.subtitles"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -56,7 +56,7 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
     implementation(libs.material)
     implementation(libs.androidx.material3)
-    implementation(libs.basis.client)
+    implementation(project(":client"))
     implementation(libs.nabinbhandari.permissions)
     implementation(libs.androidx.icons.extended)
 
