@@ -6,8 +6,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.os.Build
+import android.content.pm.ServiceInfo
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.R
@@ -24,7 +25,6 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
-import android.os.ServiceInfo
 import androidx.core.app.NotificationCompat
 import android.content.Context
 
