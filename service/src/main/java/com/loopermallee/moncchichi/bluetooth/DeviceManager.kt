@@ -9,7 +9,7 @@ import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.SystemClock
-import android.util.Log
+import com.loopermallee.moncchichi.MoncchichiLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -29,6 +29,7 @@ internal class DeviceManager(
     private val context: Context,
     private val scope: CoroutineScope,
 ) {
+    private val logger by lazy { MoncchichiLogger(context) }
     enum class ConnectionState {
         DISCONNECTED,
         CONNECTING,
@@ -60,7 +61,7 @@ internal class DeviceManager(
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    Log.d(TAG, "onConnectionStateChange: connected")
+                    logger.debug(TAG, "${tt()} onConnectionStateChange: connected")
                     writableConnectionState.value = ConnectionState.CONNECTED
                     updateState(gatt.device, G1ConnectionState.CONNECTED)
                     currentDeviceAddress = gatt.device.address
@@ -72,32 +73,35 @@ internal class DeviceManager(
                 }
                 BluetoothProfile.STATE_DISCONNECTING -> {
                     writableConnectionState.value = ConnectionState.DISCONNECTING
-                    updateState(gatt.device, G1ConnectionState.WAITING_FOR_RECONNECT)
+                    updateState(gatt.device, G1ConnectionState.RECONNECTING)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.d(TAG, "onConnectionStateChange: disconnected")
+                    logger.debug(TAG, "${tt()} onConnectionStateChange: disconnected")
                     stopHeartbeat()
                     clearConnection()
                     writableConnectionState.value = ConnectionState.DISCONNECTED
                     val targetState = if (manualDisconnect.getAndSet(false)) {
                         G1ConnectionState.DISCONNECTED
                     } else {
-                        G1ConnectionState.WAITING_FOR_RECONNECT
+                        G1ConnectionState.RECONNECTING
                     }
                     updateState(gatt.device, targetState)
+                }
+                else -> {
+                    logger.w(TAG, "${tt()} Unknown Bluetooth state $newState")
                 }
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                Log.w(TAG, "onServicesDiscovered: failure status=$status")
+                logger.w(TAG, "${tt()} onServicesDiscovered: failure status=$status")
                 writableConnectionState.value = ConnectionState.ERROR
                 return
             }
             val uartService = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
             if (uartService == null) {
-                Log.w(TAG, "UART service not available on device")
+                logger.w(TAG, "${tt()} UART service not available on device")
                 writableConnectionState.value = ConnectionState.ERROR
                 return
             }
@@ -122,7 +126,7 @@ internal class DeviceManager(
         if (writableConnectionState.value == ConnectionState.CONNECTING ||
             writableConnectionState.value == ConnectionState.CONNECTED
         ) {
-            Log.d(TAG, "connect: already connected or connecting")
+            logger.debug(TAG, "${tt()} connect: already connected or connecting")
             return
         }
         addDevice(device)
@@ -137,13 +141,13 @@ internal class DeviceManager(
         writeCharacteristic = service.getCharacteristic(BluetoothConstants.UART_WRITE_CHARACTERISTIC_UUID)
         readCharacteristic = service.getCharacteristic(BluetoothConstants.UART_READ_CHARACTERISTIC_UUID)
         if (writeCharacteristic == null || readCharacteristic == null) {
-            Log.w(TAG, "Required UART characteristics not found")
+            logger.w(TAG, "${tt()} Required UART characteristics not found")
             writableConnectionState.value = ConnectionState.ERROR
             return
         }
         val notified = gatt.setCharacteristicNotification(readCharacteristic, true)
         if (!notified) {
-            Log.w(TAG, "Unable to enable notifications")
+            logger.w(TAG, "${tt()} Unable to enable notifications")
             writableConnectionState.value = ConnectionState.ERROR
             return
         }
@@ -172,7 +176,7 @@ internal class DeviceManager(
             delay(BluetoothConstants.HEARTBEAT_TIMEOUT_SECONDS * 1000)
             val elapsed = SystemClock.elapsedRealtime() - lastAckTimestamp
             if (awaitingAck.get() && elapsed >= BluetoothConstants.HEARTBEAT_TIMEOUT_SECONDS * 1000) {
-                Log.w(TAG, "Heartbeat timeout reached, disconnecting")
+                logger.w(TAG, "${tt()} Heartbeat timeout reached, disconnecting")
                 disconnect()
             }
         }
@@ -196,6 +200,7 @@ internal class DeviceManager(
         currentDeviceAddress?.let { address ->
             deviceStates[address] = G1ConnectionState.DISCONNECTED
         }
+        logger.i(TAG, "${tt()} disconnect requested")
     }
 
     private fun clearConnection() {
@@ -235,11 +240,11 @@ internal class DeviceManager(
             val success = try {
                 gatt.writeCharacteristic(characteristic)
             } catch (t: Throwable) {
-                Log.e(TAG, "sendCommand: failed", t)
+                logger.e(TAG, "${tt()} sendCommand: failed", t)
                 false
             }
             if (!success) {
-                Log.w(TAG, "sendCommand: write failed")
+                logger.w(TAG, "${tt()} sendCommand: write failed")
             }
             success
         }
@@ -263,11 +268,11 @@ internal class DeviceManager(
         deviceStates.isNotEmpty() && deviceStates.values.all { it == G1ConnectionState.CONNECTED }
 
     fun anyWaitingForReconnect(): Boolean =
-        deviceStates.values.any { it == G1ConnectionState.WAITING_FOR_RECONNECT }
+        deviceStates.values.any { it == G1ConnectionState.RECONNECTING }
 
     fun resetDisconnected() {
         deviceStates.entries
-            .filter { it.value == G1ConnectionState.WAITING_FOR_RECONNECT }
+            .filter { it.value == G1ConnectionState.RECONNECTING }
             .forEach { entry -> deviceStates[entry.key] = G1ConnectionState.DISCONNECTED }
     }
 
@@ -277,7 +282,7 @@ internal class DeviceManager(
         intervalMs: Long = 10_000L,
     ): Boolean {
         repeat(maxAttempts) { attempt ->
-            Log.i(TAG, "Reconnect attempt ${attempt + 1} of $maxAttempts")
+            logger.i(TAG, "${tt()} Reconnect attempt ${attempt + 1} of $maxAttempts")
             var success = false
             for (device in subDevices) {
                 try {
@@ -286,12 +291,12 @@ internal class DeviceManager(
                     if (gatt != null) {
                         bluetoothGatt = gatt
                         currentDeviceAddress = device.address
-                        Log.i(TAG, "Reconnected to ${device.address}")
+                        logger.i(TAG, "${tt()} Reconnected to ${device.address}")
                         success = true
                         break
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Reconnect failed: ${e.message}")
+                    logger.w(TAG, "${tt()} Reconnect failed: ${e.message}")
                 }
             }
             if (success) {
@@ -299,7 +304,7 @@ internal class DeviceManager(
             }
             delay(intervalMs)
         }
-        Log.e(TAG, "All reconnect attempts failed.")
+        logger.e(TAG, "${tt()} All reconnect attempts failed.")
         return false
     }
 
@@ -308,4 +313,6 @@ internal class DeviceManager(
         private val deviceStates = mutableMapOf<String, G1ConnectionState>()
         private val globalConnectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     }
+
+    private fun tt() = "[${Thread.currentThread().name}]"
 }

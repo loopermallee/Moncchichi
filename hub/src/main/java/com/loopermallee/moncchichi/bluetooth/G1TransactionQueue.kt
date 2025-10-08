@@ -14,6 +14,7 @@ private const val BLE_QUEUE_TAG = "[BLEQueue]"
 
 class G1TransactionQueue(
     private val scope: CoroutineScope,
+    private val logger: MoncchichiLogger,
     private val timeoutMs: Long = 5_000L,
     private val maxRetries: Int = 5,
 ) {
@@ -48,21 +49,21 @@ class G1TransactionQueue(
         var backoff = 200L
         while (attempt < maxRetries && scope.isActive && !item.result.isCompleted) {
             attempt += 1
-            MoncchichiLogger.d(BLE_QUEUE_TAG, "${item.label} attempt $attempt/$maxRetries")
+            logger.d(BLE_QUEUE_TAG, "${item.label} attempt $attempt/$maxRetries")
             val success = try {
                 withTimeoutOrNull(timeoutMs) {
                     item.task()
                 } ?: false
             } catch (t: Throwable) {
-                MoncchichiLogger.e(BLE_QUEUE_TAG, "${item.label} crashed", t)
+                logger.e(BLE_QUEUE_TAG, "${item.label} crashed", t)
                 false
             }
             if (success) {
-                MoncchichiLogger.i(BLE_QUEUE_TAG, "${item.label} completed")
+                logger.i(BLE_QUEUE_TAG, "${item.label} completed")
                 item.result.complete(true)
                 return
             }
-            MoncchichiLogger.w(BLE_QUEUE_TAG, "${item.label} failed on attempt $attempt")
+            logger.w(BLE_QUEUE_TAG, "${item.label} failed on attempt $attempt")
             if (attempt >= maxRetries) {
                 break
             }
@@ -70,7 +71,7 @@ class G1TransactionQueue(
             backoff = min(backoff * 2, 5_000L)
         }
         if (!item.result.isCompleted) {
-            MoncchichiLogger.e(BLE_QUEUE_TAG, "${item.label} exhausted retries")
+            logger.e(BLE_QUEUE_TAG, "${item.label} exhausted retries")
             item.result.complete(false)
         }
     }
