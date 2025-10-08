@@ -64,6 +64,7 @@ dependencies {
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
     implementation(project(":client"))
+    implementation(project(":core"))
 
     kapt(libs.hilt.android.compiler)
 }

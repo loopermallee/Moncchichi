@@ -10,6 +10,7 @@
     <string name="notification_waiting">Waiting for G1 glasses</string>
     <string name="notification_connecting">Connecting to G1 glasses…</string>
     <string name="notification_disconnected">Display link idle</string>
+    <string name="notification_unknown">Display state unknown</string>
     <string name="notification_channel_name">Display connectivity</string>
     <string name="notification_channel_description">Keeps the G1 display connection active</string>
     <string name="status_connected_green">Connected 🟢</string>
@@ -17,4 +18,6 @@
     <string name="status_waiting_red">Waiting for reconnect 🔴</string>
     <string name="status_connecting">Connecting…</string>
     <string name="status_disconnected">Disconnected</string>
+    <string name="status_unknown">Status unknown</string>
+    <string name="status_bind_timeout_retry">Service bind timeout – retrying…</string>
 </resources>

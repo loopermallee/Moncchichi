@@ -4,7 +4,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
-import android.util.Log
+import com.loopermallee.moncchichi.MoncchichiLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class G1DisplayService : Service() {
 
+    private val logger by lazy { MoncchichiLogger(this) }
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val deviceManager by lazy { DeviceManager(this, serviceScope) }
     private val connectionStateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
@@ -38,9 +39,13 @@ class G1DisplayService : Service() {
                 val nextState = when (connection) {
                     DeviceManager.ConnectionState.CONNECTED -> G1ConnectionState.CONNECTED
                     DeviceManager.ConnectionState.CONNECTING -> G1ConnectionState.CONNECTING
-                    DeviceManager.ConnectionState.DISCONNECTING -> G1ConnectionState.WAITING_FOR_RECONNECT
+                    DeviceManager.ConnectionState.DISCONNECTING -> G1ConnectionState.RECONNECTING
                     DeviceManager.ConnectionState.DISCONNECTED -> G1ConnectionState.DISCONNECTED
-                    DeviceManager.ConnectionState.ERROR -> G1ConnectionState.WAITING_FOR_RECONNECT
+                    DeviceManager.ConnectionState.ERROR -> G1ConnectionState.RECONNECTING
+                    else -> {
+                        logger.w(TAG, "${tt()} Unknown connection state $connection")
+                        G1ConnectionState.DISCONNECTED
+                    }
                 }
                 connectionStateFlow.value = nextState
             }
@@ -48,7 +53,7 @@ class G1DisplayService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder {
-        Log.d(TAG, "onBind(${intent?.action})")
+        logger.debug(TAG, "${tt()} onBind(${intent?.action})")
         if (heartbeatStarted.compareAndSet(false, true)) {
             startHeartbeatMonitoring()
         }
@@ -75,18 +80,18 @@ class G1DisplayService : Service() {
                 delay(8_000)
                 try {
                     if (binder.checkBinderHeartbeat()) {
-                        Log.d(TAG, "Heartbeat OK")
+                        logger.debug(TAG, "${tt()} Heartbeat OK")
                     } else if (deviceManager.anyWaitingForReconnect()) {
-                        Log.w(TAG, "Lost heartbeat, marking WAITING_FOR_RECONNECT")
+                        logger.w(TAG, "${tt()} Lost heartbeat, marking reconnecting")
                         deviceManager.resetDisconnected()
-                        connectionStateFlow.value = G1ConnectionState.WAITING_FOR_RECONNECT
+                        connectionStateFlow.value = G1ConnectionState.RECONNECTING
                     } else {
-                        Log.d(TAG, "Heartbeat idle; no devices pending reconnect")
+                        logger.debug(TAG, "${tt()} Heartbeat idle; no devices pending reconnect")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Heartbeat error: ${e.message}")
+                    logger.e(TAG, "${tt()} Heartbeat error: ${e.message}", e)
                     if (deviceManager.anyWaitingForReconnect()) {
-                        connectionStateFlow.value = G1ConnectionState.WAITING_FOR_RECONNECT
+                        connectionStateFlow.value = G1ConnectionState.RECONNECTING
                     }
                 }
             }
@@ -96,14 +101,14 @@ class G1DisplayService : Service() {
     private fun monitorReconnection() {
         serviceScope.launch {
             connectionStateFlow.collect { state ->
-                if (state == G1ConnectionState.WAITING_FOR_RECONNECT) {
-                    Log.w(TAG, "Lost connection — starting auto-reconnect sequence")
+                if (state == G1ConnectionState.RECONNECTING) {
+                    logger.w(TAG, "${tt()} Lost connection — starting auto-reconnect sequence")
                     val reconnected = deviceManager.tryReconnect(applicationContext)
                     if (reconnected) {
                         connectionStateFlow.value = G1ConnectionState.CONNECTED
-                        Log.i(TAG, "Reconnected successfully.")
+                        logger.i(TAG, "${tt()} Reconnected successfully.")
                     } else {
-                        Log.e(TAG, "Failed to reconnect automatically.")
+                        logger.e(TAG, "${tt()} Failed to reconnect automatically.")
                         connectionStateFlow.value = G1ConnectionState.DISCONNECTED
                     }
                 }
@@ -123,7 +128,7 @@ class G1DisplayService : Service() {
             val isConnected = deviceManager.isConnected()
             return when {
                 deviceManager.anyWaitingForReconnect() -> {
-                    connectionStateFlow.value = G1ConnectionState.WAITING_FOR_RECONNECT
+                    connectionStateFlow.value = G1ConnectionState.RECONNECTING
                     isConnected
                 }
                 isConnected && deviceManager.allConnected() -> {
@@ -145,4 +150,6 @@ class G1DisplayService : Service() {
     companion object {
         private const val TAG = "G1DisplayService"
     }
+
+    private fun tt() = "[${Thread.currentThread().name}]"
 }

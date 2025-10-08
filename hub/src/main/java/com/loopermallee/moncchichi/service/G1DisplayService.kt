@@ -12,6 +12,7 @@ import android.content.IntentFilter
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
@@ -20,61 +21,80 @@ import io.texne.g1.hub.MainActivity
 import io.texne.g1.hub.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
 
 class G1DisplayService : Service() {
 
+    private val logger by lazy { MoncchichiLogger(this) }
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceManager by lazy { DeviceManager(applicationContext) }
     private val ready = MutableStateFlow(false)
     private val _connectionState = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<G1ConnectionState> = _connectionState
     private val binder = LocalBinder()
-    private var heartbeatJob: Job? = null
-    private var reconnectJob: Job? = null
     private var powerReceiver: BroadcastReceiver? = null
 
     override fun onCreate() {
         super.onCreate()
-        MoncchichiLogger.init(applicationContext)
-        MoncchichiLogger.i(SERVICE_TAG, "Service created")
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification(G1ConnectionState.DISCONNECTED))
-        observeStateChanges()
-        startHeartbeatLoop()
+        val initial = buildForegroundNotification("Starting…")
+        startForeground(NOTIFICATION_ID, initial)
+
         registerPowerAwareReconnect()
         _connectionState.value = deviceManager.state.value
+
+        serviceScope.launch {
+            logger.i(SERVICE_TAG, "${tt()} onCreate: launching heartbeat + reconnect loops")
+            launch { observeStateChanges() }
+            launch { heartbeatLoop() }
+            launch { reconnectLoop() }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return try {
+            logger.i(SERVICE_TAG, "${tt()} onStartCommand flags=$flags startId=$startId")
+            START_STICKY
+        } catch (t: Throwable) {
+            Log.e(DEFAULT_LOG_TAG, "onStartCommand crashed", t)
+            START_STICKY
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder {
-        MoncchichiLogger.debug(SERVICE_TAG, "onBind called")
-        serviceScope.launch {
-            ensureInitialized()
-            ready.emit(true)
-        }
-        serviceScope.launch {
-            delay(5_000L)
-            if (!ready.value) {
-                MoncchichiLogger.debug(SERVICE_TAG, "Bind timeout — service not initialized in time")
+        return try {
+            logger.debug(SERVICE_TAG, "${tt()} onBind called ${intent?.action}")
+            serviceScope.launch {
+                ensureInitialized()
+                ready.emit(true)
             }
+            serviceScope.launch {
+                delay(5_000L)
+                if (!ready.value) {
+                    logger.debug(SERVICE_TAG, "${tt()} Bind timeout — service not initialized in time")
+                }
+            }
+            binder
+        } catch (t: Throwable) {
+            Log.e(DEFAULT_LOG_TAG, "onBind crashed", t)
+            binder
         }
-        return binder
     }
 
     override fun onUnbind(intent: Intent?): Boolean = super.onUnbind(intent)
 
     override fun onDestroy() {
-        heartbeatJob?.cancel()
-        reconnectJob?.cancel()
-        powerReceiver?.let {
-            runCatching { unregisterReceiver(it) }
+        powerReceiver?.let { receiver ->
+            runCatching { unregisterReceiver(receiver) }
         }
         powerReceiver = null
         deviceManager.close()
@@ -86,103 +106,117 @@ class G1DisplayService : Service() {
 
     private suspend fun ensureInitialized() {
         if (deviceManager.state.value != G1ConnectionState.CONNECTED) {
-            deviceManager.tryReconnect()
-        }
-    }
-
-    private fun observeStateChanges() {
-        serviceScope.launch {
-            deviceManager.state.collectLatest { state ->
-                updateState(state)
-                updateNotification(state)
-                when (state) {
-                    G1ConnectionState.WAITING_FOR_RECONNECT -> scheduleReconnects()
-                    G1ConnectionState.RECONNECTING -> scheduleReconnects()
-                    G1ConnectionState.DISCONNECTED -> reconnectJob?.cancel()
-                    G1ConnectionState.CONNECTED -> reconnectJob?.cancel()
-                }
+            withContext(Dispatchers.IO) {
+                deviceManager.tryReconnect()
             }
         }
     }
 
-    private fun startHeartbeatLoop() {
-        if (heartbeatJob?.isActive == true) return
-        heartbeatJob = serviceScope.launch {
-            while (true) {
-                delay(8_000L)
-                if (deviceManager.state.value == G1ConnectionState.CONNECTED) {
-                    val success = deviceManager.sendHeartbeat()
-                    if (success) {
-                        MoncchichiLogger.d(HEARTBEAT_TAG, "sent")
-                    } else {
-                        MoncchichiLogger.w(HEARTBEAT_TAG, "failed to send heartbeat")
-                    }
-                }
-            }
+    private suspend fun observeStateChanges() {
+        deviceManager.state.collectLatest { state ->
+            logger.d(SERVICE_TAG, "${tt()} observe: $state")
+            updateState(state)
+            updateNotification(state)
         }
     }
 
-    private fun scheduleReconnects() {
-        if (reconnectJob?.isActive == true) return
-        reconnectJob = serviceScope.launch {
-            while (deviceManager.state.value == G1ConnectionState.WAITING_FOR_RECONNECT) {
-                val success = deviceManager.reconnect()
+    private suspend fun heartbeatLoop() {
+        while (coroutineContext.isActive) {
+            delay(8_000L)
+            if (deviceManager.state.value == G1ConnectionState.CONNECTED) {
+                val success = deviceManager.sendHeartbeat()
                 if (success) {
-                    break
+                    logger.d(HEARTBEAT_TAG, "${tt()} sent")
+                } else {
+                    logger.w(HEARTBEAT_TAG, "${tt()} failed to send heartbeat")
                 }
-                MoncchichiLogger.w(RECONNECT_TAG, "retry scheduled")
-                delay(10_000L)
             }
         }
     }
 
-    private fun buildNotification(state: G1ConnectionState): Notification {
+    private suspend fun reconnectLoop() {
+        deviceManager.state.collectLatest { state ->
+            if (state == G1ConnectionState.RECONNECTING) {
+                while (coroutineContext.isActive && deviceManager.state.value == G1ConnectionState.RECONNECTING) {
+                    val success = deviceManager.reconnect()
+                    if (success) {
+                        logger.i(RECONNECT_TAG, "${tt()} reconnect succeeded")
+                        break
+                    }
+                    logger.w(RECONNECT_TAG, "${tt()} retry scheduled")
+                    delay(10_000L)
+                }
+            }
+        }
+    }
+
+    private fun updateState(newState: G1ConnectionState) {
+        if (_connectionState.value != newState) {
+            _connectionState.value = newState
+            logger.debug(SERVICE_TAG, "${tt()} Connection state -> $newState")
+        }
+    }
+
+    private fun updateNotification(state: G1ConnectionState) {
+        val statusText = when (state) {
+            G1ConnectionState.CONNECTED -> getString(R.string.notification_connected)
+            G1ConnectionState.CONNECTING -> getString(R.string.notification_connecting)
+            G1ConnectionState.DISCONNECTED -> getString(R.string.notification_disconnected)
+            G1ConnectionState.RECONNECTING -> getString(R.string.notification_reconnecting)
+            else -> {
+                logger.w(SERVICE_TAG, "${tt()} Unknown notification state $state")
+                getString(R.string.notification_unknown)
+            }
+        }
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, buildForegroundNotification(statusText))
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Moncchichi G1 Link",
+                NotificationManager.IMPORTANCE_LOW,
+            )
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildForegroundNotification(text: String): Notification {
         val intent = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val contentText = when (state) {
-            G1ConnectionState.CONNECTED -> getString(R.string.notification_connected)
-            G1ConnectionState.RECONNECTING -> getString(R.string.notification_reconnecting)
-            G1ConnectionState.WAITING_FOR_RECONNECT -> getString(R.string.notification_waiting)
-            else -> getString(R.string.notification_disconnected)
-        }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText(contentText)
-            .setContentIntent(intent)
+            .setContentText(text)
             .setOngoing(true)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(intent)
             .build()
     }
 
-    private fun updateNotification(state: G1ConnectionState) {
-        val notification = buildNotification(state)
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, notification)
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val existing = manager.getNotificationChannel(CHANNEL_ID)
-        if (existing != null) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.notification_channel_name),
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = getString(R.string.notification_channel_description)
+    private fun registerPowerAwareReconnect() {
+        val filter = IntentFilter(Intent.ACTION_SCREEN_ON)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_SCREEN_ON) {
+                    logger.debug(POWER_TAG, "${tt()} Screen on → trigger reconnect")
+                    deviceManager.tryReconnect()
+                }
+            }
         }
-        manager.createNotificationChannel(channel)
+        registerReceiver(receiver, filter)
+        powerReceiver = receiver
     }
 
     inner class LocalBinder : Binder() {
         val readiness: StateFlow<Boolean> = ready
-
         val connectionStates: StateFlow<G1ConnectionState>
             get() = connectionState
 
@@ -209,32 +243,15 @@ class G1DisplayService : Service() {
         }
     }
 
-    private fun updateState(newState: G1ConnectionState) {
-        if (_connectionState.value != newState) {
-            _connectionState.value = newState
-            MoncchichiLogger.debug(SERVICE_TAG, "Connection state -> $newState")
-        }
-    }
-
-    private fun registerPowerAwareReconnect() {
-        val filter = IntentFilter(Intent.ACTION_SCREEN_ON)
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == Intent.ACTION_SCREEN_ON) {
-                    MoncchichiLogger.debug("[Power]", "Screen on → trigger reconnect")
-                    deviceManager.tryReconnect()
-                }
-            }
-        }
-        registerReceiver(receiver, filter)
-        powerReceiver = receiver
-    }
-
     companion object {
         private const val SERVICE_TAG = "[Service]"
         private const val HEARTBEAT_TAG = "[Heartbeat]"
         private const val RECONNECT_TAG = "[Reconnect]"
-        private const val CHANNEL_ID = "moncchichi-ble"
+        private const val POWER_TAG = "[Power]"
+        private const val CHANNEL_ID = "moncchichi_g1"
         private const val NOTIFICATION_ID = 52
+        private const val DEFAULT_LOG_TAG = "Moncchichi"
     }
+
+    private fun tt() = "[${Thread.currentThread().name}]"
 }
