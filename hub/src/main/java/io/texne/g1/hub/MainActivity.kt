@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.graphics.Color
 import android.os.Bundle
 import android.os.IBinder
 import android.widget.TextView
@@ -11,8 +12,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
-import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.service.G1DisplayService
+import com.loopermallee.moncchichi.ui.ServiceDebugHUD
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -27,6 +29,7 @@ class MainActivity : AppCompatActivity() {
     private var service: G1DisplayService? = null
     private var connectionStateJob: Job? = null
     private var readinessJob: Job? = null
+    private var hud: ServiceDebugHUD? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -71,7 +74,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (isBound) return
+        if (hud == null) {
+            hud = ServiceDebugHUD(this)
+        }
+        hud?.show("Starting service...", Color.YELLOW)
+
+        if (isBound) {
+            hud?.show("Service already bound", Color.GREEN)
+            return
+        }
         val serviceIntent = Intent(this, G1DisplayService::class.java)
         ContextCompat.startForegroundService(this, serviceIntent)
         ServiceRepository.setBinding()
@@ -83,12 +94,17 @@ class MainActivity : AppCompatActivity() {
             if (!bound) {
                 ServiceRepository.setError()
                 status.setText(R.string.boot_service_timeout)
+                hud?.show("Bind timeout", Color.RED)
+            } else {
+                hud?.show("Service bound", Color.GREEN)
             }
         }
     }
 
     override fun onStop() {
         super.onStop()
+        hud?.hide()
+        hud = null
         MoncchichiLogger.debug("Activity", "Unbinding service (hasInstance=${'$'}{service != null})")
         if (isBound) {
             unbindService(serviceConnection)
