@@ -1,4 +1,4 @@
-package io.texne.g1.hub
+package com.loopermallee.moncchichi.hub
 
 import android.content.ComponentName
 import android.content.Context
@@ -61,11 +61,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        status = findViewById(R.id.status)
-
-        status.setText(R.string.boot_wait)
+        try {
+            super.onCreate(savedInstanceState)
+            setContentView(R.layout.activity_main)
+            status = findViewById(R.id.status)
+            status.setText(R.string.boot_wait)
+            logger.i("AppBoot", "${tt()} MainActivity ready")
+        } catch (t: Throwable) {
+            logger.e("AppBoot", "${tt()} MainActivity.onCreate crashed", t)
+            throw t
+        }
     }
 
     override fun onStart() {

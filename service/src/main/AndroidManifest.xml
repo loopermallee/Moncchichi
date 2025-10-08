@@ -2,7 +2,7 @@
 <manifest xmlns:tools="http://schemas.android.com/tools"
     xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <permission android:name="io.texne.g1.basis.permission.CONNECT_TO_SERVICE" />
+    <permission android:name="com.loopermallee.moncchichi.permission.CONNECT_TO_SERVICE" />
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
@@ -16,15 +16,15 @@
             android:enabled="true" />
 
         <service
-            android:name="io.texne.g1.basis.service.G1Service"
+            android:name="com.loopermallee.moncchichi.service.G1Service"
             android:foregroundServiceType="connectedDevice"
-            android:permission="io.texne.g1.basis.permission.CONNECT_TO_SERVICE"
+            android:permission="com.loopermallee.moncchichi.permission.CONNECT_TO_SERVICE"
             android:stopWithTask="false"
             android:exported="true"
             tools:ignore="ExportedService">
             <intent-filter>
-                <action android:name="io.texne.g1.basis.service.protocol.IG1Service" />
-                <action android:name="io.texne.g1.basis.service.protocol.IG1ServiceClient" />
+                <action android:name="com.loopermallee.moncchichi.service.protocol.IG1Service" />
+                <action android:name="com.loopermallee.moncchichi.service.protocol.IG1ServiceClient" />
             </intent-filter>
         </service>
     </application>

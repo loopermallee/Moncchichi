@@ -1,4 +1,4 @@
-package io.texne.g1.basis.service
+package com.loopermallee.moncchichi.service
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
@@ -10,10 +10,10 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.os.ParcelUuid
 import android.util.Log
-import io.texne.g1.basis.service.protocol.IG1Service
-import io.texne.g1.basis.service.protocol.IG1StateCallback
-import io.texne.g1.basis.service.protocol.G1ServiceState
-import io.texne.g1.basis.service.protocol.OperationCallback
+import com.loopermallee.moncchichi.service.protocol.IG1Service
+import com.loopermallee.moncchichi.service.protocol.IG1StateCallback
+import com.loopermallee.moncchichi.service.protocol.G1ServiceState
+import com.loopermallee.moncchichi.service.protocol.OperationCallback
 import java.util.UUID
 
 class G1ServiceImpl : IG1Service.Stub() {

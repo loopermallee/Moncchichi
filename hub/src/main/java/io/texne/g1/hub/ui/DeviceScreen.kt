@@ -1,4 +1,4 @@
-package io.texne.g1.hub.ui
+package com.loopermallee.moncchichi.hub.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -21,9 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import io.texne.g1.basis.client.G1ServiceCommon
-import io.texne.g1.hub.ui.glasses.GlassesScreen
-import io.texne.g1.hub.ui.glasses.displayName
+import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.hub.ui.glasses.GlassesScreen
+import com.loopermallee.moncchichi.hub.ui.glasses.displayName
 import kotlinx.coroutines.flow.collectLatest
 
 @Composable

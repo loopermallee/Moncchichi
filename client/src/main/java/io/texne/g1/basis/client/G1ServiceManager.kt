@@ -1,14 +1,14 @@
-package io.texne.g1.basis.client
+package com.loopermallee.moncchichi.client
 
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
-import io.texne.g1.basis.service.protocol.G1Glasses
-import io.texne.g1.basis.service.protocol.G1ServiceState
-import io.texne.g1.basis.service.protocol.IG1Service
-import io.texne.g1.basis.service.protocol.IG1StateCallback
+import com.loopermallee.moncchichi.service.protocol.G1Glasses
+import com.loopermallee.moncchichi.service.protocol.G1ServiceState
+import com.loopermallee.moncchichi.service.protocol.IG1Service
+import com.loopermallee.moncchichi.service.protocol.IG1StateCallback
 import kotlin.collections.buildList
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -18,8 +18,8 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
     companion object {
         fun open(context: Context): G1ServiceManager? {
             val client = G1ServiceManager(context)
-            val intent = Intent("io.texne.g1.basis.service.protocol.IG1Service")
-            intent.setClassName(context.packageName, "io.texne.g1.basis.service.G1Service")
+            val intent = Intent("com.loopermallee.moncchichi.service.protocol.IG1Service")
+            intent.setClassName(context.packageName, "com.loopermallee.moncchichi.service.G1Service")
             if (context.bindService(
                     intent,
                     client.serviceConnection,
@@ -89,7 +89,7 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
     suspend fun connect(id: String) = suspendCoroutine<Boolean> { continuation ->
         service?.connectGlasses(
             id,
-            object : io.texne.g1.basis.service.protocol.OperationCallback.Stub() {
+            object : com.loopermallee.moncchichi.service.protocol.OperationCallback.Stub() {
                 override fun onResult(success: Boolean) {
                     continuation.resume(success)
                 }
@@ -119,7 +119,7 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
             service?.displayTextPage(
                 id,
                 page.toTypedArray(),
-                object : io.texne.g1.basis.service.protocol.OperationCallback.Stub() {
+                object : com.loopermallee.moncchichi.service.protocol.OperationCallback.Stub() {
                     override fun onResult(success: Boolean) {
                         continuation.resume(success)
                     }
@@ -129,7 +129,7 @@ class G1ServiceManager private constructor(context: Context): G1ServiceCommon<IG
     override suspend fun stopDisplaying(id: String) = suspendCoroutine<Boolean> { continuation ->
         service?.stopDisplaying(
             id,
-            object : io.texne.g1.basis.service.protocol.OperationCallback.Stub() {
+            object : com.loopermallee.moncchichi.service.protocol.OperationCallback.Stub() {
                 override fun onResult(success: Boolean) {
                     continuation.resume(success)
                 }

@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "io.texne.g1.hub"
+    namespace = "com.loopermallee.moncchichi"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.texne.g1.hub"
+        applicationId = "com.loopermallee.moncchichi"
         minSdk = 24
         targetSdk = 35
         versionCode = 1

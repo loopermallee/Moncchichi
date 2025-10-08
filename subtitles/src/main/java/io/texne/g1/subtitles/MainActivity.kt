@@ -1,4 +1,4 @@
-package io.texne.g1.subtitles
+package com.loopermallee.moncchichi.subtitles
 
 import android.Manifest
 import android.os.Bundle
@@ -14,10 +14,10 @@ import androidx.lifecycle.lifecycleScope
 import com.nabinbhandari.android.permissions.PermissionHandler
 import com.nabinbhandari.android.permissions.Permissions
 import dagger.hilt.android.AndroidEntryPoint
-import io.texne.g1.basis.client.G1ServiceClient
-import io.texne.g1.subtitles.model.Repository
-import io.texne.g1.subtitles.ui.SubtitlesScreen
-import io.texne.g1.subtitles.ui.theme.SubtitlesTheme
+import com.loopermallee.moncchichi.client.G1ServiceClient
+import com.loopermallee.moncchichi.subtitles.model.Repository
+import com.loopermallee.moncchichi.subtitles.ui.SubtitlesScreen
+import com.loopermallee.moncchichi.subtitles.ui.theme.SubtitlesTheme
 import javax.inject.Inject
 
 @AndroidEntryPoint

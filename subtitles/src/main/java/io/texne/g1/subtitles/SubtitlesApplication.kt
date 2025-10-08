@@ -1,4 +1,4 @@
-package io.texne.g1.subtitles
+package com.loopermallee.moncchichi.subtitles
 
 import android.app.Application
 import dagger.Module

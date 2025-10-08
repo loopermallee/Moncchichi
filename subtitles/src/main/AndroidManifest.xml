@@ -13,18 +13,13 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:name=".SubtitlesApplication"
+        android:name="com.loopermallee.moncchichi.subtitles.SubtitlesApplication"
         android:theme="@style/Theme.Subtitles"
         tools:targetApi="31">
         <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:theme="@style/Theme.Subtitles">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:name="com.loopermallee.moncchichi.subtitles.MainActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Subtitles"/>
     </application>
 
 </manifest>

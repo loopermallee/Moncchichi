@@ -1,11 +1,11 @@
-package io.texne.g1.subtitles.model
+package com.loopermallee.moncchichi.subtitles.model
 
 import android.content.Context
 import android.util.Log
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.texne.g1.basis.client.G1ServiceClient
-import io.texne.g1.basis.client.G1ServiceCommon
+import com.loopermallee.moncchichi.client.G1ServiceClient
+import com.loopermallee.moncchichi.client.G1ServiceCommon
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -41,7 +41,7 @@ class Repository @Inject constructor(
     init {
         writableState.value = State(
             hubInstalled = try {
-                applicationContext.packageManager.getPackageInfo("io.texne.g1.hub", 0)
+                applicationContext.packageManager.getPackageInfo("com.loopermallee.moncchichi", 0)
                 true
             } catch (e: PackageManager.NameNotFoundException) {
                 false

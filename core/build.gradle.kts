@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "io.texne.g1.basis.core"
+    namespace = "com.loopermallee.moncchichi.core"
     compileSdk = 35
 
     defaultConfig {

@@ -1,4 +1,4 @@
-package io.texne.g1.hub.ui
+package com.loopermallee.moncchichi.hub.ui
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.NavigationBar
@@ -11,7 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import io.texne.g1.hub.ui.theme.G1HubTheme
+import com.loopermallee.moncchichi.hub.ui.theme.G1HubTheme
 
 private enum class MainTab(val label: String) {
     Device("Device"),
