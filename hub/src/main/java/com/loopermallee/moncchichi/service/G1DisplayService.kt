@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -32,7 +33,8 @@ class G1DisplayService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceManager by lazy { DeviceManager(applicationContext) }
-    private val binder = G1Binder()
+    private val ready = MutableStateFlow(false)
+    private val binder = LocalBinder()
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
     private var powerReceiver: BroadcastReceiver? = null
@@ -48,7 +50,20 @@ class G1DisplayService : Service() {
         registerPowerAwareReconnect()
     }
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onBind(intent: Intent?): IBinder {
+        MoncchichiLogger.debug(SERVICE_TAG, "onBind called")
+        serviceScope.launch {
+            ensureInitialized()
+            ready.emit(true)
+        }
+        serviceScope.launch {
+            delay(5_000L)
+            if (!ready.value) {
+                MoncchichiLogger.debug(SERVICE_TAG, "Bind timeout — service not initialized in time")
+            }
+        }
+        return binder
+    }
 
     override fun onUnbind(intent: Intent?): Boolean = super.onUnbind(intent)
 
@@ -60,8 +75,15 @@ class G1DisplayService : Service() {
         }
         powerReceiver = null
         deviceManager.close()
+        ready.value = false
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    private suspend fun ensureInitialized() {
+        if (deviceManager.state.value != G1ConnectionState.CONNECTED) {
+            deviceManager.tryReconnect()
+        }
     }
 
     private fun observeStateChanges() {
@@ -153,8 +175,11 @@ class G1DisplayService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    inner class G1Binder : Binder() {
+    inner class LocalBinder : Binder() {
         val stateFlow: StateFlow<G1ConnectionState> = deviceManager.state
+        val readiness: StateFlow<Boolean> = ready
+
+        fun getService(): G1DisplayService = this@G1DisplayService
 
         fun connect(address: String) {
             serviceScope.launch {

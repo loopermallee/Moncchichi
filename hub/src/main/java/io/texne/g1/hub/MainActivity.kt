@@ -8,38 +8,56 @@ import android.os.Bundle
 import android.os.IBinder
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.service.G1DisplayService
+import com.loopermallee.moncchichi.MoncchichiLogger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
-    private var bound = false
-    private var binder: G1DisplayService.G1Binder? = null
+    private var isBound = false
+    private var binder: G1DisplayService.LocalBinder? = null
+    private var service: G1DisplayService? = null
     private var connectionStateJob: Job? = null
+    private var readinessJob: Job? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            bound = true
-            binder = service as? G1DisplayService.G1Binder
-            ServiceRepository.setConnected()
-            status.setText(R.string.boot_service_connected)
-            observeConnectionState()
+            val localBinder = service as? G1DisplayService.LocalBinder ?: return
+            binder = localBinder
+            this@MainActivity.service = localBinder.getService()
+            isBound = true
+            MoncchichiLogger.debug("Activity", "Service bound successfully")
+            readinessJob?.cancel()
+            readinessJob = lifecycleScope.launch {
+                val ready = withTimeoutOrNull(5_000L) { localBinder.readiness.first { it } }
+                if (ready == true) {
+                    ServiceRepository.setConnected()
+                    status.setText(R.string.boot_service_connected)
+                    observeConnectionState()
+                } else {
+                    ServiceRepository.setError()
+                    status.setText(R.string.boot_service_timeout)
+                }
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            bound = false
+            isBound = false
             binder = null
+            service = null
             ServiceRepository.setDisconnected()
             connectionStateJob?.cancel()
             connectionStateJob = null
+            readinessJob?.cancel()
+            readinessJob = null
         }
     }
 
@@ -49,56 +67,40 @@ class MainActivity : AppCompatActivity() {
         status = findViewById(R.id.status)
 
         status.setText(R.string.boot_wait)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (isBound) return
+        val serviceIntent = Intent(this, G1DisplayService::class.java)
+        ContextCompat.startForegroundService(this, serviceIntent)
+        ServiceRepository.setBinding()
+        status.setText(R.string.boot_service_binding)
         lifecycleScope.launch {
-            ServiceRepository.setBinding()
-            status.setText(R.string.boot_service_binding)
-            val ok = withTimeoutOrNull(5_000L) { bindServiceAwait() } ?: false
-            if (!ok) {
+            delay(800)
+            val bound = bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+            MoncchichiLogger.debug("Activity", "Attempting to bind service...")
+            if (!bound) {
                 ServiceRepository.setError()
                 status.setText(R.string.boot_service_timeout)
             }
         }
     }
 
-    private suspend fun bindServiceAwait(): Boolean = suspendCancellableCoroutine { cont ->
-        val intent = Intent(this, G1DisplayService::class.java)
-        val started = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        if (!started) {
-            cont.resume(false)
-            return@suspendCancellableCoroutine
-        }
-        lifecycleScope.launch {
-            repeat(60) {
-                if (bound) {
-                    if (!cont.isCompleted) cont.resume(true)
-                    return@launch
-                }
-                delay(50)
-            }
-            if (!cont.isCompleted) cont.resume(bound)
-        }
-        cont.invokeOnCancellation {
-            if (bound) {
-                unbindService(serviceConnection)
-                bound = false
-                binder = null
-                ServiceRepository.setDisconnected()
-                connectionStateJob?.cancel()
-                connectionStateJob = null
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        if (bound) {
+    override fun onStop() {
+        super.onStop()
+        MoncchichiLogger.debug("Activity", "Unbinding service (hasInstance=${'$'}{service != null})")
+        if (isBound) {
             unbindService(serviceConnection)
-            bound = false
-            binder = null
-            ServiceRepository.setDisconnected()
+            isBound = false
         }
+        binder = null
+        service = null
         connectionStateJob?.cancel()
         connectionStateJob = null
-        super.onDestroy()
+        readinessJob?.cancel()
+        readinessJob = null
+        ServiceRepository.setDisconnected()
     }
 
     private fun observeConnectionState() {
