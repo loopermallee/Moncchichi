@@ -17,7 +17,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            aidl.srcDirs("aidl/src/main/aidl")
+            aidl.srcDirs("src/main/aidl")
         }
     }
 
