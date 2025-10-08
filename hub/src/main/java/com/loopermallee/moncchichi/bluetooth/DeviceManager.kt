@@ -40,19 +40,37 @@ class DeviceManager(
     private val connectionMutex = Mutex()
     private val connectionWaiters = mutableListOf<CompletableDeferred<Boolean>>()
 
-    private var bluetoothGatt: BluetoothGatt? = null
+    private var gatt: BluetoothGatt? = null
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
     private var notifyCharacteristic: BluetoothGattCharacteristic? = null
     private var trackedDevice: BluetoothDevice? = null
     @Volatile
     private var isInitializing = false
 
+    init {
+        logger.i(
+            DEVICE_MANAGER_TAG,
+            "${tt()} Created at ${System.currentTimeMillis()}"
+        )
+    }
+
+    private fun requireGatt(): BluetoothGatt? {
+        if (gatt == null) {
+            logger.w(DEVICE_MANAGER_TAG, "${tt()} Gatt not initialized yet – skipping action")
+            return null
+        }
+        return gatt
+    }
+
+    // NOTE: All BLE actions must check requireGatt() before use
+    // This replaces previous lateinit usage to avoid Kotlin compiler crashes
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             logger.i(DEVICE_MANAGER_TAG, "${tt()} Gatt state change status=$status newState=$newState")
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    bluetoothGatt = gatt
+                    this@DeviceManager.gatt = gatt
                     trackedDevice = gatt.device
                     updateState(G1ConnectionState.CONNECTED)
                     gatt.discoverServices()
@@ -122,8 +140,8 @@ class DeviceManager(
     @SuppressLint("MissingPermission")
     fun disconnect() {
         logger.i(DEVICE_MANAGER_TAG, "${tt()} Manual disconnect requested")
-        bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
+        gatt?.disconnect()
+        gatt?.close()
         cleanup()
         updateState(G1ConnectionState.DISCONNECTED)
     }
@@ -181,8 +199,8 @@ class DeviceManager(
         }
         characteristic.value = payload
         return try {
-            bluetoothGatt?.writeCharacteristic(characteristic) ?: run {
-                logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; bluetoothGatt is null")
+            requireGatt()?.writeCharacteristic(characteristic) ?: run {
+                logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; GATT is null")
                 false
             }
         } catch (t: Throwable) {
@@ -217,7 +235,7 @@ class DeviceManager(
     private fun cleanup() {
         writeCharacteristic = null
         notifyCharacteristic = null
-        bluetoothGatt = null
+        gatt = null
     }
 
     private fun updateState(newState: G1ConnectionState) {
@@ -252,9 +270,9 @@ class DeviceManager(
             connectionMutex.withLock {
                 updateState(G1ConnectionState.CONNECTING)
                 logger.i(DEVICE_MANAGER_TAG, "${tt()} Connecting to ${device.address}")
-                bluetoothGatt?.close()
-                bluetoothGatt = device.connectGatt(context, false, gattCallback)
-                if (bluetoothGatt == null) {
+                gatt?.close()
+                gatt = device.connectGatt(context, false, gattCallback)
+                if (gatt == null) {
                     logger.e(DEVICE_MANAGER_TAG, "${tt()} connectGatt returned null")
                     updateState(G1ConnectionState.DISCONNECTED)
                     false
