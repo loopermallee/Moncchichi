@@ -176,15 +176,15 @@ class DeviceManager(
 
     @SuppressLint("MissingPermission")
     private fun writePayload(payload: ByteArray): Boolean {
-        val gatt = bluetoothGatt ?: return false.also {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload called with null gatt")
-        }
         val characteristic = writeCharacteristic ?: return false.also {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload called before init")
+            logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; characteristic not ready")
         }
         characteristic.value = payload
         return try {
-            gatt.writeCharacteristic(characteristic)
+            bluetoothGatt?.writeCharacteristic(characteristic) ?: run {
+                logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; bluetoothGatt is null")
+                false
+            }
         } catch (t: Throwable) {
             logger.e(DEVICE_MANAGER_TAG, "${tt()} writeCharacteristic failed", t)
             false
