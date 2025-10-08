@@ -14,21 +14,10 @@
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:theme="@style/AppTheme">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="g1ot" />
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:theme="@style/AppTheme" />
         <service
-            android:name="io.texne.g1.basis.service.G1DisplayService"
+            android:name="com.loopermallee.moncchichi.service.G1DisplayService"
             android:exported="true"
             android:enabled="true" />
     </application>

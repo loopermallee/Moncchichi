@@ -1,11 +1,11 @@
-package io.texne.g1.subtitles.ui
+package com.loopermallee.moncchichi.subtitles.ui
 
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.texne.g1.basis.client.G1ServiceCommon
-import io.texne.g1.subtitles.model.Repository
+import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.subtitles.model.Repository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow

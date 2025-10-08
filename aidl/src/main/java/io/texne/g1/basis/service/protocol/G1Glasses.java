@@ -1,4 +1,4 @@
-package io.texne.g1.basis.service.protocol;
+package com.loopermallee.moncchichi.service.protocol;
 
 import android.os.Parcel;
 import android.os.Parcelable;

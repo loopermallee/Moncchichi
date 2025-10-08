@@ -1,7 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
-        android:label="MoncchichiTest"
+        android:name=".CrashProbeApp"
+        android:label="MoncchichiProbe"
         android:theme="@android:style/Theme.DeviceDefault">
 
         <activity

@@ -1,4 +1,4 @@
-package io.texne.g1.basis.service
+package com.loopermallee.moncchichi.service
 
 import android.app.Service
 import android.content.Intent
@@ -6,8 +6,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import io.texne.g1.basis.service.protocol.G1Glasses
-import io.texne.g1.basis.service.protocol.IG1DisplayService
+import com.loopermallee.moncchichi.service.protocol.G1Glasses
+import com.loopermallee.moncchichi.service.protocol.IG1DisplayService
 
 /**
  * Binder backed service that accepts teleprompter text commands from external clients

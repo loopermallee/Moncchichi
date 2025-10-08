@@ -1,6 +1,6 @@
-package io.texne.g1.basis.service.protocol;
+package com.loopermallee.moncchichi.service.protocol;
 
-import io.texne.g1.basis.service.protocol.G1ServiceState;
+import com.loopermallee.moncchichi.service.protocol.G1ServiceState;
 
 interface ObserveStateCallback {
     void onStateChange(in G1ServiceState state);

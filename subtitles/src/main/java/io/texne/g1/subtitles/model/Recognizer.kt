@@ -1,4 +1,4 @@
-package io.texne.g1.subtitles.model
+package com.loopermallee.moncchichi.subtitles.model
 
 import android.content.Context
 import android.content.Intent

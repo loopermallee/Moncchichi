@@ -17,8 +17,8 @@ import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
-import io.texne.g1.hub.MainActivity
-import io.texne.g1.hub.R
+import com.loopermallee.moncchichi.hub.MainActivity
+import com.loopermallee.moncchichi.hub.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

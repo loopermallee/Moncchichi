@@ -1,4 +1,4 @@
-package io.texne.g1.basis.client
+package com.loopermallee.moncchichi.client
 
 import android.content.Context
 import android.content.ServiceConnection

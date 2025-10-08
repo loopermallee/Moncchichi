@@ -1,4 +1,4 @@
-package io.texne.g1.hub
+package com.loopermallee.moncchichi.hub
 
 import android.app.Application
 import com.loopermallee.moncchichi.CrashHandler
@@ -6,7 +6,7 @@ import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.android.HiltAndroidApp
 import dagger.hilt.components.SingletonComponent
-import io.texne.g1.hub.BuildConfig
+import com.loopermallee.moncchichi.hub.BuildConfig
 
 @Module
 @InstallIn(SingletonComponent::class)

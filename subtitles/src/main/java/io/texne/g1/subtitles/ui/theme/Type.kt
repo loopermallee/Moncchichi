@@ -1,4 +1,4 @@
-package io.texne.g1.subtitles.ui.theme
+package com.loopermallee.moncchichi.subtitles.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

@@ -1,3 +1,3 @@
-package io.texne.g1.basis.service.protocol;
+package com.loopermallee.moncchichi.service.protocol;
 
 parcelable G1State;

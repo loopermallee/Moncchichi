@@ -10,8 +10,8 @@ import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
 import android.widget.TextView
-import io.texne.g1.basis.service.G1DisplayService
-import io.texne.g1.basis.service.protocol.IG1DisplayService
+import com.loopermallee.moncchichi.service.G1DisplayService
+import com.loopermallee.moncchichi.service.protocol.IG1DisplayService
 
 class MainActivity : Activity() {
     private var displayService: IG1DisplayService? = null

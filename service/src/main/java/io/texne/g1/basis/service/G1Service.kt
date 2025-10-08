@@ -1,4 +1,4 @@
-package io.texne.g1.basis.service
+package com.loopermallee.moncchichi.service
 
 import android.Manifest
 import android.app.Notification
@@ -22,13 +22,13 @@ import com.loopermallee.moncchichi.bluetooth.BluetoothManager
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.nabinbhandari.android.permissions.PermissionHandler
 import com.nabinbhandari.android.permissions.Permissions
-import io.texne.g1.basis.service.protocol.G1Glasses
-import io.texne.g1.basis.service.protocol.G1ServiceState
-import io.texne.g1.basis.service.protocol.IG1Service
-import io.texne.g1.basis.service.protocol.IG1StateCallback
-import io.texne.g1.basis.service.protocol.IG1ServiceClient
-import io.texne.g1.basis.service.protocol.ObserveStateCallback
-import io.texne.g1.basis.service.protocol.OperationCallback
+import com.loopermallee.moncchichi.service.protocol.G1Glasses
+import com.loopermallee.moncchichi.service.protocol.G1ServiceState
+import com.loopermallee.moncchichi.service.protocol.IG1Service
+import com.loopermallee.moncchichi.service.protocol.IG1StateCallback
+import com.loopermallee.moncchichi.service.protocol.IG1ServiceClient
+import com.loopermallee.moncchichi.service.protocol.ObserveStateCallback
+import com.loopermallee.moncchichi.service.protocol.OperationCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -210,8 +210,8 @@ class G1Service : Service() {
             applicationContext.startService(Intent(applicationContext, G1Service::class.java))
         }
         return when (intent?.action) {
-            "io.texne.g1.basis.service.protocol.IG1Service" -> binder
-            "io.texne.g1.basis.service.protocol.IG1ServiceClient" -> clientBinder
+            "com.loopermallee.moncchichi.service.protocol.IG1Service" -> binder
+            "com.loopermallee.moncchichi.service.protocol.IG1ServiceClient" -> clientBinder
             else -> null
         }
     }
