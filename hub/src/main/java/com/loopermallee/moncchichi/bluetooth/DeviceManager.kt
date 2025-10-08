@@ -36,7 +36,9 @@ class DeviceManager(
     private val _stateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     val state: StateFlow<G1ConnectionState> = _stateFlow.asStateFlow()
 
-    private val transactionQueue by lazy { G1TransactionQueue(scope, logger) }
+    private val transactionQueueLazy = lazy { G1TransactionQueue(scope, logger) }
+    private val transactionQueue: G1TransactionQueue
+        get() = transactionQueueLazy.value
     private val connectionMutex = Mutex()
     private val connectionWaiters = mutableListOf<CompletableDeferred<Boolean>>()
 
@@ -177,7 +179,7 @@ class DeviceManager(
     }
 
     fun close() {
-        if (this::transactionQueue.isInitialized) {
+        if (transactionQueueLazy.isInitialized()) {
             transactionQueue.close()
         }
         disconnect()
