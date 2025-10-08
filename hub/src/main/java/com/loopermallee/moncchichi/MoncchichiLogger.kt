@@ -31,6 +31,7 @@ object MoncchichiLogger {
     }
 
     fun d(tag: String, message: String) = log(tag, message, Log.DEBUG)
+    fun debug(tag: String, message: String) = d(tag, message)
     fun i(tag: String, message: String) = log(tag, message, Log.INFO)
     fun w(tag: String, message: String, error: Throwable? = null) = log(tag, message, Log.WARN, error)
     fun e(tag: String, message: String, error: Throwable? = null) = log(tag, message, Log.ERROR, error)
@@ -54,15 +55,25 @@ object MoncchichiLogger {
         ioScope.launch {
             fileMutex.withLock {
                 try {
-                    val file = logFile
-                    if (file != null) {
-                        if (!file.exists()) file.createNewFile()
-                        file.appendText(entry)
-                    }
+                    writeToFile(entry)
                 } catch (t: Throwable) {
                     Log.e(DEFAULT_TAG, "Failed to persist log", t)
                 }
             }
         }
+    }
+
+    private suspend fun writeToFile(entry: String) {
+        val file = logFile ?: return
+        if (!file.exists()) {
+            file.createNewFile()
+        }
+        if (file.length() > 1_000_000) {
+            val logDir = file.parentFile ?: return
+            val backup = File(logDir, "moncchichi_${System.currentTimeMillis()}.bak")
+            file.copyTo(backup, overwrite = true)
+            file.writeText("")
+        }
+        file.appendText(entry)
     }
 }
