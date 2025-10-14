@@ -43,9 +43,6 @@ dependencies {
     implementation project(':aidl')
     implementation project(':hub')
 
-    // ensure this line exists so service module can access app resources
-    implementation project(':app')
-
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'

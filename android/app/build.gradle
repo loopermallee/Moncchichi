@@ -31,3 +31,8 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
         jvmTarget = "17"
     }
 }
+
+dependencies {
+    implementation(project(":aidl"))
+    implementation(project(":service"))
+}
