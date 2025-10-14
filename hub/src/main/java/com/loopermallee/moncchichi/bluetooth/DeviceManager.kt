@@ -9,7 +9,8 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothProfile
 import android.content.Context
-import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.G1ConnectionState
+import com.loopermallee.moncchichi.core.MoncchichiLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,12 +32,11 @@ private const val RECONNECT_TAG = "[Reconnect]"
 class DeviceManager(
     private val context: Context,
 ) {
-    private val logger by lazy { MoncchichiLogger(context) }
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _stateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     val state: StateFlow<G1ConnectionState> = _stateFlow.asStateFlow()
 
-    private val transactionQueueLazy = lazy { G1TransactionQueue(scope, logger) }
+    private val transactionQueueLazy = lazy { G1TransactionQueue(scope) }
     private val transactionQueue: G1TransactionQueue
         get() = transactionQueueLazy.value
     private val connectionMutex = Mutex()
@@ -50,15 +50,12 @@ class DeviceManager(
     private var isInitializing = false
 
     init {
-        logger.i(
-            DEVICE_MANAGER_TAG,
-            "${tt()} Created at ${System.currentTimeMillis()}"
-        )
+        MoncchichiLogger.i("$DEVICE_MANAGER_TAG ${'$'}{tt()} Created at ${'$'}{System.currentTimeMillis()}")
     }
 
     private fun requireGatt(): BluetoothGatt? {
         if (gatt == null) {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} Gatt not initialized yet – skipping action")
+            MoncchichiLogger.w("$DEVICE_MANAGER_TAG ${'$'}{tt()} Gatt not initialized yet – skipping action")
             return null
         }
         return gatt
@@ -69,7 +66,7 @@ class DeviceManager(
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            logger.i(DEVICE_MANAGER_TAG, "${tt()} Gatt state change status=$status newState=$newState")
+            MoncchichiLogger.i("$DEVICE_MANAGER_TAG ${'$'}{tt()} Gatt state change status=${'$'}status newState=${'$'}newState")
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     this@DeviceManager.gatt = gatt
@@ -82,29 +79,29 @@ class DeviceManager(
                     updateState(G1ConnectionState.CONNECTING)
                 }
                 BluetoothProfile.STATE_DISCONNECTING -> {
-                    updateState(G1ConnectionState.RECONNECTING)
+                    updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    logger.w(DEVICE_MANAGER_TAG, "${tt()} Disconnected from ${gatt.device.address}")
+                    MoncchichiLogger.w("$DEVICE_MANAGER_TAG ${'$'}{tt()} Disconnected from ${'$'}{gatt.device.address}")
                     cleanup()
                     val targetState = if (_stateFlow.value == G1ConnectionState.DISCONNECTED) {
                         G1ConnectionState.DISCONNECTED
                     } else {
-                        G1ConnectionState.RECONNECTING
+                        G1ConnectionState.WAITING_FOR_RECONNECT
                     }
                     updateState(targetState)
                     completeWaiters(false)
                 }
                 else -> {
-                    logger.w(DEVICE_MANAGER_TAG, "${tt()} Unknown Bluetooth state $newState")
+                    MoncchichiLogger.w("$DEVICE_MANAGER_TAG ${'$'}{tt()} Unknown Bluetooth state ${'$'}newState")
                 }
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                logger.w(DEVICE_MANAGER_TAG, "${tt()} Service discovery failed with status $status")
-                updateState(G1ConnectionState.RECONNECTING)
+                MoncchichiLogger.w("$DEVICE_MANAGER_TAG ${'$'}{tt()} Service discovery failed with status ${'$'}status")
+                updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
                 return
             }
             initializeCharacteristics(gatt)
@@ -115,10 +112,7 @@ class DeviceManager(
             characteristic: BluetoothGattCharacteristic,
         ) {
             val uuid = characteristic.uuid.toString()
-            logger.debug(
-                "[BLEEvent]",
-                "${tt()} Characteristic changed: $uuid, value=${characteristic.value.toHexString()}",
-            )
+            MoncchichiLogger.d("[BLEEvent] ${'$'}{tt()} Characteristic changed: ${'$'}uuid, value=${'$'}{characteristic.value.toHexString()}")
         }
     }
 
@@ -136,12 +130,12 @@ class DeviceManager(
     fun currentDevice(): BluetoothDevice? = trackedDevice
 
     fun notifyWaiting() {
-        updateState(G1ConnectionState.RECONNECTING)
+        updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
     }
 
     @SuppressLint("MissingPermission")
     fun disconnect() {
-        logger.i(DEVICE_MANAGER_TAG, "${tt()} Manual disconnect requested")
+        MoncchichiLogger.i("$DEVICE_MANAGER_TAG ${'$'}{tt()} Manual disconnect requested")
         gatt?.disconnect()
         gatt?.close()
         cleanup()
@@ -150,7 +144,7 @@ class DeviceManager(
 
     suspend fun reconnect(maxRetries: Int = 5): Boolean {
         if (trackedDevice == null) return false
-        updateState(G1ConnectionState.RECONNECTING)
+        updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
         return reconnectWithBackoff(maxRetries)
     }
 
@@ -197,16 +191,16 @@ class DeviceManager(
     @SuppressLint("MissingPermission")
     private fun writePayload(payload: ByteArray): Boolean {
         val characteristic = writeCharacteristic ?: return false.also {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; characteristic not ready")
+            MoncchichiLogger.w("$DEVICE_MANAGER_TAG ${'$'}{tt()} writePayload skipped; characteristic not ready")
         }
         characteristic.value = payload
         return try {
             requireGatt()?.writeCharacteristic(characteristic) ?: run {
-                logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; GATT is null")
+            MoncchichiLogger.w("$DEVICE_MANAGER_TAG ${'$'}{tt()} writePayload skipped; GATT is null")
                 false
             }
         } catch (t: Throwable) {
-            logger.e(DEVICE_MANAGER_TAG, "${tt()} writeCharacteristic failed", t)
+            MoncchichiLogger.e("$DEVICE_MANAGER_TAG ${'$'}{tt()} writeCharacteristic failed", t)
             false
         }
     }
@@ -215,22 +209,22 @@ class DeviceManager(
     private fun initializeCharacteristics(gatt: BluetoothGatt) {
         val service: BluetoothGattService? = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
         if (service == null) {
-            logger.e(DEVICE_MANAGER_TAG, "${tt()} UART service missing")
-            updateState(G1ConnectionState.RECONNECTING)
+            MoncchichiLogger.e("$DEVICE_MANAGER_TAG ${'$'}{tt()} UART service missing")
+            updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
             return
         }
         writeCharacteristic = service.getCharacteristic(BluetoothConstants.UART_WRITE_CHARACTERISTIC_UUID)
         notifyCharacteristic = service.getCharacteristic(BluetoothConstants.UART_READ_CHARACTERISTIC_UUID)
         if (writeCharacteristic == null || notifyCharacteristic == null) {
-            logger.e(DEVICE_MANAGER_TAG, "${tt()} UART characteristics missing")
-            updateState(G1ConnectionState.RECONNECTING)
+            MoncchichiLogger.e("$DEVICE_MANAGER_TAG ${'$'}{tt()} UART characteristics missing")
+            updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
             return
         }
         val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
         if (!enabled) {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} Failed to enable notifications")
+            MoncchichiLogger.w("$DEVICE_MANAGER_TAG ${'$'}{tt()} Failed to enable notifications")
         } else {
-            logger.i(DEVICE_MANAGER_TAG, "${tt()} Notifications enabled")
+            MoncchichiLogger.i("$DEVICE_MANAGER_TAG ${'$'}{tt()} Notifications enabled")
         }
     }
 
@@ -242,7 +236,7 @@ class DeviceManager(
 
     private fun updateState(newState: G1ConnectionState) {
         if (_stateFlow.value == newState) return
-        logger.i(DEVICE_MANAGER_TAG, "${tt()} State ${_stateFlow.value} -> $newState")
+        MoncchichiLogger.i("$DEVICE_MANAGER_TAG ${'$'}{tt()} State ${'$'}{_stateFlow.value} -> ${'$'}newState")
         _stateFlow.value = newState
     }
 
@@ -260,7 +254,7 @@ class DeviceManager(
     private suspend fun connectDevice(device: BluetoothDevice): Boolean {
         val proceed = synchronized(this) {
             if (isInitializing) {
-                logger.w(DEVICE_MANAGER_TAG, "${tt()} connectDevice skipped: initialization in progress")
+                MoncchichiLogger.w("$DEVICE_MANAGER_TAG ${'$'}{tt()} connectDevice skipped: initialization in progress")
                 false
             } else {
                 isInitializing = true
@@ -271,11 +265,11 @@ class DeviceManager(
         return try {
             connectionMutex.withLock {
                 updateState(G1ConnectionState.CONNECTING)
-                logger.i(DEVICE_MANAGER_TAG, "${tt()} Connecting to ${device.address}")
+                MoncchichiLogger.i("$DEVICE_MANAGER_TAG ${'$'}{tt()} Connecting to ${'$'}{device.address}")
                 gatt?.close()
                 gatt = device.connectGatt(context, false, gattCallback)
                 if (gatt == null) {
-                    logger.e(DEVICE_MANAGER_TAG, "${tt()} connectGatt returned null")
+                    MoncchichiLogger.e("$DEVICE_MANAGER_TAG ${'$'}{tt()} connectGatt returned null")
                     updateState(G1ConnectionState.DISCONNECTED)
                     false
                 } else {
@@ -292,7 +286,7 @@ class DeviceManager(
     private suspend fun reconnectWithBackoff(maxRetries: Int = 5): Boolean {
         var delayMs = 2_000L
         repeat(maxRetries) { attempt ->
-            logger.debug(RECONNECT_TAG, "${tt()} Attempt ${attempt + 1}")
+            MoncchichiLogger.d("$RECONNECT_TAG ${'$'}{tt()} Attempt ${'$'}{attempt + 1}")
             if (tryReconnectInternal()) return true
             delay(delayMs)
             delayMs = min(delayMs * 2, 30_000L)
@@ -308,7 +302,7 @@ class DeviceManager(
 
     fun tryReconnect() {
         val device = trackedDevice ?: return
-        updateState(G1ConnectionState.RECONNECTING)
+        updateState(G1ConnectionState.WAITING_FOR_RECONNECT)
         scope.launch {
             reconnectWithBackoff()
         }

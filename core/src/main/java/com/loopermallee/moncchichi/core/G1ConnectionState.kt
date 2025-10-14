@@ -1,8 +1,9 @@
-package com.loopermallee.moncchichi.bluetooth
+package com.loopermallee.moncchichi.core
 
 enum class G1ConnectionState {
     DISCONNECTED,
     CONNECTING,
     CONNECTED,
-    RECONNECTING,
+    WAITING_FOR_RECONNECT,
+    READY
 }

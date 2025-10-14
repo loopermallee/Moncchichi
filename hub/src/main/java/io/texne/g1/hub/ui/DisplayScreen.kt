@@ -1,4 +1,4 @@
-package io.texne.g1.hub.ui
+package com.loopermallee.moncchichi.hub.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -38,12 +38,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import io.texne.g1.basis.client.G1ServiceCommon
-import io.texne.g1.hub.ui.glasses.batteryLabel
-import io.texne.g1.hub.ui.glasses.displayName
-import io.texne.g1.hub.ui.glasses.firmwareLabel
-import io.texne.g1.hub.ui.glasses.statusColor
-import io.texne.g1.hub.ui.glasses.statusText
+import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.hub.ui.glasses.batteryLabel
+import com.loopermallee.moncchichi.hub.ui.glasses.displayName
+import com.loopermallee.moncchichi.hub.ui.glasses.firmwareLabel
+import com.loopermallee.moncchichi.hub.ui.glasses.statusColor
+import com.loopermallee.moncchichi.hub.ui.glasses.statusText
 import kotlinx.coroutines.flow.collectLatest
 
 @Composable

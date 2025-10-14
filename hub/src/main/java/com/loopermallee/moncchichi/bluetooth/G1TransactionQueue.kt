@@ -1,6 +1,6 @@
 package com.loopermallee.moncchichi.bluetooth
 
-import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.MoncchichiLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
@@ -14,7 +14,6 @@ private const val BLE_QUEUE_TAG = "[BLEQueue]"
 
 class G1TransactionQueue(
     private val scope: CoroutineScope,
-    private val logger: MoncchichiLogger,
     private val timeoutMs: Long = 5_000L,
     private val maxRetries: Int = 5,
 ) {
@@ -49,21 +48,21 @@ class G1TransactionQueue(
         var backoff = 200L
         while (attempt < maxRetries && scope.isActive && !item.result.isCompleted) {
             attempt += 1
-            logger.d(BLE_QUEUE_TAG, "${item.label} attempt $attempt/$maxRetries")
+            MoncchichiLogger.d("$BLE_QUEUE_TAG ${'$'}{item.label} attempt ${'$'}attempt/${'$'}maxRetries")
             val success = try {
                 withTimeoutOrNull(timeoutMs) {
                     item.task()
                 } ?: false
             } catch (t: Throwable) {
-                logger.e(BLE_QUEUE_TAG, "${item.label} crashed", t)
+                MoncchichiLogger.e("$BLE_QUEUE_TAG ${'$'}{item.label} crashed", t)
                 false
             }
             if (success) {
-                logger.i(BLE_QUEUE_TAG, "${item.label} completed")
+                MoncchichiLogger.i("$BLE_QUEUE_TAG ${'$'}{item.label} completed")
                 item.result.complete(true)
                 return
             }
-            logger.w(BLE_QUEUE_TAG, "${item.label} failed on attempt $attempt")
+            MoncchichiLogger.w("$BLE_QUEUE_TAG ${'$'}{item.label} failed on attempt ${'$'}attempt")
             if (attempt >= maxRetries) {
                 break
             }
@@ -71,7 +70,7 @@ class G1TransactionQueue(
             backoff = min(backoff * 2, 5_000L)
         }
         if (!item.result.isCompleted) {
-            logger.e(BLE_QUEUE_TAG, "${item.label} exhausted retries")
+            MoncchichiLogger.e("$BLE_QUEUE_TAG ${'$'}{item.label} exhausted retries")
             item.result.complete(false)
         }
     }

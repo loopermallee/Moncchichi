@@ -4,11 +4,12 @@ plugins {
 }
 
 android {
-    namespace = "io.texne.g1.basis.core"
+    namespace = "com.loopermallee.moncchichi.core"
     compileSdk = 35
 
     defaultConfig {
-        minSdk = 23
+        minSdk = 26
+        targetSdk = 35
 
         testInstrumentationRunner = "android.support.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
@@ -24,11 +25,22 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17"
+    }
+}
+
+kotlin {
+    jvmToolchain(17)
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    kotlinOptions {
+        jvmTarget = "17"
+        freeCompilerArgs += listOf("-Xjvm-default=all")
     }
 }
 
