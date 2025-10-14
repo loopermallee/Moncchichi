@@ -1,19 +1,9 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.loopermallee.moncchichi.hub">
     <application
-        android:name=".CrashProbeApp"
-        android:label="MoncchichiProbe"
-        android:theme="@android:style/Theme.DeviceDefault">
-
-        <activity
-            android:name=".TestActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.Moncchichi">
+        <activity android:name=".MainActivity" />
     </application>
-
 </manifest>

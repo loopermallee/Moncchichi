@@ -17,6 +17,7 @@ import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
+import com.loopermallee.moncchichi.hub.BuildConfig
 import com.loopermallee.moncchichi.hub.MainActivity
 import com.loopermallee.moncchichi.hub.R
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +52,10 @@ class G1DisplayService : Service() {
 
         registerPowerAwareReconnect()
         _connectionState.value = deviceManager.state.value
+
+        if (BuildConfig.DEBUG) {
+            logger.i(SERVICE_TAG, "${tt()} onCreate: debug initialization")
+        }
 
         serviceScope.launch {
             logger.i(SERVICE_TAG, "${tt()} onCreate: launching heartbeat + reconnect loops")

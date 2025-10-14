@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Moncchichi</string>
+    <string name="app_name">Moncchichi Hub</string>
     <string name="boot_wait">Starting Moncchichi…</string>
     <string name="boot_service_binding">Binding display service…</string>
     <string name="boot_service_connected">Display service connected</string>

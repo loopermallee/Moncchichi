@@ -6,12 +6,12 @@ plugins {
 }
 
 android {
-    namespace = "com.loopermallee.moncchichi"
+    namespace = "com.loopermallee.moncchichi.hub"
     compileSdk = 35
 
     defaultConfig {
         applicationId = "com.loopermallee.moncchichi"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
