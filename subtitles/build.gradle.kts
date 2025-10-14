@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "io.texne.g1.subtitles"
+    namespace = "com.loopermallee.moncchichi.subtitles"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.texne.g1.subtitles"
+        applicationId = "com.loopermallee.moncchichi.subtitles"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -56,7 +56,7 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
     implementation(libs.material)
     implementation(libs.androidx.material3)
-    implementation(libs.basis.client)
+    implementation(project(":client"))
     implementation(libs.nabinbhandari.permissions)
     implementation(libs.androidx.icons.extended)
 

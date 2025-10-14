@@ -1,6 +1,6 @@
-package io.texne.g1.basis.service.protocol;
+package com.loopermallee.moncchichi.service.protocol;
 
-import io.texne.g1.basis.service.protocol.G1Glasses;
+import com.loopermallee.moncchichi.service.protocol.G1Glasses;
 
 interface IG1DisplayService {
     /** Send a new text to display / scroll */

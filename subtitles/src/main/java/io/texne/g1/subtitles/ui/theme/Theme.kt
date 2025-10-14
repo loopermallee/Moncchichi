@@ -1,4 +1,4 @@
-package io.texne.g1.subtitles.ui.theme
+package com.loopermallee.moncchichi.subtitles.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme

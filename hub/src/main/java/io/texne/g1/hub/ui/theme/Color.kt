@@ -1,4 +1,4 @@
-package io.texne.g1.hub.ui.theme
+package com.loopermallee.moncchichi.hub.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

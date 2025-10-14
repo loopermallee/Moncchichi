@@ -26,3 +26,6 @@ include(":client")
 include(":aidl")
 include(":subtitles")
 include(":hub")
+include(":app")
+
+project(":app").projectDir = File(rootDir, "android/app")

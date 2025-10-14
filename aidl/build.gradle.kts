@@ -1,14 +1,16 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    id("kotlin-parcelize")
 }
 
 android {
-    namespace = "io.texne.g1.basis.aidl"
+    namespace = "com.loopermallee.moncchichi.aidl"
     compileSdk = 35
 
     defaultConfig {
-        minSdk = 23
+        minSdk = 26
+        targetSdk = 35
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
@@ -16,7 +18,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            aidl.srcDirs("aidl/src/main/aidl")
+            aidl.srcDirs("src/main/aidl")
         }
     }
 

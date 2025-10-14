@@ -3,7 +3,7 @@
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>io.texne.g1.basis</groupId>
+  <groupId>com.loopermallee.moncchichi</groupId>
   <artifactId>client-service-bridge</artifactId>
   <packaging>aar</packaging>
 

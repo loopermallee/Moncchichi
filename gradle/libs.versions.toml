@@ -38,8 +38,8 @@ hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "androidxHilt" }
 hilt-android-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
 androidx-datastore = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
-basis-client = { group = "io.texne.g1.basis", name = "client", version.ref = "basisClient"}
-basis-service = { group = "io.texne.g1.basis", name = "service", version.ref = "basisService"}
+basis-client = { group = "com.loopermallee.moncchichi", name = "client", version.ref = "basisClient"}
+basis-service = { group = "com.loopermallee.moncchichi", name = "service", version.ref = "basisService"}
 androidx-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended", version.ref = "materialIcons"}
 
 [plugins]

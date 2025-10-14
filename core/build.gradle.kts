@@ -4,11 +4,12 @@ plugins {
 }
 
 android {
-    namespace = "io.texne.g1.basis.core"
+    namespace = "com.loopermallee.moncchichi.core"
     compileSdk = 35
 
     defaultConfig {
-        minSdk = 23
+        minSdk = 26
+        targetSdk = 35
 
         testInstrumentationRunner = "android.support.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")

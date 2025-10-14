@@ -1,4 +1,4 @@
-package io.texne.g1.basis.core
+package com.loopermallee.moncchichi.core
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice

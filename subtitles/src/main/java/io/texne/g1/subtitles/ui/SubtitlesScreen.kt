@@ -1,4 +1,4 @@
-package io.texne.g1.subtitles.ui
+package com.loopermallee.moncchichi.subtitles.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -32,8 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import io.texne.g1.basis.client.G1ServiceCommon
-import io.texne.g1.subtitles.R
+import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.subtitles.R
 
 @Composable
 fun SubtitlesScreen(
