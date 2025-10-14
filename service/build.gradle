@@ -1,51 +1,24 @@
 plugins {
-    id 'com.android.library'
-    id 'org.jetbrains.kotlin.android'
+    id("com.android.library")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
-    namespace "com.loopermallee.moncchichi.service"
-    compileSdk 35
+    namespace = "com.loopermallee.moncchichi.service"
+    compileSdk = 34
 
     defaultConfig {
-        minSdk 24
-        targetSdk 35
+        minSdk = 26
     }
 
     buildFeatures {
-        viewBinding true
-        buildConfig true
-        aidl true
-        resValues true
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = '11'
-    }
-
-    sourceSets {
-        main {
-            manifest.srcFile 'src/main/AndroidManifest.xml'
-            java.srcDirs = ['src/main/java']
-            res.srcDirs = ['src/main/res']
-        }
+        buildConfig = true
     }
 }
 
 dependencies {
-    implementation project(':core')
-    implementation project(':client')
-    implementation project(':aidl')
-    implementation project(':hub')
-
-    implementation 'androidx.core:core-ktx:1.13.1'
-    implementation 'androidx.appcompat:appcompat:1.7.0'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
-    implementation 'androidx.datastore:datastore-preferences:1.1.2'
-    implementation 'com.nabinbhandari.android:permissions:4.0.0'
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation(project(":aidl"))
 }
