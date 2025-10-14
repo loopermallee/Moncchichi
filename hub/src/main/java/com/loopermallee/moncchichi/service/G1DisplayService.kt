@@ -14,9 +14,9 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
-import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
+import com.loopermallee.moncchichi.core.G1ConnectionState
+import com.loopermallee.moncchichi.core.MoncchichiLogger
 import com.loopermallee.moncchichi.hub.BuildConfig
 import com.loopermallee.moncchichi.hub.MainActivity
 import com.loopermallee.moncchichi.hub.R
@@ -35,7 +35,6 @@ import kotlin.coroutines.coroutineContext
 
 class G1DisplayService : Service() {
 
-    private val logger by lazy { MoncchichiLogger(this) }
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceManager by lazy { DeviceManager(applicationContext) }
     private val ready = MutableStateFlow(false)
@@ -54,11 +53,11 @@ class G1DisplayService : Service() {
         _connectionState.value = deviceManager.state.value
 
         if (BuildConfig.DEBUG) {
-            logger.i(SERVICE_TAG, "${tt()} onCreate: debug initialization")
+            MoncchichiLogger.i("$SERVICE_TAG ${'$'}{tt()} onCreate: debug initialization")
         }
 
         serviceScope.launch {
-            logger.i(SERVICE_TAG, "${tt()} onCreate: launching heartbeat + reconnect loops")
+            MoncchichiLogger.i("$SERVICE_TAG ${'$'}{tt()} onCreate: launching heartbeat + reconnect loops")
             launch { observeStateChanges() }
             launch { heartbeatLoop() }
             launch { reconnectLoop() }
@@ -67,7 +66,7 @@ class G1DisplayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return try {
-            logger.i(SERVICE_TAG, "${tt()} onStartCommand flags=$flags startId=$startId")
+            MoncchichiLogger.i("$SERVICE_TAG ${'$'}{tt()} onStartCommand flags=${'$'}flags startId=${'$'}startId")
             START_STICKY
         } catch (t: Throwable) {
             Log.e(DEFAULT_LOG_TAG, "onStartCommand crashed", t)
@@ -77,7 +76,7 @@ class G1DisplayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder {
         return try {
-            logger.debug(SERVICE_TAG, "${tt()} onBind called ${intent?.action}")
+            MoncchichiLogger.d("$SERVICE_TAG ${'$'}{tt()} onBind called ${'$'}{intent?.action}")
             serviceScope.launch {
                 ensureInitialized()
                 ready.emit(true)
@@ -85,7 +84,7 @@ class G1DisplayService : Service() {
             serviceScope.launch {
                 delay(5_000L)
                 if (!ready.value) {
-                    logger.debug(SERVICE_TAG, "${tt()} Bind timeout — service not initialized in time")
+                    MoncchichiLogger.d("$SERVICE_TAG ${'$'}{tt()} Bind timeout — service not initialized in time")
                 }
             }
             binder
@@ -119,7 +118,7 @@ class G1DisplayService : Service() {
 
     private suspend fun observeStateChanges() {
         deviceManager.state.collectLatest { state ->
-            logger.d(SERVICE_TAG, "${tt()} observe: $state")
+            MoncchichiLogger.d("$SERVICE_TAG ${'$'}{tt()} observe: ${'$'}state")
             updateState(state)
             updateNotification(state)
         }
@@ -131,9 +130,9 @@ class G1DisplayService : Service() {
             if (deviceManager.state.value == G1ConnectionState.CONNECTED) {
                 val success = deviceManager.sendHeartbeat()
                 if (success) {
-                    logger.d(HEARTBEAT_TAG, "${tt()} sent")
+                    MoncchichiLogger.d("$HEARTBEAT_TAG ${'$'}{tt()} sent")
                 } else {
-                    logger.w(HEARTBEAT_TAG, "${tt()} failed to send heartbeat")
+                    MoncchichiLogger.w("$HEARTBEAT_TAG ${'$'}{tt()} failed to send heartbeat")
                 }
             }
         }
@@ -141,14 +140,14 @@ class G1DisplayService : Service() {
 
     private suspend fun reconnectLoop() {
         deviceManager.state.collectLatest { state ->
-            if (state == G1ConnectionState.RECONNECTING) {
-                while (coroutineContext.isActive && deviceManager.state.value == G1ConnectionState.RECONNECTING) {
+            if (state == G1ConnectionState.WAITING_FOR_RECONNECT) {
+                while (coroutineContext.isActive && deviceManager.state.value == G1ConnectionState.WAITING_FOR_RECONNECT) {
                     val success = deviceManager.reconnect()
                     if (success) {
-                        logger.i(RECONNECT_TAG, "${tt()} reconnect succeeded")
+                        MoncchichiLogger.i("$RECONNECT_TAG ${'$'}{tt()} reconnect succeeded")
                         break
                     }
-                    logger.w(RECONNECT_TAG, "${tt()} retry scheduled")
+                    MoncchichiLogger.w("$RECONNECT_TAG ${'$'}{tt()} retry scheduled")
                     delay(10_000L)
                 }
             }
@@ -158,7 +157,7 @@ class G1DisplayService : Service() {
     private fun updateState(newState: G1ConnectionState) {
         if (_connectionState.value != newState) {
             _connectionState.value = newState
-            logger.debug(SERVICE_TAG, "${tt()} Connection state -> $newState")
+            MoncchichiLogger.d("$SERVICE_TAG ${'$'}{tt()} Connection state -> ${'$'}newState")
         }
     }
 
@@ -167,9 +166,10 @@ class G1DisplayService : Service() {
             G1ConnectionState.CONNECTED -> getString(R.string.notification_connected)
             G1ConnectionState.CONNECTING -> getString(R.string.notification_connecting)
             G1ConnectionState.DISCONNECTED -> getString(R.string.notification_disconnected)
-            G1ConnectionState.RECONNECTING -> getString(R.string.notification_reconnecting)
+            G1ConnectionState.WAITING_FOR_RECONNECT -> getString(R.string.notification_reconnecting)
+            G1ConnectionState.READY -> getString(R.string.notification_connected)
             else -> {
-                logger.w(SERVICE_TAG, "${tt()} Unknown notification state $state")
+                MoncchichiLogger.w("$SERVICE_TAG ${'$'}{tt()} Unknown notification state ${'$'}state")
                 getString(R.string.notification_unknown)
             }
         }
@@ -211,7 +211,7 @@ class G1DisplayService : Service() {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == Intent.ACTION_SCREEN_ON) {
-                    logger.debug(POWER_TAG, "${tt()} Screen on → trigger reconnect")
+                    MoncchichiLogger.d("$POWER_TAG ${'$'}{tt()} Screen on → trigger reconnect")
                     deviceManager.tryReconnect()
                 }
             }

@@ -11,8 +11,8 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.loopermallee.moncchichi.MoncchichiLogger
-import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
+import com.loopermallee.moncchichi.core.G1ConnectionState
+import com.loopermallee.moncchichi.core.MoncchichiLogger
 import com.loopermallee.moncchichi.hub.BuildConfig
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.service.G1DisplayService
@@ -26,7 +26,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : AppCompatActivity() {
-    private val logger by lazy { MoncchichiLogger(this) }
     private val isDebugBuild = BuildConfig.DEBUG
     private lateinit var status: TextView
     private var hud: ServiceDebugHUD? = null
@@ -41,7 +40,7 @@ class MainActivity : AppCompatActivity() {
             service = localBinder.getService()
             if (service == null) return
             isBound = true
-            logger.debug("Activity", "${tt()} Service bound successfully")
+            MoncchichiLogger.d("Activity ${'$'}{tt()} Service bound successfully")
             if (!serviceBound.isCompleted) {
                 serviceBound.complete(Unit)
             }
@@ -69,12 +68,12 @@ class MainActivity : AppCompatActivity() {
             setContentView(R.layout.activity_main)
             status = findViewById(R.id.status)
             status.setText(R.string.boot_wait)
-            logger.i("AppBoot", "${tt()} MainActivity ready")
+            MoncchichiLogger.i("AppBoot ${'$'}{tt()} MainActivity ready")
             if (isDebugBuild) {
-                logger.debug("AppBoot", "${tt()} Debug build active")
+                MoncchichiLogger.d("AppBoot ${'$'}{tt()} Debug build active")
             }
         } catch (t: Throwable) {
-            logger.e("AppBoot", "${tt()} MainActivity.onCreate crashed", t)
+            MoncchichiLogger.e("AppBoot ${'$'}{tt()} MainActivity.onCreate crashed", t)
             throw t
         }
     }
@@ -102,7 +101,7 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         hud?.destroy()
         hud = null
-        logger.debug("Activity", "${tt()} Unbinding service (hasInstance=${service != null})")
+        MoncchichiLogger.d("Activity ${'$'}{tt()} Unbinding service (hasInstance=${'$'}{service != null})")
         if (isBound) {
             unbindService(connection)
             isBound = false
@@ -128,16 +127,16 @@ class MainActivity : AppCompatActivity() {
             }
             when (bindResult) {
                 true -> {
-                    logger.debug("Activity", "${tt()} Service bind established")
+                    MoncchichiLogger.d("Activity ${'$'}{tt()} Service bind established")
                 }
                 false -> {
-                    logger.w("Activity", "${tt()} bindService returned false")
+                    MoncchichiLogger.w("Activity ${'$'}{tt()} bindService returned false")
                     ServiceRepository.setError()
                     status.setText(R.string.boot_service_timeout)
                     hud?.update("Bind failed", Color.RED)
                 }
                 null -> {
-                    logger.w("Activity", "${tt()} Service bind timeout")
+                    MoncchichiLogger.w("Activity ${'$'}{tt()} Service bind timeout")
                     ServiceRepository.setBinding()
                     status.text = getString(R.string.status_bind_timeout_retry)
                     hud?.update("Bind timeout", Color.RED)
@@ -160,7 +159,7 @@ class MainActivity : AppCompatActivity() {
         connectionStateJob?.cancel()
         connectionStateJob = lifecycleScope.launch(Dispatchers.Main) {
             service?.connectionState?.collectLatest { state ->
-                logger.d("state", "${tt()} observe: $state")
+                MoncchichiLogger.d("state ${'$'}{tt()} observe: ${'$'}state")
                 when (state) {
                     G1ConnectionState.CONNECTED -> {
                         ServiceRepository.setConnected()
@@ -177,13 +176,18 @@ class MainActivity : AppCompatActivity() {
                         status.text = getString(R.string.status_connecting)
                         hud?.update("🟡 Connecting...", Color.YELLOW, autoHide = false)
                     }
-                    G1ConnectionState.RECONNECTING -> {
+                    G1ConnectionState.WAITING_FOR_RECONNECT -> {
                         ServiceRepository.setBinding()
                         status.text = getString(R.string.status_reconnecting_yellow)
                         hud?.update("🔵 Reconnecting...", Color.CYAN, autoHide = false)
                     }
+                    G1ConnectionState.READY -> {
+                        ServiceRepository.setConnected()
+                        status.text = getString(R.string.status_connected_green)
+                        hud?.update("🟢 Ready", Color.GREEN, autoHide = false)
+                    }
                     else -> {
-                        logger.w("Activity", "${tt()} Unknown state $state")
+                        MoncchichiLogger.w("Activity ${'$'}{tt()} Unknown state ${'$'}state")
                         status.text = getString(R.string.status_unknown)
                         hud?.update("⚪ Unknown", Color.LTGRAY, autoHide = false)
                     }

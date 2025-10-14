@@ -9,7 +9,8 @@ import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.SystemClock
-import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.G1ConnectionState
+import com.loopermallee.moncchichi.core.MoncchichiLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -29,7 +30,6 @@ internal class DeviceManager(
     private val context: Context,
     private val scope: CoroutineScope,
 ) {
-    private val logger by lazy { MoncchichiLogger(context) }
     enum class ConnectionState {
         DISCONNECTED,
         CONNECTING,
@@ -61,7 +61,7 @@ internal class DeviceManager(
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    logger.debug(TAG, "${tt()} onConnectionStateChange: connected")
+                    MoncchichiLogger.d("$TAG ${'$'}{tt()} onConnectionStateChange: connected")
                     writableConnectionState.value = ConnectionState.CONNECTED
                     updateState(gatt.device, G1ConnectionState.CONNECTED)
                     currentDeviceAddress = gatt.device.address
@@ -73,35 +73,35 @@ internal class DeviceManager(
                 }
                 BluetoothProfile.STATE_DISCONNECTING -> {
                     writableConnectionState.value = ConnectionState.DISCONNECTING
-                    updateState(gatt.device, G1ConnectionState.RECONNECTING)
+                    updateState(gatt.device, G1ConnectionState.WAITING_FOR_RECONNECT)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    logger.debug(TAG, "${tt()} onConnectionStateChange: disconnected")
+                    MoncchichiLogger.d("$TAG ${'$'}{tt()} onConnectionStateChange: disconnected")
                     stopHeartbeat()
                     clearConnection()
                     writableConnectionState.value = ConnectionState.DISCONNECTED
                     val targetState = if (manualDisconnect.getAndSet(false)) {
                         G1ConnectionState.DISCONNECTED
                     } else {
-                        G1ConnectionState.RECONNECTING
+                        G1ConnectionState.WAITING_FOR_RECONNECT
                     }
                     updateState(gatt.device, targetState)
                 }
                 else -> {
-                    logger.w(TAG, "${tt()} Unknown Bluetooth state $newState")
+                    MoncchichiLogger.w("$TAG ${'$'}{tt()} Unknown Bluetooth state ${'$'}newState")
                 }
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                logger.w(TAG, "${tt()} onServicesDiscovered: failure status=$status")
+                MoncchichiLogger.w("$TAG ${'$'}{tt()} onServicesDiscovered: failure status=${'$'}status")
                 writableConnectionState.value = ConnectionState.ERROR
                 return
             }
             val uartService = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
             if (uartService == null) {
-                logger.w(TAG, "${tt()} UART service not available on device")
+                MoncchichiLogger.w("$TAG ${'$'}{tt()} UART service not available on device")
                 writableConnectionState.value = ConnectionState.ERROR
                 return
             }
@@ -126,7 +126,7 @@ internal class DeviceManager(
         if (writableConnectionState.value == ConnectionState.CONNECTING ||
             writableConnectionState.value == ConnectionState.CONNECTED
         ) {
-            logger.debug(TAG, "${tt()} connect: already connected or connecting")
+            MoncchichiLogger.d("$TAG ${'$'}{tt()} connect: already connected or connecting")
             return
         }
         addDevice(device)
@@ -141,13 +141,13 @@ internal class DeviceManager(
         writeCharacteristic = service.getCharacteristic(BluetoothConstants.UART_WRITE_CHARACTERISTIC_UUID)
         readCharacteristic = service.getCharacteristic(BluetoothConstants.UART_READ_CHARACTERISTIC_UUID)
         if (writeCharacteristic == null || readCharacteristic == null) {
-            logger.w(TAG, "${tt()} Required UART characteristics not found")
+            MoncchichiLogger.w("$TAG ${'$'}{tt()} Required UART characteristics not found")
             writableConnectionState.value = ConnectionState.ERROR
             return
         }
         val notified = gatt.setCharacteristicNotification(readCharacteristic, true)
         if (!notified) {
-            logger.w(TAG, "${tt()} Unable to enable notifications")
+            MoncchichiLogger.w("$TAG ${'$'}{tt()} Unable to enable notifications")
             writableConnectionState.value = ConnectionState.ERROR
             return
         }
@@ -176,7 +176,7 @@ internal class DeviceManager(
             delay(BluetoothConstants.HEARTBEAT_TIMEOUT_SECONDS * 1000)
             val elapsed = SystemClock.elapsedRealtime() - lastAckTimestamp
             if (awaitingAck.get() && elapsed >= BluetoothConstants.HEARTBEAT_TIMEOUT_SECONDS * 1000) {
-                logger.w(TAG, "${tt()} Heartbeat timeout reached, disconnecting")
+                MoncchichiLogger.w("$TAG ${'$'}{tt()} Heartbeat timeout reached, disconnecting")
                 disconnect()
             }
         }
@@ -200,7 +200,7 @@ internal class DeviceManager(
         currentDeviceAddress?.let { address ->
             deviceStates[address] = G1ConnectionState.DISCONNECTED
         }
-        logger.i(TAG, "${tt()} disconnect requested")
+        MoncchichiLogger.i("$TAG ${'$'}{tt()} disconnect requested")
     }
 
     private fun clearConnection() {
@@ -240,11 +240,11 @@ internal class DeviceManager(
             val success = try {
                 gatt.writeCharacteristic(characteristic)
             } catch (t: Throwable) {
-                logger.e(TAG, "${tt()} sendCommand: failed", t)
+                MoncchichiLogger.e("$TAG ${'$'}{tt()} sendCommand: failed", t)
                 false
             }
             if (!success) {
-                logger.w(TAG, "${tt()} sendCommand: write failed")
+                MoncchichiLogger.w("$TAG ${'$'}{tt()} sendCommand: write failed")
             }
             success
         }
@@ -268,11 +268,11 @@ internal class DeviceManager(
         deviceStates.isNotEmpty() && deviceStates.values.all { it == G1ConnectionState.CONNECTED }
 
     fun anyWaitingForReconnect(): Boolean =
-        deviceStates.values.any { it == G1ConnectionState.RECONNECTING }
+        deviceStates.values.any { it == G1ConnectionState.WAITING_FOR_RECONNECT }
 
     fun resetDisconnected() {
         deviceStates.entries
-            .filter { it.value == G1ConnectionState.RECONNECTING }
+            .filter { it.value == G1ConnectionState.WAITING_FOR_RECONNECT }
             .forEach { entry -> deviceStates[entry.key] = G1ConnectionState.DISCONNECTED }
     }
 
@@ -282,7 +282,7 @@ internal class DeviceManager(
         intervalMs: Long = 10_000L,
     ): Boolean {
         repeat(maxAttempts) { attempt ->
-            logger.i(TAG, "${tt()} Reconnect attempt ${attempt + 1} of $maxAttempts")
+            MoncchichiLogger.i("$TAG ${'$'}{tt()} Reconnect attempt ${'$'}{attempt + 1} of ${'$'}maxAttempts")
             var success = false
             for (device in subDevices) {
                 try {
@@ -291,12 +291,12 @@ internal class DeviceManager(
                     if (gatt != null) {
                         bluetoothGatt = gatt
                         currentDeviceAddress = device.address
-                        logger.i(TAG, "${tt()} Reconnected to ${device.address}")
+                        MoncchichiLogger.i("$TAG ${'$'}{tt()} Reconnected to ${'$'}{device.address}")
                         success = true
                         break
                     }
                 } catch (e: Exception) {
-                    logger.w(TAG, "${tt()} Reconnect failed: ${e.message}")
+                    MoncchichiLogger.w("$TAG ${'$'}{tt()} Reconnect failed: ${'$'}{e.message}")
                 }
             }
             if (success) {
@@ -304,7 +304,7 @@ internal class DeviceManager(
             }
             delay(intervalMs)
         }
-        logger.e(TAG, "${tt()} All reconnect attempts failed.")
+        MoncchichiLogger.e("$TAG ${'$'}{tt()} All reconnect attempts failed.")
         return false
     }
 
