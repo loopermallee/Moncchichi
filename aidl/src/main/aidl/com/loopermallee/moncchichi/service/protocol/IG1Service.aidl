@@ -1,7 +1,7 @@
-package io.texne.g1.basis.service.protocol;
+package com.loopermallee.moncchichi.service.protocol;
 
-import io.texne.g1.basis.service.protocol.IG1StateCallback;
-import io.texne.g1.basis.service.protocol.OperationCallback;
+import com.loopermallee.moncchichi.service.protocol.IG1StateCallback;
+import com.loopermallee.moncchichi.service.protocol.OperationCallback;
 
 interface IG1Service {
     void observeState(IG1StateCallback callback);

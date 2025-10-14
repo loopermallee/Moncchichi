@@ -1,4 +1,4 @@
-package io.texne.g1.hub
+package com.loopermallee.moncchichi.hub
 
 import android.content.ComponentName
 import android.content.Context
@@ -13,6 +13,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
+import com.loopermallee.moncchichi.hub.BuildConfig
+import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.ui.ServiceDebugHUD
 import kotlinx.coroutines.CompletableDeferred
@@ -25,6 +27,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : AppCompatActivity() {
     private val logger by lazy { MoncchichiLogger(this) }
+    private val isDebugBuild = BuildConfig.DEBUG
     private lateinit var status: TextView
     private var hud: ServiceDebugHUD? = null
     private var service: G1DisplayService? = null
@@ -61,11 +64,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        status = findViewById(R.id.status)
-
-        status.setText(R.string.boot_wait)
+        try {
+            super.onCreate(savedInstanceState)
+            setContentView(R.layout.activity_main)
+            status = findViewById(R.id.status)
+            status.setText(R.string.boot_wait)
+            logger.i("AppBoot", "${tt()} MainActivity ready")
+            if (isDebugBuild) {
+                logger.debug("AppBoot", "${tt()} Debug build active")
+            }
+        } catch (t: Throwable) {
+            logger.e("AppBoot", "${tt()} MainActivity.onCreate crashed", t)
+            throw t
+        }
     }
 
     override fun onStart() {
