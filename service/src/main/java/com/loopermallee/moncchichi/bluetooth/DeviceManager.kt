@@ -26,7 +26,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
 private const val TAG = "DeviceManager"
-private const val CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb"
 
 internal class DeviceManager(
     private val context: Context,
@@ -161,11 +160,16 @@ internal class DeviceManager(
     @SuppressLint("MissingPermission")
     private fun enableNotifications(
         gatt: BluetoothGatt,
-        readChar: BluetoothGattCharacteristic,
+        readChar: BluetoothGattCharacteristic?,
     ): Boolean {
-        val ok = gatt.setCharacteristicNotification(readChar, true)
+        val characteristic = readChar ?: return false
+
+        val ok = gatt.setCharacteristicNotification(characteristic, true)
         if (!ok) return false
-        val cccd = readChar.getDescriptor(UUID.fromString(CCCD_UUID)) ?: return false
+
+        val cccd = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+            ?: return false
+
         cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
         return gatt.writeDescriptor(cccd)
     }
