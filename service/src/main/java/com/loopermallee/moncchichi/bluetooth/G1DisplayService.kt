@@ -1,9 +1,15 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
+import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +38,19 @@ class G1DisplayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        ensureNotificationChannel()
+        val notification = buildStatusNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
         startHeartbeatMonitoring()
+        heartbeatStarted.set(true)
         monitorReconnection()
         serviceScope.launch {
             deviceManager.connectionState.collectLatest { connection ->
@@ -68,7 +86,30 @@ class G1DisplayService : Service() {
     override fun onDestroy() {
         heartbeatJob?.cancel()
         serviceScope.cancel()
+        heartbeatStarted.set(false)
         super.onDestroy()
+    }
+
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java)
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "G1 Connection",
+                NotificationManager.IMPORTANCE_LOW,
+            )
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildStatusNotification(): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setContentTitle("Moncchichi")
+            .setContentText("Connecting to Even G1…")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .build()
     }
 
     private fun startHeartbeatMonitoring() {
@@ -149,6 +190,8 @@ class G1DisplayService : Service() {
 
     companion object {
         private const val TAG = "G1DisplayService"
+        private const val CHANNEL_ID = "g1_status"
+        private const val NOTIFICATION_ID = 1337
     }
 
     private fun tt() = "[${Thread.currentThread().name}]"

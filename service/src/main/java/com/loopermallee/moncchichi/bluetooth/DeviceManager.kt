@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothProfile
 import android.content.Context
@@ -20,10 +21,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
 private const val TAG = "DeviceManager"
+private const val CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb"
 
 internal class DeviceManager(
     private val context: Context,
@@ -145,7 +148,7 @@ internal class DeviceManager(
             writableConnectionState.value = ConnectionState.ERROR
             return
         }
-        val notified = gatt.setCharacteristicNotification(readCharacteristic, true)
+        val notified = enableNotifications(gatt, readCharacteristic)
         if (!notified) {
             logger.w(TAG, "${tt()} Unable to enable notifications")
             writableConnectionState.value = ConnectionState.ERROR
@@ -153,6 +156,18 @@ internal class DeviceManager(
         }
         bluetoothGatt = gatt
         startHeartbeat()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun enableNotifications(
+        gatt: BluetoothGatt,
+        readChar: BluetoothGattCharacteristic,
+    ): Boolean {
+        val ok = gatt.setCharacteristicNotification(readChar, true)
+        if (!ok) return false
+        val cccd = readChar.getDescriptor(UUID.fromString(CCCD_UUID)) ?: return false
+        cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        return gatt.writeDescriptor(cccd)
     }
 
     private fun startHeartbeat() {

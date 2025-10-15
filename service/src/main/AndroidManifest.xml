@@ -10,7 +10,7 @@
 
     <application>
         <service
-            android:name="com.loopermallee.moncchichi.bluetooth.G1DisplayService"
+            android:name=".bluetooth.G1DisplayService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             android:enabled="true" />
