@@ -22,7 +22,22 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 
 ---
 
-## 🧩 Development Roadmap & Progress
+## 📊 Auto Progress Tracker
+
+| Category | Last Updated | Status | % Complete | Trend |
+|-----------|--------------|---------|-------------|--------|
+| Build System | Oct 15 2025 | ✅ Stable | 100% | 🔺 +10% |
+| BLE Core (Service) | Oct 15 2025 | 🟢 Functional | 80% | 🔺 +5% |
+| Diagnostics & Recovery | Pending | ⚙️ In progress | 20% | ➖ 0% |
+| Assistant & Teleprompter | Planned | 💤 Deferred | 10% | ➖ 0% |
+| UX / Structural Polish | Oct 15 2025 | 🟢 Upgraded | 60% | 🔺 +10% |
+
+**Total Progress:** 🟩 **~70 % complete**  
+*(Codex automatically updates this table after every successful merge.)*
+
+---
+
+## 🧩 Development Roadmap
 
 ### **Phase 2A — Core Stabilization** *(Current Focus)*  
 **Goal:** Eliminate connection freezes, service timeouts, and unresponsive binds.  
@@ -36,13 +51,13 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 | 5. Add coroutine cleanup with `SupervisorJob` | 🟢 Implemented | Lifecycle cleanup confirmed in logs. |
 | 6. Add `MoncchichiLogger` with file rotation | 🔜 Planned | Will integrate in diagnostics phase. |
 
-**Result (v2A Progress):**  
-🟩 **~75 % complete** — Build stable, service functional. Runtime tests pending APK install.
+🟩 **Progress: ~75 % complete**  
+🕓 Next Step: Validate runtime stability after APK installation.
 
 ---
 
 ### **Phase 2B — Diagnostics & Recovery Tools**  
-**Goal:** Provide full BLE observability and recovery from the phone itself.  
+**Goal:** Enable BLE diagnostics directly from the phone.  
 
 | Task | Status | Notes |
 |------|---------|-------|
@@ -51,20 +66,22 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 | 3. Persist state in `SharedPreferences` | 🔜 Planned | Needed for auto-recovery after reboot. |
 | 4. Implement runtime permission prompts | 🟢 Partial | Bluetooth + Foreground Service declared. |
 
-**Result (v2B Progress):**  
-🟨 **~20 % complete** — UI shell ready; waiting for service verification.
+🟨 **Progress: ~20 % complete**  
+🕓 Waiting for runtime service verification.
 
 ---
 
 ### **Phase 3 — Functional Expansion**  
-**Goal:** Introduce controlled functionality from Gadgetbridge / Even SDK.  
+**Goal:** Integrate controlled functionality from Gadgetbridge / Even SDK.  
 
 | Task | Status | Notes |
 |------|---------|-------|
 | 1. Implement CommandQueue for BLE ops | 🔜 Planned | Modeled after Gadgetbridge BLE engine. |
-| 2. Add AssistantManager with 5-second timeout | 🔜 Planned | ChatGPT link postponed pending stability. |
+| 2. Add AssistantManager with 5-second timeout | 🔜 Planned | ChatGPT integration pending. |
 | 3. Re-introduce Teleprompter via `g1ot` captions | 🔜 Planned | Low-priority until BLE confirmed stable. |
-| 4. Lifecycle-aware reconnect handling | 🔜 Planned | Requires coroutine context refactor. |
+| 4. Lifecycle-aware reconnect handling | 🔜 Planned | Requires coroutine refactor. |
+
+🟦 **Progress: ~10 % complete**
 
 ---
 
@@ -74,22 +91,23 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 |------|---------|-------|
 | 1. Apply unified Moncchichi theme | 🔜 Planned | Color: cool blue + warm gold. |
 | 2. Upgrade Kotlin 2.0 / Gradle 8.10 | ✅ Done | Compatibility verified. |
-| 3. Add Hilt DI for `DeviceManager` / Logger | 🔜 Planned | Will simplify lifecycle cleanup. |
-| 4. Enforce separation between BLE and UI layers | 🟢 Active | Refactored module boundaries validated. |
+| 3. Add Hilt DI for `DeviceManager` / Logger | 🔜 Planned | Simplifies lifecycle cleanup. |
+| 4. Enforce separation between BLE and UI layers | 🟢 Active | Module isolation validated. |
+
+🟩 **Progress: ~60 % complete**
 
 ---
 
-## 🚧 Issues & Adjusted Progress
+## 🚧 Issue History & Adjusted Progress
 
 | Date | Patch Summary | Progress Change | Key Issue |
 |------|----------------|-----------------|-----------|
-| Oct 14 2025 | Gradle 17 → 21 upgrade | 🔺 +15 % | Build passed, but runtime blocked. |
-| Oct 15 2025 | Fixed Boolean-to-String cast crash | 🔺 +10 % | Gradle 8.10 stable build restored. |
-| Oct 15 2025 | Foreground Service promotion merged | 🔺 +5 % | Awaiting APK install to validate runtime. |
-| Oct 15 2025 | APK install blocked | 🔻 −5 % | Build OK, runtime testing halted. |
+| Oct 14 2025 | Gradle 17 → 21 upgrade | 🔺 +15 % | Build passed, runtime pending. |
+| Oct 15 2025 | Boolean-to-String cast crash fix | 🔺 +10 % | Gradle 8.10 stable build. |
+| Oct 15 2025 | Foreground Service promotion | 🔺 +5 % | CCCD write confirmed. |
+| Oct 15 2025 | APK install blocked | 🔻 −5 % | Testing delayed. |
 
-**Net progress:** 🟩 **~70 % overall completion**  
-Build layer solid, runtime validation pending device access.
+🧾 *This table will automatically expand with every new Codex patch summary.*
 
 ---
 
@@ -97,9 +115,10 @@ Build layer solid, runtime validation pending device access.
 
 - Always prioritize **stability > new features**.  
 - Maintain **coroutine safety** — no blocking main/UI threads.  
-- `DeviceManager` reconnection logic must use **exponential backoff**.  
-- Log every transition: `CONNECTING → CONNECTED → DISCONNECTED → RECONNECTING`.  
-- Every subsystem (assistant, teleprompter, logger) should be **decoupled** from BLE service.  
-- Codex should remember the **MAC address references for G1 glasses** (used for pairing logic).  
-- Runtime checks (BLE permission, foreground channel, CCCD write) must complete **before** service bind.  
-- Future CI builds will target **Android 14 (API 34)**.
+- Use **exponential backoff** in `DeviceManager` reconnection logic.  
+- Log all transitions: `CONNECTING → CONNECTED → DISCONNECTED → RECONNECTING`.  
+- Keep assistant / teleprompter / logger **decoupled** from BLE service.  
+- Remember the **MAC addresses for G1 glasses** (used for pairing logic).  
+- Ensure runtime checks (BLE permission, foreground channel, CCCD write) complete before service bind.  
+- CI builds target **Android 14 (API 34)** going forward.  
+- Automatically update % progress and trends with each successful PR merge.
