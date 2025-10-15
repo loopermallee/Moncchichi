@@ -1,10 +1,20 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 70,
-  "last_update": "",
-  "last_delta": 0,
-  "last_keywords": "",
-  "last_goal": "",
-  "last_pr_number": 0,
-  "history": []
+  "total_progress": 73,
+  "last_update": "2025-10-15 14:52 SGT",
+  "last_delta": 3,
+  "last_keywords": "feat",
+  "last_goal": null,
+  "last_pr_number": 58,
+  "history": [
+    {
+      "when": "2025-10-15 14:52 SGT",
+      "pr": 58,
+      "title": "Add Codex progress tracker workflow",
+      "delta": 3,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 73
+    }
+  ]
 }
