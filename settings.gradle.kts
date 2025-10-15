@@ -20,9 +20,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "basis"
-include(":core")
-include(":service")
-include(":client")
-include(":aidl")
-include(":subtitles")
-include(":hub")
+include(":core", ":service", ":hub", ":client", ":aidl", ":subtitles")
