@@ -1,110 +1,105 @@
-🧭 Moncchichi BLE Hub
+# 🧠 Moncchichi BLE Hub
 
-Overview
+### Overview  
+Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.  
+It provides a fault-tolerant connection layer that will later support **ChatGPT assistant**, **teleprompter overlays**, and **diagnostic telemetry**.  
 
-Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the Even Realities G1 smart glasses.
-It aims to provide a fault-tolerant connection layer and support future integrations such as ChatGPT assistant, teleprompter overlays, and diagnostic telemetry.
-
-The current development priority is core stability, not feature expansion.
+> 🎯 **Current priority:** Core stability and connection recovery.  
+> Not feature expansion.
 
 ---
 
-⚙️ Architecture Overview
+## ⚙️ Architecture Overview
 
 | Module | Description |
-| --- | --- |
-| service/ | Core BLE connection and state management (DeviceManager, G1DisplayService). |
-| hub/ | UI layer, connection HUD, and notifications. |
-| core/ | Shared utilities (logger, enums, helpers). |
-| client/ | External communication layer for assistant or remote control integration. |
-| aidl/ | Interfaces for inter-module communication. |
-| subtitles/ | Future module for text streaming and teleprompter functions. |
+|---------|-------------|
+| **service/** | Core BLE connection and state management (`DeviceManager`, `G1DisplayService`). |
+| **hub/** | UI layer, connection HUD, and system notifications. |
+| **core/** | Shared utilities (logger, enums, helpers). |
+| **client/** | External communication bridge (assistant / remote control). |
+| **aidl/** | IPC layer for inter-module communication. |
+| **subtitles/** | Reserved for teleprompter & caption streaming. |
 
 ---
 
-🧩 Development Roadmap
+## 🧩 Development Roadmap & Progress
 
-Phase 2A — Core Stabilization (Current Focus)
+### **Phase 2A — Core Stabilization** *(Current Focus)*  
+**Goal:** Eliminate connection freezes, service timeouts, and unresponsive binds.  
 
-Goal: Eliminate connection instability, freezes, and service timeout errors.
+| Task | Status | Notes |
+|------|---------|-------|
+| 1. Add dedicated coroutine dispatcher (`Dispatchers.IO + Job()`) | ✅ Done | Ensures BLE ops never block main thread. |
+| 2. Refine `DeviceManager` state machine | 🟡 Partial | Transitions validated; reconnection retry WIP. |
+| 3. Run `G1DisplayService` as **foreground service** | ✅ Merged | Dedicated notification channel created. |
+| 4. Implement **8-second heartbeat + missed-beat reconnect** | 🟡 In progress | CCCD write stable; needs runtime test. |
+| 5. Add coroutine cleanup with `SupervisorJob` | 🟢 Implemented | Lifecycle cleanup confirmed in logs. |
+| 6. Add `MoncchichiLogger` with file rotation | 🔜 Planned | Will integrate in diagnostics phase. |
 
-Tasks
-
-1. Add dedicated coroutine dispatcher for BLE work (Dispatchers.IO + Job()).
-2. Refine DeviceManager state machine to enforce valid transitions.
-3. Ensure G1DisplayService always runs as a foreground service.
-4. Implement 8-second heartbeat + missed-beat reconnect logic.
-5. Add coroutine cleanup and SupervisorJob in service lifecycle.
-6. Integrate persistent MoncchichiLogger with file rotation.
-
-✅ Result: Stable, recoverable BLE connection with no more “bind timeout” or frozen UI states.
-
----
-
-Phase 2B — Diagnostics & Recovery Tools
-
-Goal: Full observability from the phone itself, no external debugger required.
-
-Tasks
-
-1. Enable HUD “tap-to-inspect” mode to show latest log lines.
-2. Add a Diagnostics toggle for verbose BLE + firmware info.
-3. Persist connection state in SharedPreferences for auto-recovery.
-4. Implement proper Android 14+ runtime permission prompts.
-
-✅ Result: You can reboot, reconnect, or debug entirely from the phone.
+**Result (v2A Progress):**  
+🟩 **~75 % complete** — Build stable, service functional. Runtime tests pending APK install.
 
 ---
 
-Phase 3 — Functional Expansion
+### **Phase 2B — Diagnostics & Recovery Tools**  
+**Goal:** Provide full BLE observability and recovery from the phone itself.  
 
-Goal: Integrate controlled functionality from Gadgetbridge and Even Realities SDKs.
+| Task | Status | Notes |
+|------|---------|-------|
+| 1. Add “Tap-to-Inspect” HUD mode | 🔜 Planned | To visualize latest 10 log lines. |
+| 2. Add Diagnostics toggle | 🔜 Planned | Enable verbose BLE + firmware data. |
+| 3. Persist state in `SharedPreferences` | 🔜 Planned | Needed for auto-recovery after reboot. |
+| 4. Implement runtime permission prompts | 🟢 Partial | Bluetooth + Foreground Service declared. |
 
-Tasks
-
-1. Implement Gadgetbridge-style CommandQueue for structured BLE ops.
-2. Add AssistantManager with 5-second ChatGPT response timeout (isolated thread).
-3. Re-introduce Teleprompter feature using g1ot’s caption stream logic.
-4. Integrate lifecycle awareness to pause background reconnect attempts.
-
-✅ Result: Reliable BLE + Assistant layer that can evolve independently.
-
----
-
-Phase 4 — UX & Structural Polish
-
-Goal: Modernize structure and prepare for long-term modular development.
-
-Tasks
-
-1. Apply consistent Moncchichi theme (cool blue + warm gold palette).
-2. Upgrade Kotlin to 2.0.x and Gradle to 8.10.x.
-3. Introduce Hilt DI for DeviceManager and Logger injection.
-4. Separate BLE (service/) and UI (hub/) layers for patch isolation.
-
-✅ Result: Modular, production-ready Moncchichi foundation for future AI/VR features.
+**Result (v2B Progress):**  
+🟨 **~20 % complete** — UI shell ready; waiting for service verification.
 
 ---
 
-🧠 References & External Sources
+### **Phase 3 — Functional Expansion**  
+**Goal:** Introduce controlled functionality from Gadgetbridge / Even SDK.  
 
-| Source | Purpose |
-| --- | --- |
-| Gadgetbridge (Even Realities Integration) | BLE protocol structure, command handling logic. |
-| g1ot (GitHub) | Teleprompter activity + HUD update patterns. |
-| g1-basis-android (Original base) | Service layering and IPC structure. |
-| MoncchichiLogger | Custom logging system with file rotation. |
+| Task | Status | Notes |
+|------|---------|-------|
+| 1. Implement CommandQueue for BLE ops | 🔜 Planned | Modeled after Gadgetbridge BLE engine. |
+| 2. Add AssistantManager with 5-second timeout | 🔜 Planned | ChatGPT link postponed pending stability. |
+| 3. Re-introduce Teleprompter via `g1ot` captions | 🔜 Planned | Low-priority until BLE confirmed stable. |
+| 4. Lifecycle-aware reconnect handling | 🔜 Planned | Requires coroutine context refactor. |
 
 ---
 
-Notes for Codex
+### **Phase 4 — UX & Structural Polish**
 
-Always prioritize stability over new features.
+| Task | Status | Notes |
+|------|---------|-------|
+| 1. Apply unified Moncchichi theme | 🔜 Planned | Color: cool blue + warm gold. |
+| 2. Upgrade Kotlin 2.0 / Gradle 8.10 | ✅ Done | Compatibility verified. |
+| 3. Add Hilt DI for `DeviceManager` / Logger | 🔜 Planned | Will simplify lifecycle cleanup. |
+| 4. Enforce separation between BLE and UI layers | 🟢 Active | Refactored module boundaries validated. |
 
-Use coroutine-safe code and avoid blocking UI thread in any service.
+---
 
-Reconnect logic must be capped with exponential backoff.
+## 🚧 Issues & Adjusted Progress
 
-Log every connection transition (CONNECTING, CONNECTED, DISCONNECTED, RECONNECTING).
+| Date | Patch Summary | Progress Change | Key Issue |
+|------|----------------|-----------------|-----------|
+| Oct 14 2025 | Gradle 17 → 21 upgrade | 🔺 +15 % | Build passed, but runtime blocked. |
+| Oct 15 2025 | Fixed Boolean-to-String cast crash | 🔺 +10 % | Gradle 8.10 stable build restored. |
+| Oct 15 2025 | Foreground Service promotion merged | 🔺 +5 % | Awaiting APK install to validate runtime. |
+| Oct 15 2025 | APK install blocked | 🔻 −5 % | Build OK, runtime testing halted. |
 
-Every new feature should be service-independent — no tight coupling between assistant/teleprompter and BLE.
+**Net progress:** 🟩 **~70 % overall completion**  
+Build layer solid, runtime validation pending device access.
+
+---
+
+## 🧠 Notes for Codex Memory
+
+- Always prioritize **stability > new features**.  
+- Maintain **coroutine safety** — no blocking main/UI threads.  
+- `DeviceManager` reconnection logic must use **exponential backoff**.  
+- Log every transition: `CONNECTING → CONNECTED → DISCONNECTED → RECONNECTING`.  
+- Every subsystem (assistant, teleprompter, logger) should be **decoupled** from BLE service.  
+- Codex should remember the **MAC address references for G1 glasses** (used for pairing logic).  
+- Runtime checks (BLE permission, foreground channel, CCCD write) must complete **before** service bind.  
+- Future CI builds will target **Android 14 (API 34)**.
