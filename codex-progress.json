@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 91,
-  "last_update": "2025-10-16 23:12 SGT",
-  "last_delta": 0,
-  "last_keywords": "neutral",
+  "total_progress": 93,
+  "last_update": "2025-10-16 23:39 SGT",
+  "last_delta": 2,
+  "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 67,
+  "last_pr_number": 68,
   "history": [
+    {
+      "when": "2025-10-16 23:39 SGT",
+      "pr": 68,
+      "title": "Add permissions center navigation and checklist",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 93
+    },
     {
       "when": "2025-10-16 23:12 SGT",
       "pr": 67,
