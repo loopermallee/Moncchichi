@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 80,
-  "last_update": "2025-10-16 17:42 SGT",
+  "total_progress": 83,
+  "last_update": "2025-10-16 18:06 SGT",
   "last_delta": 3,
   "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 61,
+  "last_pr_number": 62,
   "history": [
+    {
+      "when": "2025-10-16 18:06 SGT",
+      "pr": 62,
+      "title": "Improve startup UI with BLE status monitor",
+      "delta": 3,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 83
+    },
     {
       "when": "2025-10-16 17:42 SGT",
       "pr": 61,
