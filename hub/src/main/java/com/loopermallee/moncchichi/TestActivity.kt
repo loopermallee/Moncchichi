@@ -39,6 +39,8 @@ class TestActivity : Activity() {
         tv.text = "✅ Minimal build started successfully"
         setContentView(tv)
 
+        requestPostNotificationsIfNeeded()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (hasBluetoothPermissions()) {
                 bindDisplayService()
@@ -72,9 +74,25 @@ class TestActivity : Activity() {
         BT_PERMS.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
 
     private fun bindDisplayService() {
-        Intent(this, G1DisplayService::class.java).also { intent ->
-            if (!serviceBound) {
-                serviceBound = bindService(intent, connection, BIND_AUTO_CREATE)
+        val intent = Intent(this, G1DisplayService::class.java)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+
+        if (!serviceBound) {
+            serviceBound = bindService(intent, connection, BIND_AUTO_CREATE)
+        }
+    }
+
+    private fun requestPostNotificationsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1002)
             }
         }
     }
