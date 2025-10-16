@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 77,
-  "last_update": "2025-10-16 16:30 SGT",
-  "last_delta": 2,
-  "last_keywords": "fix",
+  "total_progress": 80,
+  "last_update": "2025-10-16 17:42 SGT",
+  "last_delta": 3,
+  "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 60,
+  "last_pr_number": 61,
   "history": [
+    {
+      "when": "2025-10-16 17:42 SGT",
+      "pr": 61,
+      "title": "Improve startup UX and BLE reconnection watchdog",
+      "delta": 3,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 80
+    },
     {
       "when": "2025-10-16 16:30 SGT",
       "pr": 60,
