@@ -1,8 +1,6 @@
 package com.loopermallee.moncchichi
 
 import android.Manifest
-import android.animation.ObjectAnimator
-import android.animation.ValueAnimator
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
@@ -17,12 +15,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
 import android.view.animation.AlphaAnimation
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -32,7 +27,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -43,22 +37,27 @@ class TestActivity : Activity() {
     private val uiScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private lateinit var statusView: TextView
-    private lateinit var infoView: TextView
-    private lateinit var hintView: TextView
+    private lateinit var rssiLabel: TextView
+    private lateinit var discoveryLabel: TextView
+    private lateinit var discoveryTable: TextView
+    private lateinit var troubleshootingLabel: TextView
     private lateinit var reconnectButton: Button
-    private lateinit var progressBar: ProgressBar
-    private lateinit var checklistLayout: LinearLayout
 
     private var bluetoothReceiver: BroadcastReceiver? = null
-    private var buttonPulseAnimator: ObjectAnimator? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val localBinder = binder as? G1DisplayService.LocalBinder
             displayService = localBinder?.getService()
             serviceBound = true
-            startFade(statusView, "🟢 Connected to service", 400)
+            startFade(statusView, "🟢 Service linked", 400)
             observeConnectionState()
+            observeRssi()
+            observeNearbyDevices()
+            displayService?.getLastDeviceAddress()?.let {
+                showHint("Auto-reconnecting to $it…")
+                displayService?.requestReconnect()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -70,85 +69,79 @@ class TestActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#121212"))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            setPadding(40, 80, 40, 80)
-        }
+        setContentView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setBackgroundColor(Color.BLACK)
+                setPadding(30, 120, 30, 60)
 
-        val title = TextView(this).apply {
-            text = "Moncchichi"
-            textSize = 28f
-            setTextColor(Color.WHITE)
-            setPadding(0, 0, 0, 60)
-        }
+                statusView = TextView(context).apply {
+                    text = "⏳ Service starting…"
+                    textSize = 18f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    setPadding(0, 0, 0, 20)
+                }
 
-        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-            isIndeterminate = false
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 10).apply {
-                bottomMargin = 50
+                val header = TextView(context).apply {
+                    text = "💠 Soul Tether"
+                    textSize = 26f
+                    setTextColor(Color.CYAN)
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    alpha = 0f
+                    animate().alpha(1f).setDuration(1000).start()
+                }
+                addView(header)
+
+                addView(statusView)
+
+                rssiLabel = TextView(context).apply {
+                    text = "📶 Signal: -- dBm"
+                    setTextColor(Color.LTGRAY)
+                    textSize = 16f
+                    setPadding(0, 20, 0, 20)
+                }
+                addView(rssiLabel)
+
+                discoveryLabel = TextView(context).apply {
+                    text = "🔍 Scanning for nearby devices..."
+                    textSize = 16f
+                    setTextColor(Color.GRAY)
+                }
+                addView(discoveryLabel)
+
+                discoveryTable = TextView(context).apply {
+                    text = "No devices detected"
+                    setTextColor(Color.DKGRAY)
+                    setPadding(0, 10, 0, 30)
+                }
+                addView(discoveryTable)
+
+                reconnectButton = Button(context).apply {
+                    text = "Reconnect"
+                    setBackgroundColor(Color.DKGRAY)
+                    setTextColor(Color.WHITE)
+                    setPadding(20, 10, 20, 10)
+                    setOnClickListener {
+                        displayService?.requestReconnect()
+                        displayService?.requestNearbyRescan()
+                        displayService?.getLastDeviceAddress()?.let { last ->
+                            showHint("Attempting to tether with $last…")
+                        }
+                    }
+                }
+                addView(reconnectButton)
+
+                troubleshootingLabel = TextView(context).apply {
+                    text = "🧠 Troubleshooting: Checking..."
+                    textSize = 16f
+                    setTextColor(Color.LTGRAY)
+                    setPadding(0, 30, 0, 0)
+                }
+                addView(troubleshootingLabel)
             }
-            progressDrawable?.setTint(Color.parseColor("#00BCD4"))
-        }
-
-        statusView = TextView(this).apply {
-            text = "⏳ Initializing…"
-            textSize = 22f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 20)
-        }
-
-        infoView = TextView(this).apply {
-            text = ""
-            textSize = 18f
-            setTextColor(Color.LTGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 30)
-        }
-
-        hintView = TextView(this).apply {
-            text = ""
-            textSize = 16f
-            setTextColor(Color.parseColor("#F1C40F"))
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 40)
-        }
-
-        reconnectButton = Button(this).apply {
-            text = "Reconnect"
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.GRAY)
-            isEnabled = false
-            setPadding(40, 25, 40, 25)
-            setOnClickListener {
-                startChecklistAnimation()
-                displayService?.requestReconnect()
-            }
-        }
-
-        checklistLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.START
-            visibility = View.GONE
-        }
-
-        root.addView(title)
-        root.addView(progressBar)
-        root.addView(statusView)
-        root.addView(infoView)
-        root.addView(hintView)
-        root.addView(reconnectButton)
-        root.addView(checklistLayout)
-        setContentView(root)
+        )
 
         registerBluetoothReceiver()
         requestAllPermissions()
@@ -196,35 +189,76 @@ class TestActivity : Activity() {
                 when (state) {
                     G1ConnectionState.CONNECTED -> {
                         fadeStatus("🟢 Connected", Color.parseColor("#2ECC71"))
-                        animateButton(Color.parseColor("#2ECC71"), "Connected", false)
-                        infoView.text = displayService?.getConnectedDeviceName()?.let { "📶 $it" } ?: ""
-                        progressBar.progress = 100
-                        checklistLayout.visibility = View.GONE
-                        showHint("Device link stable.")
+                        reconnectButton.isEnabled = true
+                        reconnectButton.setBackgroundColor(Color.parseColor("#2ECC71"))
+                        reconnectButton.text = "Connected"
+                        reconnectButton.alpha = 0.8f
+                        showHint("🧠 Troubleshooting: Link stable to ${displayService?.getConnectedDeviceName() ?: "device"}.")
                     }
                     G1ConnectionState.CONNECTING -> {
                         fadeStatus("🟡 Connecting…", Color.parseColor("#F1C40F"))
-                        animateButton(Color.parseColor("#F1C40F"), "Connecting…", false)
-                        progressBar.progress = 60
-                        showHint("Attempting connection…")
+                        reconnectButton.isEnabled = false
+                        reconnectButton.setBackgroundColor(Color.parseColor("#F1C40F"))
+                        reconnectButton.text = "Connecting…"
+                        reconnectButton.alpha = 0.6f
+                        showHint("🧠 Troubleshooting: Negotiating link…")
                     }
                     G1ConnectionState.RECONNECTING -> {
                         fadeStatus("🟠 Reconnecting…", Color.parseColor("#F39C12"))
-                        animateButton(Color.parseColor("#F39C12"), "Reconnecting…", false)
-                        progressBar.progress = 40
-                        startChecklistAnimation()
+                        reconnectButton.isEnabled = false
+                        reconnectButton.setBackgroundColor(Color.parseColor("#F39C12"))
+                        reconnectButton.text = "Reconnecting…"
+                        reconnectButton.alpha = 0.6f
+                        showHint("🧠 Troubleshooting: Recovery in progress…")
                     }
                     G1ConnectionState.DISCONNECTED -> {
                         fadeStatus("🔴 Disconnected", Color.parseColor("#E74C3C"))
-                        animateButton(Color.parseColor("#E74C3C"), "Reconnect", true)
-                        progressBar.progress = 0
-                        showHint("Bluetooth may be off or device out of range.")
+                        reconnectButton.isEnabled = true
+                        reconnectButton.setBackgroundColor(Color.DKGRAY)
+                        reconnectButton.text = "Reconnect"
+                        reconnectButton.alpha = 1f
+                        showHint("🧠 Troubleshooting: Bluetooth may be off or device out of range.")
                     }
                     else -> {
                         fadeStatus("⚙️ Idle", Color.GRAY)
-                        animateButton(Color.GRAY, "Reconnect", true)
-                        progressBar.progress = 0
+                        reconnectButton.isEnabled = true
+                        reconnectButton.setBackgroundColor(Color.DKGRAY)
+                        reconnectButton.text = "Reconnect"
+                        reconnectButton.alpha = 1f
+                        showHint("🧠 Troubleshooting: Awaiting instructions…")
                     }
+                }
+            }
+        }
+    }
+
+    private fun observeRssi() {
+        uiScope.launch {
+            displayService?.getRssiFlow()?.collectLatest { rssi ->
+                if (rssi != null) {
+                    val bars = when {
+                        rssi > -60 -> "🟩🟩🟩 Strong"
+                        rssi > -75 -> "🟩🟩 Medium"
+                        rssi > -90 -> "🟩 Weak"
+                        else -> "⬜ No signal"
+                    }
+                    rssiLabel.text = "📶 $bars ($rssi dBm)"
+                } else {
+                    rssiLabel.text = "📶 Signal: -- dBm"
+                }
+            }
+        }
+    }
+
+    private fun observeNearbyDevices() {
+        uiScope.launch {
+            displayService?.getNearbyDevicesFlow()?.collectLatest { devices ->
+                if (devices.isNotEmpty()) {
+                    discoveryLabel.text = "✅ ${devices.size} devices detected"
+                    discoveryTable.text = devices.joinToString("\n") { "• $it" }
+                } else {
+                    discoveryLabel.text = "❌ No nearby devices"
+                    discoveryTable.text = ""
                 }
             }
         }
@@ -235,55 +269,6 @@ class TestActivity : Activity() {
         statusView.setTextColor(color)
     }
 
-    private fun animateButton(color: Int, label: String, enabled: Boolean) {
-        reconnectButton.apply {
-            setBackgroundColor(color)
-            text = label
-            isEnabled = enabled
-            alpha = if (enabled) 1.0f else 0.6f
-        }
-        val shouldPulse = enabled
-        if (shouldPulse) {
-            if (buttonPulseAnimator == null) {
-                buttonPulseAnimator = ObjectAnimator.ofFloat(reconnectButton, View.ALPHA, 0.6f, 1f).apply {
-                    duration = 700
-                    repeatCount = ValueAnimator.INFINITE
-                    repeatMode = ValueAnimator.REVERSE
-                }
-            }
-            buttonPulseAnimator?.start()
-        } else {
-            buttonPulseAnimator?.cancel()
-            reconnectButton.alpha = if (enabled) 1.0f else 0.6f
-        }
-    }
-
-    private fun startChecklistAnimation() {
-        checklistLayout.removeAllViews()
-        checklistLayout.visibility = View.VISIBLE
-        val steps = listOf(
-            "Checking Bluetooth state…",
-            "Detecting nearby G1 glasses…",
-            "Attempting handshake…",
-            "Finalizing secure connection…"
-        )
-        uiScope.launch {
-            for (step in steps) {
-                val item = TextView(this@TestActivity).apply {
-                    text = "⬜ $step"
-                    setTextColor(Color.LTGRAY)
-                    textSize = 16f
-                    setPadding(10, 10, 10, 10)
-                }
-                checklistLayout.addView(item)
-                delay(450)
-                startFade(item, "✅ ${step.replace("…", " done")}")
-                delay(600)
-            }
-            showHint("Reconnection sequence complete (or timed out).")
-        }
-    }
-
     private fun startFade(view: TextView, text: String, duration: Long = 350) {
         val fade = AlphaAnimation(0f, 1f).apply { this.duration = duration }
         view.startAnimation(fade)
@@ -291,7 +276,7 @@ class TestActivity : Activity() {
     }
 
     private fun showHint(text: String) {
-        runOnUiThread { hintView.text = text }
+        runOnUiThread { startFade(troubleshootingLabel, text, 500) }
     }
 
     private fun registerBluetoothReceiver() {
@@ -301,11 +286,14 @@ class TestActivity : Activity() {
                 when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                     BluetoothAdapter.STATE_OFF -> {
                         fadeStatus("🔕 Bluetooth Off", Color.RED)
-                        showHint("Turn Bluetooth ON to reconnect your G1 glasses.")
-                        animateButton(Color.GRAY, "Reconnect", false)
+                        reconnectButton.isEnabled = false
+                        reconnectButton.setBackgroundColor(Color.DKGRAY)
+                        reconnectButton.text = "Reconnect"
+                        reconnectButton.alpha = 0.6f
+                        showHint("🧠 Troubleshooting: Turn Bluetooth ON to reconnect your G1 glasses.")
                     }
                     BluetoothAdapter.STATE_ON -> {
-                        showHint("Bluetooth ON — ready to connect.")
+                        showHint("🧠 Troubleshooting: Bluetooth ON — scanning…")
                         displayService?.requestReconnect()
                     }
                 }
@@ -322,8 +310,6 @@ class TestActivity : Activity() {
         if (serviceBound) {
             unbindService(connection)
         }
-        buttonPulseAnimator?.cancel()
-        buttonPulseAnimator = null
         super.onDestroy()
     }
 }

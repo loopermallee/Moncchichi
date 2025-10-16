@@ -9,18 +9,22 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
 import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -36,6 +40,10 @@ class DeviceManager(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _stateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     val state: StateFlow<G1ConnectionState> = _stateFlow.asStateFlow()
+    private val _rssi = MutableStateFlow<Int?>(null)
+    val rssi: StateFlow<Int?> = _rssi.asStateFlow()
+    private val _nearbyDevices = MutableStateFlow<List<String>>(emptyList())
+    val nearbyDevices: StateFlow<List<String>> = _nearbyDevices.asStateFlow()
 
     private val transactionQueueLazy = lazy { G1TransactionQueue(scope, logger) }
     private val transactionQueue: G1TransactionQueue
@@ -49,6 +57,8 @@ class DeviceManager(
     private var trackedDevice: BluetoothDevice? = null
     @Volatile
     private var isInitializing = false
+    private var rssiJob: Job? = null
+    private var scanCallback: ScanCallback? = null
 
     init {
         logger.i(
@@ -76,6 +86,7 @@ class DeviceManager(
                     this@DeviceManager.gatt = gatt
                     trackedDevice = gatt.device
                     updateState(G1ConnectionState.CONNECTED)
+                    startRssiMonitor()
                     gatt.discoverServices()
                     completeWaiters(true)
                 }
@@ -120,6 +131,14 @@ class DeviceManager(
                 "[BLEEvent]",
                 "${tt()} Characteristic changed: $uuid, value=${characteristic.value.toHexString()}",
             )
+        }
+
+        override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                _rssi.value = rssi
+            } else {
+                logger.w(DEVICE_MANAGER_TAG, "${tt()} RSSI read failed: status=$status")
+            }
         }
     }
 
@@ -190,6 +209,59 @@ class DeviceManager(
     }
 
     fun shutdown() = scope.cancel("DeviceManager destroyed")
+
+    @SuppressLint("MissingPermission")
+    fun startRssiMonitor() {
+        if (rssiJob?.isActive == true) return
+        rssiJob = scope.launch {
+            while (isActive) {
+                try {
+                    gatt?.readRemoteRssi()
+                } catch (t: Throwable) {
+                    logger.w(DEVICE_MANAGER_TAG, "${tt()} Failed to request RSSI", t)
+                }
+                delay(2_000L)
+            }
+        }
+    }
+
+    fun stopRssiMonitor() {
+        rssiJob?.cancel()
+        rssiJob = null
+        _rssi.value = null
+    }
+
+    @SuppressLint("MissingPermission")
+    fun startScanNearbyDevices() {
+        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+        val scanner = adapter.bluetoothLeScanner ?: return
+
+        scanCallback?.let { scanner.stopScan(it) }
+        val resultList = mutableSetOf<String>()
+        _nearbyDevices.value = emptyList()
+
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult?) {
+                result?.device?.name?.takeIf { it.isNotBlank() }?.let { name ->
+                    if (resultList.add(name)) {
+                        _nearbyDevices.value = resultList.toList()
+                    }
+                }
+            }
+        }
+
+        scanCallback = callback
+        scanner.startScan(callback)
+        scope.launch {
+            delay(8_000L)
+            runCatching { scanner.stopScan(callback) }
+            if (scanCallback === callback) {
+                scanCallback = null
+            }
+            _nearbyDevices.value = resultList.toList()
+            logger.i(DEVICE_MANAGER_TAG, "${tt()} Scan finished: ${resultList.size} devices found")
+        }
+    }
 
     private suspend fun sendCommand(payload: ByteArray, label: String): Boolean {
         return transactionQueue.run(label) {
@@ -264,6 +336,8 @@ class DeviceManager(
         writeCharacteristic = null
         notifyCharacteristic = null
         gatt = null
+        stopRssiMonitor()
+        _nearbyDevices.value = emptyList()
     }
 
     private fun updateState(newState: G1ConnectionState) {
