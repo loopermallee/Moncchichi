@@ -90,6 +90,18 @@ class G1DisplayService : Service() {
         super.onDestroy()
     }
 
+    /**
+     * Connect directly to a device given its BLE address.
+     * This is exposed via the binder for manual pairing from the Hub UI.
+     */
+    fun connect(address: String) {
+        try {
+            deviceManager.connectToAddress(address)
+        } catch (error: Exception) {
+            logger.e(TAG, "${tt()} Failed to connect to $address: ${error.message}", error)
+        }
+    }
+
     private fun ensureNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
@@ -160,6 +172,10 @@ class G1DisplayService : Service() {
     inner class G1Binder : Binder() {
 
         val stateFlow: StateFlow<G1ConnectionState> = readableStateFlow
+
+        fun connect(address: String) {
+            this@G1DisplayService.connect(address)
+        }
 
         fun heartbeat() {
             checkBinderHeartbeat()

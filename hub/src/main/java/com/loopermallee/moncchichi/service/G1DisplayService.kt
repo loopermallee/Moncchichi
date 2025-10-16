@@ -149,6 +149,12 @@ class G1DisplayService : Service() {
         deviceManager.startScanNearbyDevices()
     }
 
+    fun connect(address: String) {
+        serviceScope.launch {
+            deviceManager.connect(address)
+        }
+    }
+
     fun getConnectedDeviceName(): String? {
         return deviceManager.currentDeviceName()
     }
