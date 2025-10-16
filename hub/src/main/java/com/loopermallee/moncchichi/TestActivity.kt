@@ -14,6 +14,9 @@ import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,6 +24,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +38,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
@@ -83,7 +94,9 @@ class TestActivity : ComponentActivity() {
         }
         registerReceiver(receiver, IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED))
         bluetoothReceiver = receiver
-        setContent { MoncchichiHome() }
+        setContent {
+            MaterialTheme { MainScaffold() }
+        }
         ensureService()
         ensurePermissions()
         lifecycleScope.launch {
@@ -102,14 +115,7 @@ class TestActivity : ComponentActivity() {
     }
 
     private fun ensurePermissions() {
-        val needed = mutableListOf(
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.BLUETOOTH_SCAN
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            needed.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        val missing = needed.filter {
+        val missing = requiredPermissions().filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isNotEmpty()) permissionRequester.launch(missing.toTypedArray())
@@ -184,66 +190,65 @@ class TestActivity : ComponentActivity() {
             }
         }
 
-        MaterialTheme {
-            Scaffold { innerPadding ->
-                Box(
+        Scaffold { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .background(MaterialTheme.colorScheme.background)
+            ) {
+                Column(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                        .background(MaterialTheme.colorScheme.background)
+                        .align(Alignment.Center)
+                        .widthIn(max = 440.dp)
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .widthIn(max = 440.dp)
-                            .fillMaxWidth()
-                            .padding(24.dp)
-                    ) {
-                        Text(
-                            text = "Soul Tether Hub",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center
-                        )
+                    Text(
+                        text = "Soul Tether Hub",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    ConnectionStatusPill(connectionState)
+                    Spacer(Modifier.height(8.dp))
+                    BluetoothStateIndicator(bluetoothOn)
+                    if (connectedLabel != null) {
+                        Spacer(Modifier.height(8.dp))
+                        BatteryIndicator(connectedBattery, connectedLabel)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    SignalStrengthIndicator(rssi)
+                    Spacer(Modifier.height(16.dp))
+                    StatusMessageCard(statusMessage, readiness)
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "Nearby devices",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    DeviceTable(
+                        devices = devices,
+                        onSelect = { device ->
+                            attemptedAutoPair = true
+                            statusMessage = "Connecting to ${device.name ?: device.address}"
+                            onDeviceSelected(device.address)
+                        }
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    ControlButtons(bluetoothOn)
+                    if (!bluetoothOn) {
                         Spacer(Modifier.height(12.dp))
-                        ConnectionStatusPill(connectionState)
-                        Spacer(Modifier.height(8.dp))
-                        BluetoothStateIndicator(bluetoothOn)
-                        if (connectedLabel != null) {
-                            Spacer(Modifier.height(8.dp))
-                            BatteryIndicator(connectedBattery, connectedLabel)
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        SignalStrengthIndicator(rssi)
-                        Spacer(Modifier.height(16.dp))
-                        StatusMessageCard(statusMessage, readiness)
-                        Spacer(Modifier.height(16.dp))
                         Text(
-                            text = "Nearby devices",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
+                            text = "Enable Bluetooth to scan for Even G1 glasses.",
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        Spacer(Modifier.height(8.dp))
-                        DeviceTable(
-                            devices = devices,
-                            onSelect = { device ->
-                                attemptedAutoPair = true
-                                statusMessage = "Connecting to ${device.name ?: device.address}"
-                                onDeviceSelected(device.address)
-                            }
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        ControlButtons(bluetoothOn)
-                        if (!bluetoothOn) {
-                            Spacer(Modifier.height(12.dp))
-                            Text(
-                                text = "Enable Bluetooth to scan for Even G1 glasses.",
-                                color = MaterialTheme.colorScheme.error,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
                     }
                 }
             }
@@ -458,13 +463,6 @@ class TestActivity : ComponentActivity() {
                 Text("Reconnect")
             }
         }
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = { startActivity(Intent(this@TestActivity, PermissionsActivity::class.java)) },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Permissions")
-        }
     }
 
     @Composable
@@ -473,6 +471,206 @@ class TestActivity : ComponentActivity() {
             flow.collectAsState(initial = flow.value)
         } else {
             remember { mutableStateOf(default) }
+        }
+    }
+
+    // --------------------------- Permissions Center with Smart Checklist + Refresh Indicator ---------------------------
+
+    data class PermissionItem(
+        val name: String,
+        val label: String,
+        val granted: Boolean = false,
+        val statusText: String = "⏳ Checking..."
+    )
+
+    private fun requiredPermissions(): List<String> {
+        val base = mutableListOf(
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            base.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        return base
+    }
+
+    @Composable
+    private fun PermissionsCenter(onGrantAll: () -> Unit) {
+        val context = this
+        var refreshing by remember { mutableStateOf(true) }
+        val permissions = remember {
+            mutableStateListOf<PermissionItem>().apply {
+                addAll(requiredPermissions().map {
+                    PermissionItem(it, permissionLabel(it), hasPermission(context, it))
+                })
+            }
+        }
+
+        LaunchedEffect(refreshing) {
+            if (refreshing) {
+                val latest = requiredPermissions()
+                if (permissions.size != latest.size || permissions.map { it.name } != latest) {
+                    permissions.clear()
+                    permissions.addAll(latest.map { perm ->
+                        PermissionItem(perm, permissionLabel(perm), hasPermission(context, perm))
+                    })
+                }
+                latest.forEachIndexed { index, perm ->
+                    val current = permissions[index]
+                    permissions[index] = current.copy(statusText = "⏳ Checking...")
+                    delay(250)
+                    val grantedNow = hasPermission(context, perm)
+                    val status = if (grantedNow) "✅ Granted" else "❌ Missing"
+                    permissions[index] = current.copy(granted = grantedNow, statusText = status)
+                }
+                refreshing = false
+            }
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.Top
+        ) {
+            Text(
+                "App Permissions",
+                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            if (refreshing) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .wrapContentSize(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("Checking permissions...")
+                }
+            } else {
+                permissions.forEach { item ->
+                    val showRow = item.statusText != "⏳ Checking..."
+                    AnimatedVisibility(visible = showRow, enter = fadeIn(), exit = fadeOut()) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = item.label,
+                                modifier = Modifier.weight(1f),
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                text = item.statusText,
+                                color = when {
+                                    item.statusText.contains("✅") -> Color(0xFF4CAF50)
+                                    item.statusText.contains("❌") -> Color(0xFFF44336)
+                                    else -> Color.Gray
+                                },
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+                Button(
+                    onClick = {
+                        onGrantAll()
+                        refreshing = true
+                    },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text("Grant All Permissions")
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = { refreshing = true },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text("🔄 Recheck")
+                }
+            }
+        }
+    }
+
+    private fun hasPermission(context: Context, perm: String): Boolean {
+        if (perm == Manifest.permission.POST_NOTIFICATIONS && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true
+        }
+        return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun permissionLabel(perm: String): String = when (perm) {
+        Manifest.permission.BLUETOOTH_CONNECT -> "Bluetooth Connect"
+        Manifest.permission.BLUETOOTH_SCAN -> "Bluetooth Scan"
+        Manifest.permission.ACCESS_FINE_LOCATION -> "Location Access"
+        Manifest.permission.POST_NOTIFICATIONS -> "Post Notifications"
+        else -> perm.substringAfterLast('.')
+    }
+
+    private fun requestAllPermissions() {
+        val missing = requiredPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            permissionRequester.launch(missing.toTypedArray())
+        }
+    }
+
+    // --------------------------- Navigation Scaffold ---------------------------
+
+    @Composable
+    private fun MainScaffold() {
+        val navController = rememberNavController()
+        val backStackEntry by navController.currentBackStackEntryAsState()
+        val currentRoute = backStackEntry?.destination?.route
+
+        Scaffold(
+            bottomBar = { BottomNavigationBar(navController, currentRoute) }
+        ) { padding ->
+            Box(Modifier.padding(padding)) {
+                NavHost(navController = navController, startDestination = "pairing") {
+                    composable("pairing") { MoncchichiHome() }
+                    composable("permissions") { PermissionsCenter { requestAllPermissions() } }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun BottomNavigationBar(navController: NavHostController, currentRoute: String?) {
+        NavigationBar {
+            NavigationBarItem(
+                selected = currentRoute == "pairing",
+                onClick = {
+                    navController.navigate("pairing") {
+                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
+                icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Pair") },
+                label = { Text("Pairing") }
+            )
+            NavigationBarItem(
+                selected = currentRoute == "permissions",
+                onClick = {
+                    navController.navigate("permissions") {
+                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
+                icon = { Icon(Icons.Default.Settings, contentDescription = "Permissions") },
+                label = { Text("Permissions") }
+            )
         }
     }
 }
