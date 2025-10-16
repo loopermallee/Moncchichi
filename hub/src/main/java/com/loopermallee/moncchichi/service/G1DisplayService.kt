@@ -258,7 +258,10 @@ class G1DisplayService : Service() {
         }
 
         fun requestReconnect() {
-            deviceManager.tryReconnect()
+            serviceScope.launch {
+                logger.i(SERVICE_TAG, "${tt()} manual reconnect triggered via binder")
+                deviceManager.tryReconnect()
+            }
         }
     }
 
