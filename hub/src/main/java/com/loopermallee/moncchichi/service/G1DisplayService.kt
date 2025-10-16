@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.bluetooth.BluetoothAdapter
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -38,16 +39,35 @@ class G1DisplayService : Service() {
     private val logger by lazy { MoncchichiLogger(this) }
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceManager by lazy { DeviceManager(applicationContext) }
+    private val prefs by lazy { getSharedPreferences("g1hub", Context.MODE_PRIVATE) }
     private val ready = MutableStateFlow(false)
     private val _connectionState = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<G1ConnectionState> = _connectionState
     private val binder = LocalBinder()
     private var powerReceiver: BroadcastReceiver? = null
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                    BluetoothAdapter.STATE_ON -> {
+                        logger.i(SERVICE_TAG, "Bluetooth ON — restarting scan")
+                        deviceManager.tryReconnect()
+                        deviceManager.startScanNearbyDevices()
+                    }
+                    BluetoothAdapter.STATE_OFF -> {
+                        logger.i(SERVICE_TAG, "Bluetooth OFF — suspending connections")
+                        deviceManager.disconnect()
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        val initial = buildForegroundNotification("Starting…")
+        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        val initial = buildForegroundNotification("Soul Tether starting…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -60,6 +80,13 @@ class G1DisplayService : Service() {
 
         registerPowerAwareReconnect()
         _connectionState.value = deviceManager.state.value
+        deviceManager.startScanNearbyDevices()
+        serviceScope.launch {
+            getLastDeviceAddress()?.let { last ->
+                logger.i(SERVICE_TAG, "${tt()} Attempting auto-connect to $last")
+                deviceManager.connect(last)
+            }
+        }
 
         serviceScope.launch {
             logger.i(SERVICE_TAG, "${tt()} onCreate: launching heartbeat + reconnect loops")
@@ -118,11 +145,16 @@ class G1DisplayService : Service() {
         }
     }
 
+    fun requestNearbyRescan() {
+        deviceManager.startScanNearbyDevices()
+    }
+
     fun getConnectedDeviceName(): String? {
         return deviceManager.currentDeviceName()
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(bluetoothStateReceiver) }
         powerReceiver?.let { receiver ->
             runCatching { unregisterReceiver(receiver) }
         }
@@ -184,6 +216,16 @@ class G1DisplayService : Service() {
         if (_connectionState.value != newState) {
             _connectionState.value = newState
             logger.debug(SERVICE_TAG, "${tt()} Connection state -> $newState")
+            when (newState) {
+                G1ConnectionState.CONNECTED -> {
+                    deviceManager.currentDevice()?.address?.let { rememberLastDevice(it) }
+                    deviceManager.startRssiMonitor()
+                }
+                G1ConnectionState.DISCONNECTED -> {
+                    deviceManager.stopRssiMonitor()
+                }
+                else -> Unit
+            }
         }
     }
 
@@ -252,6 +294,10 @@ class G1DisplayService : Service() {
 
         fun getService(): G1DisplayService = this@G1DisplayService
 
+        fun rssi(): StateFlow<Int?> = getRssiFlow()
+
+        fun nearbyDevices(): StateFlow<List<String>> = getNearbyDevicesFlow()
+
         fun connect(address: String) {
             serviceScope.launch {
                 deviceManager.connect(address)
@@ -271,7 +317,23 @@ class G1DisplayService : Service() {
         fun requestReconnect() {
             this@G1DisplayService.requestReconnect()
         }
+
+        fun lastDeviceAddress(): String? = getLastDeviceAddress()
+
+        fun rescanNearbyDevices() {
+            this@G1DisplayService.requestNearbyRescan()
+        }
     }
+
+    fun rememberLastDevice(address: String) {
+        prefs.edit().putString("last_device", address).apply()
+    }
+
+    fun getLastDeviceAddress(): String? = prefs.getString("last_device", null)
+
+    fun getRssiFlow(): StateFlow<Int?> = deviceManager.rssi
+
+    fun getNearbyDevicesFlow(): StateFlow<List<String>> = deviceManager.nearbyDevices
 
     companion object {
         private const val SERVICE_TAG = "[Service]"
