@@ -1,5 +1,5 @@
 # 🧠 Moncchichi BLE Hub
-Total Progress: 🟩 ~93 % complete 🔺 (auto-updated 2025-10-16 23:39 SGT)
+Total Progress: 🟩 ~75 % complete ➖ (auto-updated 2025-10-16 23:45 SGT)
 
 ### Overview
 Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.
@@ -32,11 +32,11 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 | UX / Structural Polish | 2025-10-16 | 🟢 Upgraded (scrollable device table, Bluetooth state chip, Permissions Center entry) | **72%** | 🔺 +12% |
 | Assistant & Teleprompter | 2025-10-16 | 💤 Deferred (kept decoupled) | **10%** | ➖ |
 
-**Total Progress:** 🟩 **~74 % complete**
+**Total Progress:** 🟩 **~75 % complete**
 
 > Notes:
 > - Tracker now includes the **Permissions Center** screen shortcut, **dynamic Bluetooth state**, **live pairing status**, **battery badge**, and **MAC address** display in the device table.
-> - Previous header (~91%) was inaccurate relative to category detail; reconciled to ~74%.
+- Previous header (~91%) was inaccurate relative to category detail; reconciled to ~75%.
 
 ---
 
@@ -97,11 +97,31 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 ---
 
 ### Phase 5 — Feature Expansion (Deferred)
-**Goal:** Add value once the pipe is rock-solid.
+**Goal:** Add value once the BLE transport layer is fully stable.
 
-- Teleprompter/captions (`subtitles/`) reintegration (low-latency rendering path).
-- Assistant bridge (bounded timeout, offline fallback).
-- CommandQueue for orderly writes/reads (Gadgetbridge-style).
+| Category | Planned Features | Source / Reference | Notes |
+|-----------|------------------|--------------------|-------|
+| Teleprompter / Captions | Reinstate `subtitles/` rendering path | Even SDK + Gadgetbridge text overlay | Requires stable GATT streaming |
+| Assistant Bridge | ChatGPT integration via bounded timeout | Moncchichi client module | Gated by BLE stability |
+| CommandQueue | Orderly write/read operations | Gadgetbridge core BLE engine | Prevents characteristic collision |
+| Device Bonding & Pair Cache | Persist bond info for instant reconnect | Gadgetbridge `DeviceSupport` | Critical for seamless UX |
+| Battery & Charging State | Report both glasses + case battery levels | Gadgetbridge `BatteryInfo` | Color-coded icons (green ≥50%, yellow 20–49%, red <20%) |
+| Device Info Display | Serial #, hardware revision, firmware | Gadgetbridge `DeviceInfo` | Optional “Copy / QR Export” |
+| Weather Sync | Fetch & push local weather data | Gadgetbridge `WeatherService` | Needs location + network permission |
+| Notifications | Mirror phone notifications | Gadgetbridge `NotificationCenter` | Optional per-app filter |
+| Settings Sync | Centralize device preferences | Gadgetbridge `SettingsSupport` | Integrates into Permissions/Settings hub |
+| Silent Mode | Turn off HUD display remotely | Gadgetbridge display control | Quick-toggle button in dashboard |
+| Screen Position / Height | Adjust HUD placement | Gadgetbridge `ScreenConfig` | Saved per device profile |
+| Depth Effect | Simulated HUD depth offset | Gadgetbridge UI extensions | Optional visual mode |
+| Head Tilt Activation Angle | Configure gesture sensitivity | Gadgetbridge `SensorControl` | Calibration with live feedback |
+| Auto Brightness | Ambient light-driven adjustment | Gadgetbridge `LightSensorService` | Requires firmware support |
+| Manual Brightness Level | Adjustable brightness slider | Gadgetbridge `DisplayControl` | Range 0–100% |
+| Wear Detection | Detect on/off-face status | Gadgetbridge `WearDetection` | Auto sleep/wake for battery saving |
+| 12h / 24h Time Mode | Clock format switch | Gadgetbridge `TimeFormat` | Mirrors system locale |
+| Minimal Dashboard on Connect | Hide non-critical widgets when paired | Gadgetbridge `DashboardMode` | Optional toggle for cleaner UI |
+
+🟦 **Progress:** ~10 % (research and architecture planning)  
+🕓 **Next step:** Design a modular *Capability Profile* layer referencing Gadgetbridge’s open-source implementations while keeping Moncchichi’s UX consistent.
 
 **Exit criteria:** Features gated by a stable BLE layer (no regressions).
 
