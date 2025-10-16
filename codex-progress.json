@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 75,
-  "last_update": "2025-10-16 15:57 SGT",
+  "total_progress": 77,
+  "last_update": "2025-10-16 16:30 SGT",
   "last_delta": 2,
   "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 59,
+  "last_pr_number": 60,
   "history": [
+    {
+      "when": "2025-10-16 16:30 SGT",
+      "pr": 60,
+      "title": "Fix launcher activity name in hub manifest",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 77
+    },
     {
       "when": "2025-10-16 15:57 SGT",
       "pr": 59,
