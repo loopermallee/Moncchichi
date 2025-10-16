@@ -67,6 +67,16 @@ class G1DisplayService : Service() {
             launch { heartbeatLoop() }
             launch { reconnectLoop() }
         }
+
+        serviceScope.launch {
+            while (isActive) {
+                delay(30000L)
+                if (deviceManager.state.value != G1ConnectionState.CONNECTED) {
+                    logger.w(SERVICE_TAG, "${tt()} Connection lost — triggering resilientReconnect()")
+                    deviceManager.resilientReconnect()
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
