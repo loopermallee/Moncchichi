@@ -111,6 +111,13 @@ class G1DisplayService : Service() {
 
     override fun onUnbind(intent: Intent?): Boolean = super.onUnbind(intent)
 
+    fun requestReconnect() {
+        serviceScope.launch {
+            logger.i(SERVICE_TAG, "${tt()} manual reconnect triggered")
+            deviceManager.tryReconnect()
+        }
+    }
+
     override fun onDestroy() {
         powerReceiver?.let { receiver ->
             runCatching { unregisterReceiver(receiver) }
@@ -258,10 +265,7 @@ class G1DisplayService : Service() {
         }
 
         fun requestReconnect() {
-            serviceScope.launch {
-                logger.i(SERVICE_TAG, "${tt()} manual reconnect triggered via binder")
-                deviceManager.tryReconnect()
-            }
+            this@G1DisplayService.requestReconnect()
         }
     }
 
