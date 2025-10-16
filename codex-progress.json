@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 89,
-  "last_update": "2025-10-16 19:49 SGT",
-  "last_delta": 3,
-  "last_keywords": "feat",
+  "total_progress": 91,
+  "last_update": "2025-10-16 19:53 SGT",
+  "last_delta": 2,
+  "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 65,
+  "last_pr_number": 66,
   "history": [
+    {
+      "when": "2025-10-16 19:53 SGT",
+      "pr": 66,
+      "title": "Add Soul Tether HUD overlay and progress tooling updates",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 91
+    },
     {
       "when": "2025-10-16 19:49 SGT",
       "pr": 65,

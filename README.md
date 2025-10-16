@@ -1,5 +1,5 @@
 # 🧠 Moncchichi BLE Hub
-Total Progress: 🟩 ~89 % complete 🔺 (auto-updated 2025-10-16 19:49 SGT)
+Total Progress: 🟩 ~91 % complete 🔺 (auto-updated 2025-10-16 19:53 SGT)
 
 ### Overview  
 Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.  
@@ -99,19 +99,9 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 
 ---
 
-## 🚧 Issue History & Adjusted Progress
-
-| Date | Patch Summary | Progress Change | Key Issue |
-|------|----------------|-----------------|-----------|
-| Oct 14 2025 | Gradle 17 → 21 upgrade | 🔺 +15 % | Build passed, runtime pending. |
-| Oct 15 2025 | Boolean-to-String cast crash fix | 🔺 +10 % | Gradle 8.10 stable build. |
-| Oct 15 2025 | Foreground Service promotion | 🔺 +5 % | CCCD write confirmed. |
-| Oct 15 2025 | APK install blocked | 🔻 −5 % | Testing delayed. |
-
-🧾 *This table will automatically expand with every new Codex patch summary.*
-
----
-
+## 🚧 Issue History
+_Auto-maintained by Codex on each merge._
+- 2025-10-16 19:53 SGT — PR #66: **Add Soul Tether HUD overlay and progress tooling updates** · delta `+2%` · tag `fix`
 ## 🧠 Notes for Codex Memory
 
 - Always prioritize **stability > new features**.  
@@ -121,15 +111,3 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 - Keep assistant / teleprompter / logger **decoupled** from BLE service.  
 - Remember the **MAC addresses for G1 glasses** (used for pairing logic).  
 - Ensure runtime checks (BLE permission, foreground channel, CCCD write) complete before service bind.  
-- CI builds target **Android 14 (API 34)** going forward.  
-- Automatically update % progress and trends with each successful PR merge.
-## 🚧 Issue History
-_Auto-maintained by Codex on each merge._
-- 2025-10-16 19:49 SGT — PR #65: **Enhance Soul Tether Bluetooth awareness** · delta `+3%` · tag `feat`
-- 2025-10-16 19:18 SGT — PR #64: **Revamp hub TestActivity dashboard UI** · delta `+0%` · tag `neutral`
-- 2025-10-16 19:00 SGT — PR #63: **Enhance TestActivity UI and Bluetooth awareness** · delta `+3%` · tag `feat`
-- 2025-10-16 18:06 SGT — PR #62: **Improve startup UI with BLE status monitor** · delta `+3%` · tag `feat`
-- 2025-10-16 17:42 SGT — PR #61: **Improve startup UX and BLE reconnection watchdog** · delta `+3%` · tag `feat`
-- 2025-10-16 16:30 SGT — PR #60: **Fix launcher activity name in hub manifest** · delta `+2%` · tag `fix`
-- 2025-10-16 15:57 SGT — PR #59: **Fix foreground service startup and BLE notifications** · delta `+2%` · tag `fix`
-- 2025-10-15 14:52 SGT — PR #58: **Add Codex progress tracker workflow** · delta `+3%` · tag `feat`
