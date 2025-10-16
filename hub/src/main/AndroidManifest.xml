@@ -18,7 +18,7 @@
 
     <application
         android:name="io.texne.g1.hub.G1HubApplication"
-        android:label="Moncchichi"
+        android:label="Soul Tether"
         android:theme="@android:style/Theme.DeviceDefault">
         <activity
             android:name="com.loopermallee.moncchichi.TestActivity"

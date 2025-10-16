@@ -21,12 +21,12 @@ def clamp(v, lo=0, hi=100): return max(lo, min(hi, v))
 
 def derive_delta_from_keywords(title, body, commits_text):
     text = " ".join([title or "", body or "", commits_text or ""]).lower()
-    if re.search(r"\b(revert|rollback)\b", text): return -2, "revert"
-    if re.search(r"\bfix(e[ds])?\b|\bhotfix\b|\bbug\b", text): return +2, "fix"
-    if re.search(r"\bfeat(ure)?\b|\badd(ed)?\b", text): return +3, "feat"
-    if re.search(r"\bperf\b|\boptimi[sz]e?\b", text): return +1, "perf"
-    if re.search(r"\brefactor\b", text): return 0, "refactor"
-    if re.search(r"\bdocs?\b|\bci\b|\bchore\b", text): return 0, "neutral"
+    if re.search(r"revert|rollback", text): return -2, "revert"
+    if re.search(r"fix|hotfix|bug", text): return +2, "fix"
+    if re.search(r"feat|add|implement", text): return +4, "feat"
+    if re.search(r"perf|optimi", text): return +1, "perf"
+    if re.search(r"refactor|cleanup", text): return 0, "refactor"
+    if re.search(r"docs|ci|chore", text): return 0, "neutral"
     return 0, "neutral"
 
 def extract_goal(body):
@@ -40,12 +40,12 @@ def today_str():
 
 def ensure_issue_history_section(readme_text):
     if "🚧 Issue History" in readme_text:
-        return readme_text
-    block = (
-        "\n\n## 🚧 Issue History\n"
-        "_Auto-maintained by Codex on each merge._\n"
-    )
-    return readme_text.strip() + block + "\n"
+        return re.sub(
+            r"## 🚧 Issue History[\s\S]*?(?=##|$)",
+            "## 🚧 Issue History\n_Auto-maintained by Codex on each merge._\n",
+            readme_text,
+        )
+    return readme_text.strip() + "\n\n## 🚧 Issue History\n_Auto-maintained by Codex on each merge._\n"
 
 def update_total_progress_line(readme_text, new_percent, trend_symbol):
     pattern = re.compile(r"(?im)^Total Progress:.*$")
@@ -68,7 +68,8 @@ def append_issue_history_entry(readme_text, pr_number, title, delta, goal, keywo
         idx = len(parts) - 2
     entry = f"- {today_str()} — PR #{pr_number}: **{title.strip()}** · delta `{delta:+d}%` · tag `{keywords}`" + (f" · goal: _{goal}_" if goal else "")
     parts.insert(idx + 2, entry)
-    return "\n".join(parts) + "\n"
+    filtered = parts[:idx + 2] + parts[idx + 2:idx + 12]
+    return "\n".join(filtered) + "\n"
 
 def read_event():
     data = load_json(pathlib.Path(EVENT_PATH), {})

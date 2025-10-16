@@ -23,15 +23,19 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.viewinterop.AndroidView
 import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.subtitles.R
 
@@ -43,6 +47,13 @@ fun SubtitlesScreen(
     val viewModel = hiltViewModel<SubtitlesViewModel>()
     val state = viewModel.state.collectAsState().value
     val connectedGlasses = state.glasses
+    val displayService = viewModel.displayService
+    val context = LocalContext.current
+    val hudOverlay = remember(context) { G1HudOverlay(context) }
+
+    LaunchedEffect(displayService, hudOverlay) {
+        hudOverlay.bind(displayService.connectionState, displayService.getRssiFlow())
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -109,6 +120,10 @@ fun SubtitlesScreen(
                         Text(it, color = Color.Green)
                     }
                 }
+                AndroidView(
+                    modifier = Modifier.align(Alignment.TopEnd),
+                    factory = { hudOverlay }
+                )
             }
         }
     }

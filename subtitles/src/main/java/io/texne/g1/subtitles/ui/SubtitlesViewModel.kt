@@ -18,6 +18,8 @@ class SubtitlesViewModel @Inject constructor(
     private val repository: Repository
 ): ViewModel() {
 
+    val displayService = repository.displayService
+
     data class State(
         val glasses: G1ServiceCommon.Glasses? = null,
         val hubInstalled: Boolean = false,
