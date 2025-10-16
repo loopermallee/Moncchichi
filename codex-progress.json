@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 86,
-  "last_update": "2025-10-16 19:18 SGT",
-  "last_delta": 0,
-  "last_keywords": "neutral",
+  "total_progress": 89,
+  "last_update": "2025-10-16 19:49 SGT",
+  "last_delta": 3,
+  "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 64,
+  "last_pr_number": 65,
   "history": [
+    {
+      "when": "2025-10-16 19:49 SGT",
+      "pr": 65,
+      "title": "Enhance Soul Tether Bluetooth awareness",
+      "delta": 3,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 89
+    },
     {
       "when": "2025-10-16 19:18 SGT",
       "pr": 64,

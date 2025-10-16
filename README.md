@@ -1,5 +1,5 @@
 # 🧠 Moncchichi BLE Hub
-Total Progress: 🟩 ~86 % complete ➖ (auto-updated 2025-10-16 19:18 SGT)
+Total Progress: 🟩 ~89 % complete 🔺 (auto-updated 2025-10-16 19:49 SGT)
 
 ### Overview  
 Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.  
@@ -125,6 +125,7 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 - Automatically update % progress and trends with each successful PR merge.
 ## 🚧 Issue History
 _Auto-maintained by Codex on each merge._
+- 2025-10-16 19:49 SGT — PR #65: **Enhance Soul Tether Bluetooth awareness** · delta `+3%` · tag `feat`
 - 2025-10-16 19:18 SGT — PR #64: **Revamp hub TestActivity dashboard UI** · delta `+0%` · tag `neutral`
 - 2025-10-16 19:00 SGT — PR #63: **Enhance TestActivity UI and Bluetooth awareness** · delta `+3%` · tag `feat`
 - 2025-10-16 18:06 SGT — PR #62: **Improve startup UI with BLE status monitor** · delta `+3%` · tag `feat`
