@@ -136,6 +136,8 @@ class DeviceManager(
 
     fun currentDevice(): BluetoothDevice? = trackedDevice
 
+    fun currentDeviceName(): String? = gatt?.device?.name
+
     fun notifyWaiting() {
         updateState(G1ConnectionState.RECONNECTING)
     }
