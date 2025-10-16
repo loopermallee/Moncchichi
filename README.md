@@ -1,21 +1,20 @@
 # 🧠 Moncchichi BLE Hub
-Total Progress: 🟩 ~91 % complete ➖ (auto-updated 2025-10-16 23:12 SGT)
+Total Progress: 🟩 ~74 % complete ➖ (auto-updated 2025-10-16 23:59 SGT)
 
-### Overview  
-Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.  
-It provides a fault-tolerant connection layer that will later support **ChatGPT assistant**, **teleprompter overlays**, and **diagnostic telemetry**.  
+### Overview
+Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.
+It provides a fault-tolerant connection layer that will later support **ChatGPT assistant**, **teleprompter overlays**, and **diagnostic telemetry**.
 
-> 🎯 **Current priority:** Core stability and connection recovery.  
-> Not feature expansion.
+> 🎯 **Current priority:** Core stability and connection recovery — not feature expansion.
 
 ---
 
 ## ⚙️ Architecture Overview
 
 | Module | Description |
-|---------|-------------|
+|-------|-------------|
 | **service/** | Core BLE connection and state management (`DeviceManager`, `G1DisplayService`). |
-| **hub/** | UI layer, connection HUD, and system notifications. |
+| **hub/** | UI layer, pairing dashboard, indicators, device table, Permissions Center. |
 | **core/** | Shared utilities (logger, enums, helpers). |
 | **client/** | External communication bridge (assistant / remote control). |
 | **aidl/** | IPC layer for inter-module communication. |
@@ -26,88 +25,101 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 ## 📊 Auto Progress Tracker
 
 | Category | Last Updated | Status | % Complete | Trend |
-|-----------|--------------|---------|-------------|--------|
-| Build System | Oct 15 2025 | ✅ Stable | 100% | 🔺 +10% |
-| BLE Core (Service) | Oct 15 2025 | 🟢 Functional | 80% | 🔺 +5% |
-| Diagnostics & Recovery | Pending | ⚙️ In progress | 20% | ➖ 0% |
-| Assistant & Teleprompter | Planned | 💤 Deferred | 10% | ➖ 0% |
-| UX / Structural Polish | Oct 15 2025 | 🟢 Upgraded | 60% | 🔺 +10% |
+|---|---|---|---:|:---:|
+| Build System | 2025-10-16 | ✅ Stable (Gradle 8.10; Kotlin 2.x ready) | **100%** | ➖ |
+| BLE Core (Service) | 2025-10-16 | 🟢 Functional (manual `connect(address)` exposed; stable bind) | **85%** | 🔺 +5% |
+| Diagnostics & Recovery | 2025-10-16 | ⚙️ In progress (live pairing log, context troubleshooting) | **55%** | 🔺 +35% |
+| UX / Structural Polish | 2025-10-16 | 🟢 Upgraded (scrollable device table, Bluetooth state chip, Permissions Center entry) | **72%** | 🔺 +12% |
+| Assistant & Teleprompter | 2025-10-16 | 💤 Deferred (kept decoupled) | **10%** | ➖ |
 
-**Total Progress:** 🟩 **~70 % complete**  
-*(Codex automatically updates this table after every successful merge.)*
+**Total Progress:** 🟩 **~74 % complete**
 
----
-
-## 🧩 Development Roadmap
-
-### **Phase 2A — Core Stabilization** *(Current Focus)*  
-**Goal:** Eliminate connection freezes, service timeouts, and unresponsive binds.  
-
-| Task | Status | Notes |
-|------|---------|-------|
-| 1. Add dedicated coroutine dispatcher (`Dispatchers.IO + Job()`) | ✅ Done | Ensures BLE ops never block main thread. |
-| 2. Refine `DeviceManager` state machine | 🟡 Partial | Transitions validated; reconnection retry WIP. |
-| 3. Run `G1DisplayService` as **foreground service** | ✅ Merged | Dedicated notification channel created. |
-| 4. Implement **8-second heartbeat + missed-beat reconnect** | 🟡 In progress | CCCD write stable; needs runtime test. |
-| 5. Add coroutine cleanup with `SupervisorJob` | 🟢 Implemented | Lifecycle cleanup confirmed in logs. |
-| 6. Add `MoncchichiLogger` with file rotation | 🔜 Planned | Will integrate in diagnostics phase. |
-
-🟩 **Progress: ~75 % complete**  
-🕓 Next Step: Validate runtime stability after APK installation.
+> Notes:
+> - Tracker now includes the **Permissions Center** screen shortcut, **dynamic Bluetooth state**, **live pairing status**, **battery badge**, and **MAC address** display in the device table.
+> - Previous header (~91%) was inaccurate relative to category detail; reconciled to ~74%.
 
 ---
 
-### **Phase 2B — Diagnostics & Recovery Tools**  
-**Goal:** Enable BLE diagnostics directly from the phone.  
+## 🧩 Development Roadmap (Stability-first)
 
-| Task | Status | Notes |
-|------|---------|-------|
-| 1. Add “Tap-to-Inspect” HUD mode | 🔜 Planned | To visualize latest 10 log lines. |
-| 2. Add Diagnostics toggle | 🔜 Planned | Enable verbose BLE + firmware data. |
-| 3. Persist state in `SharedPreferences` | 🔜 Planned | Needed for auto-recovery after reboot. |
-| 4. Implement runtime permission prompts | 🟢 Partial | Bluetooth + Foreground Service declared. |
+### Phase 2A — Core Stabilization *(Current)*
+**Goal:** No deadlocks, quick recovery, predictable lifecycle.
 
-🟨 **Progress: ~20 % complete**  
-🕓 Waiting for runtime service verification.
+- ✅ Expose `connect(address)` in `G1DisplayService` (manual selection flows).
+- ✅ Compose-state driven pairing dashboard (connection state, Bluetooth on/off, battery, device table).
+- ✅ Scrollable device table (shows **name + MAC**; tap to connect).
+- ✅ Dynamic connection states: **CONNECTING → CONNECTED → DISCONNECTED → RECONNECTING**.
+- 🟡 Reconnect heuristics with bounded exponential backoff (tune intervals & limits).
+- 🟡 Foreground service audit: verify service restarts after process reclaim.
+- 🔜 GATT timeouts & safe cancellation wrappers for long ops.
 
----
-
-### **Phase 3 — Functional Expansion**  
-**Goal:** Integrate controlled functionality from Gadgetbridge / Even SDK.  
-
-| Task | Status | Notes |
-|------|---------|-------|
-| 1. Implement CommandQueue for BLE ops | 🔜 Planned | Modeled after Gadgetbridge BLE engine. |
-| 2. Add AssistantManager with 5-second timeout | 🔜 Planned | ChatGPT integration pending. |
-| 3. Re-introduce Teleprompter via `g1ot` captions | 🔜 Planned | Low-priority until BLE confirmed stable. |
-| 4. Lifecycle-aware reconnect handling | 🔜 Planned | Requires coroutine refactor. |
-
-🟦 **Progress: ~10 % complete**
+**Exit criteria:** 30-minute soak with 0 fatal drops and <3s average reconnect.
 
 ---
 
-### **Phase 4 — UX & Structural Polish**
+### Phase 2B — Diagnostics & Recovery Tools
+**Goal:** See problems as they happen and self-heal.
 
-| Task | Status | Notes |
-|------|---------|-------|
-| 1. Apply unified Moncchichi theme | 🔜 Planned | Color: cool blue + warm gold. |
-| 2. Upgrade Kotlin 2.0 / Gradle 8.10 | ✅ Done | Compatibility verified. |
-| 3. Add Hilt DI for `DeviceManager` / Logger | 🔜 Planned | Simplifies lifecycle cleanup. |
-| 4. Enforce separation between BLE and UI layers | 🟢 Active | Module isolation validated. |
+- ✅ Live pairing log in UI (handshake steps, failures, last error).
+- ✅ Contextual troubleshooting checklist (Bluetooth on/off ✔, scanning… ⏳, device found ✔/✖, services discovered ⏳/✔, notifications enabled ⏳/✔).
+- 🟡 Persist last 200 log lines (ring buffer) and surface in UI.
+- 🔜 “Tap-to-Inspect” overlay to show recent BLE events without leaving screen.
+- 🔜 Optional verbose mode: CCCD writes, MTU, PHY, characteristic errors.
 
-🟩 **Progress: ~60 % complete**
+**Exit criteria:** A user can identify where a failure occurred in ≤10s without adb logs.
+
+---
+
+### Phase 3 — UX & Permissions Polish
+**Goal:** Frictionless first run and clear controls.
+
+- ✅ **Permissions Center** screen (read-only status list + **Grant All** trigger; updates if user revokes later).
+- ✅ Bottom-bar shortcut to open Permissions Center from pairing screen.
+- ✅ Bluetooth state indicator chip that updates in real time.
+- ✅ Battery badge with color: **green ≥ 50%**, **yellow 20–49%**, **red < 20%**.
+- 🔜 First-run onboarding: short 3-step guide (enable BT → grant permissions → connect).
+- 🔜 Micro-animations (subtle fade for checklist rows, progress pulses during handshake).
+
+**Exit criteria:** New users can pair and understand state without trial & error.
+
+---
+
+### Phase 4 — Release Engineering
+**Goal:** Repeatable builds and app stability score.
+
+- ✅ CI build green on hub/core/service modules.
+- 🔜 Strict lint + baseline; treat warnings as errors (module by module).
+- 🔜 Crash & ANR monitoring (open-source friendly; file-based breadcrumbs).
+- 🔜 Compatibility matrix (Android 10–14; Bluetooth stacks variance notes).
+
+**Exit criteria:** Reproducible release build with changelog and stability report.
+
+---
+
+### Phase 5 — Feature Expansion (Deferred)
+**Goal:** Add value once the pipe is rock-solid.
+
+- Teleprompter/captions (`subtitles/`) reintegration (low-latency rendering path).
+- Assistant bridge (bounded timeout, offline fallback).
+- CommandQueue for orderly writes/reads (Gadgetbridge-style).
+
+**Exit criteria:** Features gated by a stable BLE layer (no regressions).
 
 ---
 
 ## 🚧 Issue History
 _Auto-maintained by Codex on each merge._
+
+- 2025-10-16 23:59 SGT — PR #70: **Permissions Center shortcut + dynamic Bluetooth/battery indicators + device table (with MAC) + live pairing log** · delta **+4%** · tag `upgrade`
 - 2025-10-16 23:12 SGT — PR #67: **Declare PermissionsActivity in manifest** · delta `+0%` · tag `neutral`
+
+---
+
 ## 🧠 Notes for Codex Memory
 
-- Always prioritize **stability > new features**.  
-- Maintain **coroutine safety** — no blocking main/UI threads.  
-- Use **exponential backoff** in `DeviceManager` reconnection logic.  
-- Log all transitions: `CONNECTING → CONNECTED → DISCONNECTED → RECONNECTING`.  
-- Keep assistant / teleprompter / logger **decoupled** from BLE service.  
-- Remember the **MAC addresses for G1 glasses** (used for pairing logic).  
-- Ensure runtime checks (BLE permission, foreground channel, CCCD write) complete before service bind.  
+- **Stability first**: reconnection heuristics with bounded backoff; no UI thread blocking.
+- Track and display **MAC addresses** in device list; tap-to-connect via `G1DisplayService.connect(address)`.
+- Keep **assistant/teleprompter** decoupled from BLE service until stability proven.
+- **Dynamic UI** only: real-time Bluetooth on/off, connection phase, battery badge, scrollable device table.
+- **Troubleshooting checklist** refreshes each connect attempt; shows per-step status.
+- Log state transitions and last error cause; persist a small rolling buffer for on-device inspection.
