@@ -330,6 +330,26 @@ class DeviceManager(
         return connectDevice(device)
     }
 
+    @SuppressLint("MissingPermission")
+    suspend fun resilientReconnect(maxRetries: Int = 5, delayMs: Long = 8000L) {
+        var attempt = 0
+        while (attempt < maxRetries && _stateFlow.value != G1ConnectionState.CONNECTED) {
+            attempt++
+            logger.w(RECONNECT_TAG, "${tt()} reconnect attempt $attempt/$maxRetries")
+            val success = reconnect()
+            if (success) {
+                logger.i(RECONNECT_TAG, "${tt()} reconnect succeeded after $attempt attempts")
+                updateState(G1ConnectionState.CONNECTED)
+                break
+            }
+            delay(delayMs)
+        }
+        if (_stateFlow.value != G1ConnectionState.CONNECTED) {
+            logger.e(RECONNECT_TAG, "${tt()} reconnect failed after $maxRetries attempts")
+            updateState(G1ConnectionState.DISCONNECTED)
+        }
+    }
+
     fun tryReconnect() {
         val device = trackedDevice ?: return
         updateState(G1ConnectionState.RECONNECTING)
