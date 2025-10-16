@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 86,
-  "last_update": "2025-10-16 19:00 SGT",
-  "last_delta": 3,
-  "last_keywords": "feat",
+  "last_update": "2025-10-16 19:18 SGT",
+  "last_delta": 0,
+  "last_keywords": "neutral",
   "last_goal": null,
-  "last_pr_number": 63,
+  "last_pr_number": 64,
   "history": [
+    {
+      "when": "2025-10-16 19:18 SGT",
+      "pr": 64,
+      "title": "Revamp hub TestActivity dashboard UI",
+      "delta": 0,
+      "keywords": "neutral",
+      "goal": null,
+      "total_after": 86
+    },
     {
       "when": "2025-10-16 19:00 SGT",
       "pr": 63,
