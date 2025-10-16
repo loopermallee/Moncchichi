@@ -1,8 +1,6 @@
 package com.loopermallee.moncchichi
 
 import android.Manifest
-import android.app.Activity
-import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -10,306 +8,326 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
-import android.view.Gravity
-import android.view.animation.AlphaAnimation
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
-import androidx.core.app.ActivityCompat
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
+import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.service.G1DisplayService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 
-class TestActivity : Activity() {
-
+class TestActivity : ComponentActivity() {
     private var serviceBound = false
     private var displayService: G1DisplayService? = null
-    private val uiScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-
-    private lateinit var statusView: TextView
-    private lateinit var rssiLabel: TextView
-    private lateinit var discoveryLabel: TextView
-    private lateinit var discoveryTable: TextView
-    private lateinit var troubleshootingLabel: TextView
-    private lateinit var reconnectButton: Button
-
-    private var bluetoothReceiver: BroadcastReceiver? = null
+    private lateinit var scanner: BluetoothScanner
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val localBinder = binder as? G1DisplayService.LocalBinder
-            displayService = localBinder?.getService()
+            val b = binder as? G1DisplayService.LocalBinder
+            displayService = b?.getService()
             serviceBound = true
-            startFade(statusView, "🟢 Service linked", 400)
-            observeConnectionState()
-            observeRssi()
-            observeNearbyDevices()
-            displayService?.getLastDeviceAddress()?.let {
-                showHint("Auto-reconnecting to $it…")
-                displayService?.requestReconnect()
-            }
         }
-
         override fun onServiceDisconnected(name: ComponentName?) {
             serviceBound = false
             displayService = null
-            startFade(statusView, "🔴 Service disconnected", 400)
         }
     }
+
+    private val permissionRequester = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* recomposed by state checks */ }
+
+    private var bluetoothReceiver: BroadcastReceiver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-                setBackgroundColor(Color.BLACK)
-                setPadding(30, 120, 30, 60)
-
-                statusView = TextView(context).apply {
-                    text = "⏳ Service starting…"
-                    textSize = 18f
-                    setTextColor(Color.WHITE)
-                    gravity = Gravity.CENTER_HORIZONTAL
-                    setPadding(0, 0, 0, 20)
+        scanner = BluetoothScanner(this)
+        val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    // recomposition will read scanner.isBluetoothOn()
                 }
-
-                val header = TextView(context).apply {
-                    text = "💠 Soul Tether"
-                    textSize = 26f
-                    setTextColor(Color.CYAN)
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    alpha = 0f
-                    animate().alpha(1f).setDuration(1000).start()
-                }
-                addView(header)
-
-                addView(statusView)
-
-                rssiLabel = TextView(context).apply {
-                    text = "📶 Signal: -- dBm"
-                    setTextColor(Color.LTGRAY)
-                    textSize = 16f
-                    setPadding(0, 20, 0, 20)
-                }
-                addView(rssiLabel)
-
-                discoveryLabel = TextView(context).apply {
-                    text = "🔍 Scanning for nearby devices..."
-                    textSize = 16f
-                    setTextColor(Color.GRAY)
-                }
-                addView(discoveryLabel)
-
-                discoveryTable = TextView(context).apply {
-                    text = "No devices detected"
-                    setTextColor(Color.DKGRAY)
-                    setPadding(0, 10, 0, 30)
-                }
-                addView(discoveryTable)
-
-                reconnectButton = Button(context).apply {
-                    text = "Reconnect"
-                    setBackgroundColor(Color.DKGRAY)
-                    setTextColor(Color.WHITE)
-                    setPadding(20, 10, 20, 10)
-                    setOnClickListener {
-                        displayService?.requestReconnect()
-                        displayService?.requestNearbyRescan()
-                        displayService?.getLastDeviceAddress()?.let { last ->
-                            showHint("Attempting to tether with $last…")
-                        }
-                    }
-                }
-                addView(reconnectButton)
-
-                troubleshootingLabel = TextView(context).apply {
-                    text = "🧠 Troubleshooting: Checking..."
-                    textSize = 16f
-                    setTextColor(Color.LTGRAY)
-                    setPadding(0, 30, 0, 0)
-                }
-                addView(troubleshootingLabel)
             }
-        )
-
-        registerBluetoothReceiver()
-        requestAllPermissions()
+        registerReceiver(receiver, IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED))
+        bluetoothReceiver = receiver
+        setContent { MoncchichiHome() }
+        ensureService()
+        ensurePermissions()
     }
 
-    private fun requestAllPermissions() {
-        val perms = listOf(
+    private fun ensureService() {
+        val intent = Intent(this, G1DisplayService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+        if (!serviceBound) bindService(intent, connection, BIND_AUTO_CREATE)
+    }
+
+    private fun ensurePermissions() {
+        val needed = mutableListOf(
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.BLUETOOTH_SCAN
         )
-        val missing = perms.filter {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val missing = needed.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missing.toTypedArray(), 101)
-        } else {
-            startDisplayServiceSafely()
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, results)
-        if (results.all { it == PackageManager.PERMISSION_GRANTED }) {
-            startDisplayServiceSafely()
-        } else {
-            showHint("Please enable Bluetooth permissions.")
-        }
-    }
-
-    private fun startDisplayServiceSafely() {
-        val intent = Intent(this, G1DisplayService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
-        if (!serviceBound) {
-            bindService(intent, connection, BIND_AUTO_CREATE)
-        }
-    }
-
-    private fun observeConnectionState() {
-        uiScope.launch {
-            displayService?.connectionState?.collectLatest { state ->
-                when (state) {
-                    G1ConnectionState.CONNECTED -> {
-                        fadeStatus("🟢 Connected", Color.parseColor("#2ECC71"))
-                        reconnectButton.isEnabled = true
-                        reconnectButton.setBackgroundColor(Color.parseColor("#2ECC71"))
-                        reconnectButton.text = "Connected"
-                        reconnectButton.alpha = 0.8f
-                        showHint("🧠 Troubleshooting: Link stable to ${displayService?.getConnectedDeviceName() ?: "device"}.")
-                    }
-                    G1ConnectionState.CONNECTING -> {
-                        fadeStatus("🟡 Connecting…", Color.parseColor("#F1C40F"))
-                        reconnectButton.isEnabled = false
-                        reconnectButton.setBackgroundColor(Color.parseColor("#F1C40F"))
-                        reconnectButton.text = "Connecting…"
-                        reconnectButton.alpha = 0.6f
-                        showHint("🧠 Troubleshooting: Negotiating link…")
-                    }
-                    G1ConnectionState.RECONNECTING -> {
-                        fadeStatus("🟠 Reconnecting…", Color.parseColor("#F39C12"))
-                        reconnectButton.isEnabled = false
-                        reconnectButton.setBackgroundColor(Color.parseColor("#F39C12"))
-                        reconnectButton.text = "Reconnecting…"
-                        reconnectButton.alpha = 0.6f
-                        showHint("🧠 Troubleshooting: Recovery in progress…")
-                    }
-                    G1ConnectionState.DISCONNECTED -> {
-                        fadeStatus("🔴 Disconnected", Color.parseColor("#E74C3C"))
-                        reconnectButton.isEnabled = true
-                        reconnectButton.setBackgroundColor(Color.DKGRAY)
-                        reconnectButton.text = "Reconnect"
-                        reconnectButton.alpha = 1f
-                        showHint("🧠 Troubleshooting: Bluetooth may be off or device out of range.")
-                    }
-                    else -> {
-                        fadeStatus("⚙️ Idle", Color.GRAY)
-                        reconnectButton.isEnabled = true
-                        reconnectButton.setBackgroundColor(Color.DKGRAY)
-                        reconnectButton.text = "Reconnect"
-                        reconnectButton.alpha = 1f
-                        showHint("🧠 Troubleshooting: Awaiting instructions…")
-                    }
-                }
-            }
-        }
-    }
-
-    private fun observeRssi() {
-        uiScope.launch {
-            displayService?.getRssiFlow()?.collectLatest { rssi ->
-                if (rssi != null) {
-                    val bars = when {
-                        rssi > -60 -> "🟩🟩🟩 Strong"
-                        rssi > -75 -> "🟩🟩 Medium"
-                        rssi > -90 -> "🟩 Weak"
-                        else -> "⬜ No signal"
-                    }
-                    rssiLabel.text = "📶 $bars ($rssi dBm)"
-                } else {
-                    rssiLabel.text = "📶 Signal: -- dBm"
-                }
-            }
-        }
-    }
-
-    private fun observeNearbyDevices() {
-        uiScope.launch {
-            displayService?.getNearbyDevicesFlow()?.collectLatest { devices ->
-                if (devices.isNotEmpty()) {
-                    discoveryLabel.text = "✅ ${devices.size} devices detected"
-                    discoveryTable.text = devices.joinToString("\n") { "• $it" }
-                } else {
-                    discoveryLabel.text = "❌ No nearby devices"
-                    discoveryTable.text = ""
-                }
-            }
-        }
-    }
-
-    private fun fadeStatus(text: String, color: Int) {
-        startFade(statusView, text, 400)
-        statusView.setTextColor(color)
-    }
-
-    private fun startFade(view: TextView, text: String, duration: Long = 350) {
-        val fade = AlphaAnimation(0f, 1f).apply { this.duration = duration }
-        view.startAnimation(fade)
-        view.text = text
-    }
-
-    private fun showHint(text: String) {
-        runOnUiThread { startFade(troubleshootingLabel, text, 500) }
-    }
-
-    private fun registerBluetoothReceiver() {
-        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
-                    BluetoothAdapter.STATE_OFF -> {
-                        fadeStatus("🔕 Bluetooth Off", Color.RED)
-                        reconnectButton.isEnabled = false
-                        reconnectButton.setBackgroundColor(Color.DKGRAY)
-                        reconnectButton.text = "Reconnect"
-                        reconnectButton.alpha = 0.6f
-                        showHint("🧠 Troubleshooting: Turn Bluetooth ON to reconnect your G1 glasses.")
-                    }
-                    BluetoothAdapter.STATE_ON -> {
-                        showHint("🧠 Troubleshooting: Bluetooth ON — scanning…")
-                        displayService?.requestReconnect()
-                    }
-                }
-            }
-        }
-        registerReceiver(receiver, filter)
-        bluetoothReceiver = receiver
+        if (missing.isNotEmpty()) permissionRequester.launch(missing.toTypedArray())
     }
 
     override fun onDestroy() {
-        uiScope.cancel()
+        scanner.close()
         bluetoothReceiver?.let { unregisterReceiver(it) }
         bluetoothReceiver = null
-        if (serviceBound) {
-            unbindService(connection)
-        }
+        if (serviceBound) unbindService(connection)
         super.onDestroy()
+    }
+
+    // ---------------- UI (Compose) ----------------
+    @Composable
+    private fun MoncchichiHome() {
+        val devices by scanner.devices.collectAsState()
+        var btOn by remember { mutableStateOf(scanner.isBluetoothOn()) }
+        var pairingLog by remember { mutableStateOf(listOf<String>()) }
+        var troubleshooting by remember { mutableStateOf(listOf<String>()) }
+        var state by remember { mutableStateOf(G1ConnectionState.DISCONNECTED) }
+
+        // Observe service state
+        LaunchedEffect(displayService) {
+            displayService?.connectionState?.collectLatest { s ->
+                state = s
+                when (s) {
+                    G1ConnectionState.CONNECTING -> {
+                        pairingLog = listOf("Searching…", "Resolving device…", "Opening GATT…")
+                        troubleshooting = listOf("Bluetooth ✓", "Scanning ✓", "Handshake …")
+                    }
+                    G1ConnectionState.CONNECTED -> {
+                        pairingLog = pairingLog + "Handshake complete ✓"
+                        troubleshooting = listOf("Bluetooth ✓", "Scanning ✓", "Handshake ✓")
+                    }
+                    G1ConnectionState.RECONNECTING -> {
+                        pairingLog = listOf("Link lost. Reconnecting…")
+                        troubleshooting = listOf("Bluetooth ✓", "Scanning …", "Handshake –")
+                    }
+                    G1ConnectionState.DISCONNECTED -> {
+                        troubleshooting = listOf(
+                            "Bluetooth " + if (scanner.isBluetoothOn()) "✓" else "✗",
+                            "Scanning –",
+                            "Handshake –"
+                        )
+                    }
+                    else -> Unit
+                }
+            }
+        }
+
+        // Reflect Bluetooth state
+        LaunchedEffect(Unit) {
+            while (true) {
+                val newState = scanner.isBluetoothOn()
+                if (newState != btOn) btOn = newState
+                delay(600)
+            }
+        }
+
+        // Auto-pair to Even G1* when discovered and not already connecting/connected
+        LaunchedEffect(devices, state, btOn) {
+            if (btOn && state != G1ConnectionState.CONNECTED && state != G1ConnectionState.CONNECTING) {
+                devices.firstOrNull { (it.name ?: "").startsWith("Even G1") }?.let {
+                    pairingLog = listOf("Auto-pair to ${it.name ?: it.address}")
+                    displayService?.connect(it.address)
+                }
+            }
+        }
+
+        MaterialTheme {
+            Scaffold(
+                bottomBar = {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = true, onClick = { /* current */ },
+                            icon = { Text("\uD83D\uDD17") }, label = { Text("Pair") }
+                        )
+                        NavigationBarItem(
+                            selected = false,
+                            onClick = { startActivity(Intent(this@TestActivity, PermissionsActivity::class.java)) },
+                            icon = { Text("\uD83D\uDEE0\uFE0F") }, label = { Text("Permissions") }
+                        )
+                    }
+                }
+            ) { inner ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(inner)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    // Title
+                    Text(
+                        "Moncchichi",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(8.dp))
+
+                    // State row + Bluetooth indicator
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        val (label, color) = when (state) {
+                            G1ConnectionState.CONNECTED -> "Connected" to Color(0xFF2ECC71)
+                            G1ConnectionState.CONNECTING -> "Connecting…" to Color(0xFFF1C40F)
+                            G1ConnectionState.RECONNECTING -> "Reconnecting…" to Color(0xFFF39C12)
+                            else -> "Disconnected" to Color(0xFFE74C3C)
+                        }
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(label) },
+                            colors = AssistChipDefaults.assistChipColors(containerColor = color.copy(alpha = 0.18f))
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        AssistChip(
+                            onClick = { /* open BT settings? */ },
+                            label = { Text(if (btOn) "Bluetooth: ON" else "Bluetooth: OFF") },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = if (btOn) Color(0xFF1ABC9C).copy(alpha = 0.18f) else Color(0xFFE74C3C).copy(alpha = 0.18f)
+                            )
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Button(
+                            onClick = {
+                                pairingLog = listOf("Manual reconnect…")
+                                troubleshooting = listOf(
+                                    "Bluetooth " + if (btOn) "✓" else "✗",
+                                    "Scanning …",
+                                    "Handshake –"
+                                )
+                                displayService?.requestReconnect()
+                            },
+                            enabled = btOn,
+                        ) { Text(if (state == G1ConnectionState.CONNECTED) "Reconnect" else "Try Again") }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // Pairing progress (live log)
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("Pairing progress", fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(6.dp))
+                            pairingLog.takeLast(6).forEach { line ->
+                                Text("• $line", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Troubleshooting (dynamic checklist)
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("Smart troubleshooting", fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(6.dp))
+                            val items = troubleshooting.ifEmpty {
+                                listOf(
+                                    "Bluetooth " + if (btOn) "✓" else "✗",
+                                    "Scanning …",
+                                    "Handshake –"
+                                )
+                            }
+                            items.forEach { Text("• $it") }
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Discovered devices table (scrollable)
+                    Text("Discovered devices", fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF121212))
+                                .padding(8.dp)
+                        ) {
+                            item {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp)
+                                ) {
+                                    Text("Name", modifier = Modifier.weight(0.6f), fontWeight = FontWeight.SemiBold)
+                                    Text("Address", modifier = Modifier.weight(0.4f), fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                            items(devices, key = { it.address }) { d ->
+                                DeviceRow(d) {
+                                    // Manual connect
+                                    pairingLog = listOf("Connect to ${d.name ?: d.address}")
+                                    displayService?.connect(d.address)
+                                }
+                            }
+                        }
+                    }
+
+                    // Scan controls
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        OutlinedButton(
+                            onClick = {
+                                if (btOn) {
+                                    scanner.clear()
+                                    scanner.start()
+                                    pairingLog = pairingLog + "Scanning for devices…"
+                                }
+                            },
+                            enabled = btOn
+                        ) { Text("Scan") }
+                        OutlinedButton(onClick = { scanner.stop() }) { Text("Stop scan") }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun DeviceRow(device: DiscoveredDevice, onConnect: () -> Unit) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+                .clickable { onConnect() },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(device.name ?: "(unknown)", modifier = Modifier.weight(0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(device.address, modifier = Modifier.weight(0.4f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Divider()
     }
 }
