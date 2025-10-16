@@ -10,9 +10,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,6 +23,12 @@ class Repository @Inject constructor(
     @ApplicationContext private val applicationContext: Context,
     private val recognizer: Recognizer
 ) {
+    class DisplayService internal constructor(
+        val connectionState: StateFlow<G1ConnectionState>,
+        private val rssiFlow: StateFlow<Int?>,
+    ) {
+        fun getRssiFlow(): StateFlow<Int?> = rssiFlow
+    }
     data class State(
         val hubInstalled: Boolean = true,
         val glasses: G1ServiceCommon.Glasses? = null,
@@ -37,6 +45,9 @@ class Repository @Inject constructor(
     val state = writableState.asStateFlow()
     private val writableEvents = MutableSharedFlow<Event>()
     val events = writableEvents.asSharedFlow()
+    private val connectionStateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
+    private val rssiFlow = MutableStateFlow<Int?>(null)
+    val displayService = DisplayService(connectionStateFlow.asStateFlow(), rssiFlow.asStateFlow())
 
     init {
         writableState.value = State(
@@ -103,19 +114,49 @@ class Repository @Inject constructor(
     }
 
     fun bindService(coroutineScope: CoroutineScope): Boolean {
-        service = G1ServiceClient.open(applicationContext) ?: return false
+        service = G1ServiceClient.open(applicationContext) ?: run {
+            connectionStateFlow.value = G1ConnectionState.DISCONNECTED
+            return false
+        }
+        connectionStateFlow.value = G1ConnectionState.CONNECTING
         coroutineScope.launch {
             service.state.collect {
+                val glasses = it?.glasses ?: emptyList()
+                connectionStateFlow.value = resolveConnectionState(glasses)
                 writableState.value = state.value.copy(
-                    glasses = it?.glasses?.filter { it.status == G1ServiceCommon.GlassesStatus.CONNECTED }?.firstOrNull()
+                    glasses = glasses.firstOrNull { glass -> glass.status == G1ServiceCommon.GlassesStatus.CONNECTED }
                 )
             }
         }
         return true
     }
 
-    fun unbindService() =
+    fun unbindService() {
+        connectionStateFlow.value = G1ConnectionState.DISCONNECTED
+        rssiFlow.value = null
         service.close()
+    }
+
+    private fun resolveConnectionState(glasses: List<G1ServiceCommon.Glasses>): G1ConnectionState {
+        val previous = connectionStateFlow.value
+        val anyConnected = glasses.any { it.status == G1ServiceCommon.GlassesStatus.CONNECTED }
+        if (anyConnected) {
+            return G1ConnectionState.CONNECTED
+        }
+        val anyDisconnecting = glasses.any { it.status == G1ServiceCommon.GlassesStatus.DISCONNECTING || it.status == G1ServiceCommon.GlassesStatus.ERROR }
+        if (anyDisconnecting) {
+            return G1ConnectionState.RECONNECTING
+        }
+        val anyConnecting = glasses.any { it.status == G1ServiceCommon.GlassesStatus.CONNECTING }
+        if (anyConnecting) {
+            return G1ConnectionState.CONNECTING
+        }
+        return if (previous == G1ConnectionState.CONNECTED || previous == G1ConnectionState.RECONNECTING) {
+            G1ConnectionState.RECONNECTING
+        } else {
+            G1ConnectionState.DISCONNECTED
+        }
+    }
 
     suspend fun displayText(text: List<String>): Boolean {
         val connectedGlasses = state.value.glasses
