@@ -21,7 +21,7 @@
         android:label="Moncchichi"
         android:theme="@android:style/Theme.DeviceDefault">
         <activity
-            android:name=".TestActivity"
+            android:name="com.loopermallee.moncchichi.TestActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
