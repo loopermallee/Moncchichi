@@ -118,6 +118,10 @@ class G1DisplayService : Service() {
         }
     }
 
+    fun getConnectedDeviceName(): String? {
+        return deviceManager.currentDeviceName()
+    }
+
     override fun onDestroy() {
         powerReceiver?.let { receiver ->
             runCatching { unregisterReceiver(receiver) }
