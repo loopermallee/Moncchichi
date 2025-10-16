@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.bluetooth
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -136,6 +137,22 @@ internal class DeviceManager(
         writableConnectionState.value = ConnectionState.CONNECTING
         currentDeviceAddress = device.address
         bluetoothGatt = device.connectGatt(context, false, gattCallback)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun connectToAddress(address: String) {
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        if (adapter == null) {
+            logger.w(TAG, "${tt()} BluetoothAdapter unavailable; cannot connect to $address")
+            return
+        }
+        val device = try {
+            adapter.getRemoteDevice(address)
+        } catch (error: IllegalArgumentException) {
+            logger.e(TAG, "${tt()} Invalid BLE address $address", error)
+            return
+        }
+        connect(device)
     }
 
     @SuppressLint("MissingPermission")
