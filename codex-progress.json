@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 73,
-  "last_update": "2025-10-15 14:52 SGT",
-  "last_delta": 3,
-  "last_keywords": "feat",
+  "total_progress": 75,
+  "last_update": "2025-10-16 15:57 SGT",
+  "last_delta": 2,
+  "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 58,
+  "last_pr_number": 59,
   "history": [
+    {
+      "when": "2025-10-16 15:57 SGT",
+      "pr": 59,
+      "title": "Fix foreground service startup and BLE notifications",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 75
+    },
     {
       "when": "2025-10-15 14:52 SGT",
       "pr": 58,
