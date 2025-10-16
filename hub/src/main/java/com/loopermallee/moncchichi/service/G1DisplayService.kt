@@ -9,15 +9,16 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.TestActivity
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
-import io.texne.g1.hub.MainActivity
 import io.texne.g1.hub.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,7 +48,15 @@ class G1DisplayService : Service() {
         super.onCreate()
         createNotificationChannel()
         val initial = buildForegroundNotification("Starting…")
-        startForeground(NOTIFICATION_ID, initial)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                initial,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, initial)
+        }
 
         registerPowerAwareReconnect()
         _connectionState.value = deviceManager.state.value
@@ -188,7 +197,7 @@ class G1DisplayService : Service() {
         val intent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            Intent(this, TestActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)

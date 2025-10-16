@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothProfile
 import android.content.Context
@@ -219,19 +220,42 @@ class DeviceManager(
             updateState(G1ConnectionState.RECONNECTING)
             return
         }
+
         writeCharacteristic = service.getCharacteristic(BluetoothConstants.UART_WRITE_CHARACTERISTIC_UUID)
         notifyCharacteristic = service.getCharacteristic(BluetoothConstants.UART_READ_CHARACTERISTIC_UUID)
+
         if (writeCharacteristic == null || notifyCharacteristic == null) {
             logger.e(DEVICE_MANAGER_TAG, "${tt()} UART characteristics missing")
             updateState(G1ConnectionState.RECONNECTING)
             return
         }
+
         val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
         if (!enabled) {
             logger.w(DEVICE_MANAGER_TAG, "${tt()} Failed to enable notifications")
-        } else {
-            logger.i(DEVICE_MANAGER_TAG, "${tt()} Notifications enabled")
+            return
         }
+
+        val cccd = notifyCharacteristic!!.getDescriptor(BluetoothConstants.CCCD_UUID)
+        if (cccd == null) {
+            logger.w(DEVICE_MANAGER_TAG, "${tt()} Missing CCCD descriptor on notify characteristic")
+            return
+        }
+
+        cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        val wrote = try {
+            requireGatt()?.writeDescriptor(cccd) ?: false
+        } catch (t: Throwable) {
+            logger.e(DEVICE_MANAGER_TAG, "${tt()} writeDescriptor(CCCD) failed", t)
+            false
+        }
+
+        if (!wrote) {
+            logger.w(DEVICE_MANAGER_TAG, "${tt()} Failed to write CCCD descriptor")
+            return
+        }
+
+        logger.i(DEVICE_MANAGER_TAG, "${tt()} Notifications enabled via CCCD")
     }
 
     private fun cleanup() {
