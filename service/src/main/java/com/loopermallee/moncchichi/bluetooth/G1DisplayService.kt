@@ -1,9 +1,11 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import android.bluetooth.BluetoothAdapter
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Binder
@@ -30,11 +32,13 @@ class G1DisplayService : Service() {
     private val logger by lazy { MoncchichiLogger(this) }
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val deviceManager by lazy { DeviceManager(this, serviceScope) }
+    private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private val connectionStateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     private val readableStateFlow = connectionStateFlow.asStateFlow()
     private val binder = G1Binder()
     private val heartbeatStarted = AtomicBoolean(false)
     private var heartbeatJob: Job? = null
+    private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
 
     override fun onCreate() {
         super.onCreate()
@@ -51,6 +55,8 @@ class G1DisplayService : Service() {
         }
         startHeartbeatMonitoring()
         heartbeatStarted.set(true)
+        restoreCachedState()
+        attemptPersistentRebind()
         monitorReconnection()
         serviceScope.launch {
             deviceManager.connectionState.collectLatest { connection ->
@@ -66,6 +72,19 @@ class G1DisplayService : Service() {
                     }
                 }
                 connectionStateFlow.value = nextState
+                cacheServiceState(nextState)
+                if (nextState == G1ConnectionState.DISCONNECTED &&
+                    deviceManager.getLastConnectedAddress() == null
+                ) {
+                    logger.recovery(TAG, "${tt()} Persistent cache cleared; reverting to scan mode")
+                }
+            }
+        }
+        serviceScope.launch {
+            deviceManager.batteryLevel.collectLatest { level ->
+                level?.let {
+                    logger.debug(TAG, "${tt()} Battery telemetry update: $it%")
+                }
             }
         }
     }
@@ -155,14 +174,9 @@ class G1DisplayService : Service() {
         serviceScope.launch {
             connectionStateFlow.collect { state ->
                 if (state == G1ConnectionState.RECONNECTING) {
-                    logger.w(TAG, "${tt()} Lost connection — starting auto-reconnect sequence")
-                    val reconnected = deviceManager.tryReconnect(applicationContext)
-                    if (reconnected) {
-                        connectionStateFlow.value = G1ConnectionState.CONNECTED
-                        logger.i(TAG, "${tt()} Reconnected successfully.")
-                    } else {
-                        logger.e(TAG, "${tt()} Failed to reconnect automatically.")
-                        connectionStateFlow.value = G1ConnectionState.DISCONNECTED
+                    logger.recovery(TAG, "${tt()} Connection marked for recovery")
+                    if (deviceManager.connectionState.value == DeviceManager.ConnectionState.DISCONNECTED) {
+                        deviceManager.tryReconnect(applicationContext)
                     }
                 }
             }
@@ -172,6 +186,7 @@ class G1DisplayService : Service() {
     inner class G1Binder : Binder() {
 
         val stateFlow: StateFlow<G1ConnectionState> = readableStateFlow
+        val batteryFlow: StateFlow<Int?> = deviceManager.batteryLevel
 
         fun connect(address: String) {
             this@G1DisplayService.connect(address)
@@ -185,18 +200,22 @@ class G1DisplayService : Service() {
             val isConnected = deviceManager.isConnected()
             return when {
                 deviceManager.anyWaitingForReconnect() -> {
+                    logger.heartbeat(TAG, "${tt()} Binder heartbeat flagged reconnecting")
                     connectionStateFlow.value = G1ConnectionState.RECONNECTING
                     isConnected
                 }
                 isConnected && deviceManager.allConnected() -> {
+                    logger.heartbeat(TAG, "${tt()} Binder heartbeat OK")
                     connectionStateFlow.value = G1ConnectionState.CONNECTED
                     true
                 }
                 isConnected -> {
+                    logger.heartbeat(TAG, "${tt()} Binder heartbeat waiting for peers")
                     connectionStateFlow.value = G1ConnectionState.CONNECTING
                     true
                 }
                 else -> {
+                    logger.heartbeat(TAG, "${tt()} Binder heartbeat found disconnect")
                     connectionStateFlow.value = G1ConnectionState.DISCONNECTED
                     false
                 }
@@ -208,7 +227,41 @@ class G1DisplayService : Service() {
         private const val TAG = "G1DisplayService"
         private const val CHANNEL_ID = "g1_status"
         private const val NOTIFICATION_ID = 1337
+        private const val PREFS_NAME = "g1_display_service"
+        private const val KEY_STATE = "cached_state"
+        private const val KEY_STATE_TS = "cached_state_timestamp"
     }
 
     private fun tt() = "[${Thread.currentThread().name}]"
+
+    private fun restoreCachedState() {
+        val cached = prefs.getString(KEY_STATE, null) ?: return
+        val restored = runCatching { G1ConnectionState.valueOf(cached) }.getOrNull() ?: return
+        connectionStateFlow.value = restored
+        val ts = prefs.getLong(KEY_STATE_TS, 0L)
+        logger.i(TAG, "${tt()} Restored cached service state $restored (ts=$ts)")
+    }
+
+    private fun cacheServiceState(state: G1ConnectionState) {
+        prefs.edit()
+            .putString(KEY_STATE, state.name)
+            .putLong(KEY_STATE_TS, System.currentTimeMillis())
+            .apply()
+    }
+
+    private fun attemptPersistentRebind() {
+        val adapter = bluetoothAdapter
+        if (adapter == null || adapter.isEnabled.not()) {
+            logger.debug(TAG, "${tt()} Bluetooth disabled — skipping persistent rebind")
+            return
+        }
+        if (deviceManager.connectionState.value != DeviceManager.ConnectionState.DISCONNECTED) {
+            return
+        }
+        val cachedAddress = deviceManager.getLastConnectedAddress() ?: return
+        logger.i(TAG, "${tt()} Attempting persistent rebind to $cachedAddress")
+        serviceScope.launch {
+            deviceManager.connectToAddress(cachedAddress)
+        }
+    }
 }
