@@ -1,11 +1,11 @@
 # 🧠 Moncchichi BLE Hub
-Total Progress: 🟩 ~100 % complete 🔺 (auto-updated 2025-10-17 14:10 SGT)
+Total Progress: 🟩 ~82 % complete 🔺 (auto-updated 2025-10-17 23:00 SGT)
 
 ### Overview
-Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.
-It provides a fault-tolerant connection layer that will later support **ChatGPT assistant**, **teleprompter overlays**, and **diagnostic telemetry**.
+Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.  
+It provides a fault-tolerant connection layer that now supports **G1 data console communication**, with upcoming plans for **ChatGPT assistant**, **teleprompter overlays**, **diagnostic telemetry**, and **smart transport HUDs** via the **ArriveLah** integration.
 
-> 🎯 **Current priority:** Core stability and connection recovery — not feature expansion.
+> 🎯 **Current priority:** Core BLE stability, diagnostics, and real-time data exchange reliability.
 
 ---
 
@@ -14,7 +14,7 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 | Module | Description |
 |-------|-------------|
 | **service/** | Core BLE connection and state management (`DeviceManager`, `G1DisplayService`). |
-| **hub/** | UI layer, pairing dashboard, indicators, device table, Permissions Center. |
+| **hub/** | UI layer, pairing dashboard, indicators, device table, Permissions Center, and G1 Data Console. |
 | **core/** | Shared utilities (logger, enums, helpers). |
 | **client/** | External communication bridge (assistant / remote control). |
 | **aidl/** | IPC layer for inter-module communication. |
@@ -26,17 +26,20 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 
 | Category | Last Updated | Status | % Complete | Trend |
 |---|---|---|---:|:---:|
-| Build System | 2025-10-16 | ✅ Stable (Gradle 8.10; Kotlin 2.x ready) | **100%** | ➖ |
-| BLE Core (Service) | 2025-10-16 | 🟢 Functional (manual `connect(address)` exposed; stable bind) | **85%** | 🔺 +5% |
-| Diagnostics & Recovery | 2025-10-16 | ⚙️ In progress (live pairing log, context troubleshooting) | **55%** | 🔺 +35% |
-| UX / Structural Polish | 2025-10-16 | 🟢 Upgraded (scrollable device table, Bluetooth state chip, Permissions Center entry) | **72%** | 🔺 +12% |
-| Assistant & Teleprompter | 2025-10-16 | 💤 Deferred (kept decoupled) | **10%** | ➖ |
+| Build System | 2025-10-17 | ✅ Stable (Gradle 8.10; Kotlin 2.x ready) | **100%** | ➖ |
+| BLE Core (Service) | 2025-10-17 | 🟢 Stable and functional (bidirectional data flow; `connect(address)` live-tested) | **95%** | 🔺 +10% |
+| Diagnostics & Recovery | 2025-10-17 | ⚙️ Advanced (contextual troubleshooting checklist + real-time logs) | **70%** | 🔺 +15% |
+| UX / Structural Polish | 2025-10-17 | 🟢 Upgraded (dynamic state UI, scrollable table, Permissions Center, Data Console UI) | **80%** | 🔺 +8% |
+| Assistant & Teleprompter | 2025-10-17 | 💤 Deferred (architecture placeholder only) | **10%** | ➖ |
+| Smart Mobility Layer | 2025-10-17 | 🟦 Planned (ArriveLah bus arrival integration) | **0%** | ➖ |
 
-**Total Progress:** 🟩 **~75 % complete**
+**Total Progress:** 🟩 **~82 % complete**
 
 > Notes:
-> - Tracker now includes the **Permissions Center** screen shortcut, **dynamic Bluetooth state**, **live pairing status**, **battery badge**, and **MAC address** display in the device table.
-- Previous header (~91%) was inaccurate relative to category detail; reconciled to ~75%.
+> - Added **G1 Data Console screen** (real BLE command send/receive with device feedback).  
+> - Improved **troubleshooting checklist** with real-time Bluetooth on/off and connection context.  
+> - Introduced **dynamic pairing console** (live MAC + device name).  
+> - Started design groundwork for **ArriveLah integration** (bus arrival HUD).  
 
 ---
 
@@ -49,6 +52,7 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 - ✅ Compose-state driven pairing dashboard (connection state, Bluetooth on/off, battery, device table).
 - ✅ Scrollable device table (shows **name + MAC**; tap to connect).
 - ✅ Dynamic connection states: **CONNECTING → CONNECTED → DISCONNECTED → RECONNECTING**.
+- ✅ Bidirectional BLE data exchange verified via Data Console.
 - 🟡 Reconnect heuristics with bounded exponential backoff (tune intervals & limits).
 - 🟡 Foreground service audit: verify service restarts after process reclaim.
 - 🔜 GATT timeouts & safe cancellation wrappers for long ops.
@@ -127,14 +131,32 @@ It provides a fault-tolerant connection layer that will later support **ChatGPT 
 
 ---
 
+### Phase 6 — Smart Mobility Layer *(Planned)*
+**Goal:** Integrate public-transport data and display bus arrivals via Even G1.
+
+| Category | Planned Features | Source / Reference | Notes |
+|-----------|------------------|--------------------|-------|
+| Bus Arrival Integration | Fetch real-time bus arrivals | [cheeaun/arrivelah](https://github.com/loopermallee/cheeaun-arrivelah) | GPS-aware; uses LTA DataMall |
+| Favorite Services | Save & display selected buses | Moncchichi DataStore | Mirrors HUD overlay |
+| Location Sync | Detect nearest stop automatically | Fused Location Provider | Battery-aware polling |
+| HUD Display | Push arrivals to Even G1 | G1 Data Console Protocol | Text overlay on right lens |
+| Voice Query | “When’s my next bus?” | ChatGPT Assistant Bridge | Spoken or textual feedback |
+
+🟦 **Progress:** ~0 % (architecture planning)  
+🕓 **Next step:** Prototype `BusArrivalService` using your hosted ArriveLah API.
+
+---
+
 ## 🚧 Issue History
 _Auto-maintained by Codex on each merge._
-- 2025-10-17 14:10 SGT — PR #77: **Add G1 data console UI and protocol wiring** · delta `+2%` · tag `fix`
+- 2025-10-17 23:00 SGT — PR #84: **Integrate DeviceIO hooks for G1 Data Console + ArriveLah roadmap** · delta `+7%` · tag `feature`
+
 ## 🧠 Notes for Codex Memory
 
-- **Stability first**: reconnection heuristics with bounded backoff; no UI thread blocking.
-- Track and display **MAC addresses** in device list; tap-to-connect via `G1DisplayService.connect(address)`.
-- Keep **assistant/teleprompter** decoupled from BLE service until stability proven.
-- **Dynamic UI** only: real-time Bluetooth on/off, connection phase, battery badge, scrollable device table.
-- **Troubleshooting checklist** refreshes each connect attempt; shows per-step status.
-- Log state transitions and last error cause; persist a small rolling buffer for on-device inspection.
+- **Stability first**: reconnection heuristics with bounded backoff; no UI thread blocking.  
+- Track and display **MAC addresses** in device list; tap-to-connect via `G1DisplayService.connect(address)`.  
+- Keep **assistant/teleprompter** decoupled from BLE service until stability proven.  
+- **Dynamic UI** only: real-time Bluetooth on/off, connection phase, battery badge, scrollable device table.  
+- **Troubleshooting checklist** refreshes each connect attempt; shows per-step status.  
+- Log state transitions and last error cause; persist a small rolling buffer for on-device inspection.  
+- **ArriveLah integration** planned as Phase 6 under Smart Mobility Layer (bus arrivals + HUD overlay).  
