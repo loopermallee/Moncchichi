@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-17 11:53 SGT",
+  "last_update": "2025-10-17 12:20 SGT",
   "last_delta": 4,
   "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 75,
+  "last_pr_number": 76,
   "history": [
+    {
+      "when": "2025-10-17 12:20 SGT",
+      "pr": 76,
+      "title": "Refine pairing summary layout",
+      "delta": 4,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-17 11:53 SGT",
       "pr": 75,
