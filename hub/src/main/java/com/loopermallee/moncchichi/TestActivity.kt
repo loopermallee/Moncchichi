@@ -21,13 +21,10 @@ import androidx.activity.result.contract.ActivityResultContracts.StartActivityFo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -36,7 +33,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -488,6 +484,7 @@ class TestActivity : ComponentActivity() {
             name.contains("even", ignoreCase = true) || name.contains("g1", ignoreCase = true)
         }
 
+
         val contextMessage = when {
             !bluetoothSupported -> "Bluetooth unavailable on this device."
             !bluetoothOn -> "Bluetooth is OFF. Please enable to continue."
@@ -499,463 +496,480 @@ class TestActivity : ComponentActivity() {
             else -> "Searching for devices…"
         }
 
+        val connectedName = cachedDevice?.name ?: cachedDevice?.address
+        val connectionStatusText = when (connectionState) {
+            G1ConnectionState.CONNECTED -> "Connected ✅"
+            G1ConnectionState.CONNECTING -> "Connecting…"
+            G1ConnectionState.RECONNECTING -> "Reconnecting…"
+            else -> "Disconnected"
+        }
+        val connectionStatusColor = when (connectionState) {
+            G1ConnectionState.CONNECTED -> Color(0xFF4CAF50)
+            G1ConnectionState.CONNECTING, G1ConnectionState.RECONNECTING -> Color(0xFFFFC107)
+            else -> Color(0xFFE53935)
+        }
+
+        val serviceStatusText = when (serviceSnapshot?.status) {
+            G1ServiceCommon.ServiceStatus.READY -> "Ready"
+            G1ServiceCommon.ServiceStatus.LOOKING -> "Scanning"
+            G1ServiceCommon.ServiceStatus.LOOKED -> "Scan complete"
+            G1ServiceCommon.ServiceStatus.ERROR -> "Error"
+            null -> if (readiness) "Ready" else "Initializing"
+        }
+
+        val rightGlasses = connectedGlasses.firstOrNull { it.name?.contains("right", ignoreCase = true) == true }
+        val leftGlasses = connectedGlasses.firstOrNull { it.name?.contains("left", ignoreCase = true) == true }
+        val caseGlasses = connectedGlasses.firstOrNull { it.name?.contains("case", ignoreCase = true) == true }
+        val firmwareVersion = listOf(rightGlasses, leftGlasses, caseGlasses)
+            .mapNotNull { it?.firmwareVersion }
+            .firstOrNull()
+
+        val formatter = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+        val consoleMessages = remember(logs) {
+            logs.takeLast(50).map { event ->
+                val timestamp = formatter.format(Date(event.timestamp))
+                buildString {
+                    append("[")
+                    append(timestamp)
+                    append("] ")
+                    append(event.tag)
+                    append(": ")
+                    append(event.message)
+                    event.throwable?.let {
+                        append('
+')
+                        append("   ")
+                        append(it)
+                    }
+                }
+            }
+        }
+
+        val bleDevices = remember(devices, pairingStatuses, bondedDevices, cachedDevice, previouslyPaired) {
+            devices.map { discovered ->
+                val pairingStatus = pairingStatuses[discovered.address]
+                val isPaired = bondedDevices.contains(discovered.address) ||
+                    pairingStatus == PairingUiStatus.PAIRED ||
+                    (cachedDevice?.address == discovered.address && previouslyPaired)
+                BleDevice(
+                    name = discovered.name,
+                    address = discovered.address,
+                    isPaired = isPaired,
+                    isSelected = cachedDevice?.address == discovered.address
+                )
+            }
+        }
+
+        val hubUiState = HubUiState(
+            connectedDeviceName = connectedName,
+            connectionStatus = connectionStatusText,
+            connectionStatusColor = connectionStatusColor,
+            serviceStatus = serviceStatusText,
+            statusMessage = contextMessage,
+            isConnected = connectionState == G1ConnectionState.CONNECTED,
+            pairedGlasses = connectedGlasses.takeIf { it.isNotEmpty() },
+            rightBattery = rightGlasses?.batteryPercentage,
+            leftBattery = leftGlasses?.batteryPercentage,
+            caseBattery = caseGlasses?.batteryPercentage,
+            rightConnected = rightGlasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED,
+            leftConnected = leftGlasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED,
+            firmwareVersion = firmwareVersion,
+            devices = bleDevices,
+            consoleLogs = if (consoleMessages.isNotEmpty()) consoleMessages else listOf(contextMessage),
+            connectButtonLabel = buttonUi.label,
+            connectButtonColor = buttonUi.color,
+            connectButtonEnabled = buttonUi.enabled && bluetoothSupported && bluetoothOn && hasCriticalPermissions,
+            bluetoothSupported = bluetoothSupported,
+            bluetoothOn = bluetoothOn,
+            hasCriticalPermissions = hasCriticalPermissions
+        )
+
+        HubScreen(
+            state = hubUiState,
+            onConnect = { handleConnectAction() },
+            onPair = { device ->
+                requestDeviceBond(DiscoveredDevice(device.name, device.address))
+            },
+            onSelect = { device ->
+                onDeviceSelected(DiscoveredDevice(device.name, device.address))
+            }
+        )
+
+    }
+
+    @Composable
+    private fun HubScreen(
+        state: HubUiState,
+        onConnect: () -> Unit,
+        onPair: (BleDevice) -> Unit,
+        onSelect: (BleDevice) -> Unit,
+    ) {
+        val scrollState = rememberScrollState()
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFF121212))
-                .verticalScroll(rememberScrollState())
-                .padding(12.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xFF1E1E1E))
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                    .verticalScroll(scrollState)
+                    .padding(12.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF1E1E1E))
+                        .padding(16.dp)
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = "Moncchichi BLE Hub",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = contextMessage,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFFB0BEC5)
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = when (connectionState) {
-                                G1ConnectionState.CONNECTED -> "Status: Connected ✅"
-                            G1ConnectionState.CONNECTING -> "Status: Connecting…"
-                            G1ConnectionState.RECONNECTING -> "Status: Reconnecting…"
-                            else -> "Status: Disconnected"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = when (connectionState) {
-                            G1ConnectionState.CONNECTED -> Color(0xFF4CAF50)
-                            G1ConnectionState.CONNECTING, G1ConnectionState.RECONNECTING -> Color(0xFFFFC107)
-                            else -> Color(0xFFE53935)
-                        }
-                    )
-                    Spacer(Modifier.height(4.dp))
                     Text(
-                        text = if (readiness) "Service ready" else "Service initializing…",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (readiness) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                        text = "🩶 Soul Tether",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp
                     )
-                }
-                BluetoothIndicator(
-                    bluetoothSupported = bluetoothSupported,
-                    bluetoothOn = bluetoothOn
-                )
-            }
-
-            Text(
-                text = "Status",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp
-            )
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val connectedName = cachedDevice?.name ?: cachedDevice?.address ?: "None"
-                    val statusLabel = when (connectionState) {
-                        G1ConnectionState.CONNECTED -> "Connected"
-                        G1ConnectionState.CONNECTING -> "Connecting"
-                        G1ConnectionState.RECONNECTING -> "Reconnecting"
-                        else -> "Disconnected"
-                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Connected to: $connectedName",
-                        color = if (connectionState == G1ConnectionState.CONNECTED) Color(0xFF4CAF50) else Color.LightGray,
-                        fontWeight = FontWeight.Medium
+                        text = state.statusMessage,
+                        color = Color(0xFFB0BEC5),
+                        fontSize = 13.sp
                     )
-                    Text(
-                        text = "Status: $statusLabel",
-                        color = Color.White
-                    )
-                    Text(
-                        text = "Service: ${if (readiness) "Ready" else "Initializing"}",
-                        color = Color(0xFFB0BEC5)
-                    )
-                }
-            }
-
-            NearbyDevicesSection(
-                devices = devices,
-                bluetoothOn = bluetoothOn,
-                hasScanPermission = hasScanPermission,
-                pairingStatuses = pairingStatuses,
-                bondedDevices = bondedDevices,
-                cachedDevice = cachedDevice,
-                previouslyPaired = previouslyPaired,
-                onSelect = { onDeviceSelected(it) },
-                onPair = { requestDeviceBond(it) },
-                onRescan = { rescanNearby() },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            if (connectedGlasses.isNotEmpty()) {
-                G1SummaryBox(connectedGlasses)
-            }
-
-            StatusConsole(
-                logs = logs,
-                contextFallback = contextMessage,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Button(
-                onClick = { handleConnectAction() },
-                enabled = buttonUi.enabled && bluetoothSupported && bluetoothOn && hasCriticalPermissions,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = buttonUi.color,
-                    contentColor = if (buttonUi.color.luminance() < 0.5f) Color.White else Color.Black
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp)
-                    .height(50.dp)
-            ) {
-                Text(buttonUi.label, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
-        } // end of Column
-    } // end of Box
-} // end of HubScreen()
-
-    @Composable
-    private fun BluetoothIndicator(bluetoothSupported: Boolean, bluetoothOn: Boolean, modifier: Modifier = Modifier) {
-        val (label, tint) = when {
-            !bluetoothSupported -> "Unsupported" to MaterialTheme.colorScheme.error
-            bluetoothOn -> "Bluetooth ON" to Color(0xFF4CAF50)
-            else -> "Bluetooth OFF" to MaterialTheme.colorScheme.error
-        }
-        Card(
-            modifier = modifier,
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = tint.copy(alpha = 0.18f))
-        ) {
-            Row(
-                modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Bluetooth,
-                    contentDescription = null,
-                    tint = tint
-                )
-                Text(label, color = tint, fontWeight = FontWeight.Medium)
-            }
-        }
-    }
-
-    @Composable
-    private fun StatusConsole(
-        logs: List<MoncchichiLogger.LogEvent>,
-        contextFallback: String,
-        modifier: Modifier = Modifier,
-    ) {
-        val formatter = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-        val scrollState = rememberScrollState()
-        val displayLogs = remember(logs) { logs.takeLast(50) }
-        LaunchedEffect(displayLogs.size) {
-            if (scrollState.maxValue > 0) {
-                scrollState.animateScrollTo(scrollState.maxValue)
-            }
-        }
-        Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "Status console",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp
-            )
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 150.dp, max = 300.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1B1B)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                if (displayLogs.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        contentAlignment = Alignment.Center
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
                     ) {
-                        Text(
-                            text = contextFallback,
-                            color = Color(0xFFB0BEC5),
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(scrollState)
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        displayLogs.forEach { event ->
-                            val timestamp = formatter.format(Date(event.timestamp))
-                            val color = when (event.priority) {
-                                android.util.Log.ERROR -> Color(0xFFE53935)
-                                android.util.Log.WARN -> Color(0xFFFFA000)
-                                android.util.Log.INFO -> Color.White
-                                else -> Color(0xFFB0BEC5)
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Connected to: ${state.connectedDeviceName ?: "None"}",
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Status: ${state.connectionStatus}",
+                                color = state.connectionStatusColor,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Service: ${state.serviceStatus}",
+                                color = Color(0xFFB0BEC5),
+                                fontSize = 13.sp
+                            )
+                            val bluetoothLabel = when {
+                                !state.bluetoothSupported -> "Bluetooth: Unsupported"
+                                state.bluetoothOn -> "Bluetooth: On"
+                                else -> "Bluetooth: Off"
                             }
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    text = "[$timestamp] ${event.tag} ${event.message}",
-                                    color = color,
-                                    fontSize = 13.sp
-                                )
-                                event.throwable?.let {
+                            val bluetoothColor = when {
+                                !state.bluetoothSupported -> Color(0xFFE53935)
+                                state.bluetoothOn -> Color(0xFF4CAF50)
+                                else -> Color(0xFFFFC107)
+                            }
+                            Text(
+                                text = bluetoothLabel,
+                                color = bluetoothColor,
+                                fontSize = 13.sp
+                            )
+                            val permissionColor = if (state.hasCriticalPermissions) {
+                                Color(0xFFB0BEC5)
+                            } else {
+                                Color(0xFFE57373)
+                            }
+                            Text(
+                                text = if (state.hasCriticalPermissions) "Permissions: Granted" else "Permissions: Missing",
+                                color = permissionColor,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (!state.pairedGlasses.isNullOrEmpty()) {
+                    val rightBattery = state.rightBattery ?: 0
+                    val leftBattery = state.leftBattery ?: 0
+                    val caseBattery = state.caseBattery ?: 0
+                    val rightHours = "%.1f".format(rightBattery * 0.09)
+                    val leftHours = "%.1f".format(leftBattery * 0.09)
+                    val caseHours = "%.1f".format(caseBattery * 0.10)
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "🕶️ Even G1 Glasses (Paired)",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
                                     Text(
-                                        text = it,
-                                        color = color,
+                                        text = "• Right Lens Battery: ${rightBattery}%",
+                                        color = Color.White,
+                                        fontSize = 14.sp
+                                    )
+                                    Text(
+                                        text = if (state.rightConnected == true) "   Status: Connected ✅" else "   Status: Disconnected ❌",
+                                        color = if (state.rightConnected == true) Color(0xFF4CAF50) else Color(0xFFE53935),
                                         fontSize = 13.sp
                                     )
+                                    Text(
+                                        text = "   ≈ ${rightHours} hrs of use remaining",
+                                        color = Color.LightGray,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = "• Left Lens Battery: ${leftBattery}%",
+                                        color = Color.White,
+                                        fontSize = 14.sp
+                                    )
+                                    Text(
+                                        text = if (state.leftConnected == true) "   Status: Connected ✅" else "   Status: Disconnected ❌",
+                                        color = if (state.leftConnected == true) Color(0xFF4CAF50) else Color(0xFFE53935),
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        text = "   ≈ ${leftHours} hrs of use remaining",
+                                        color = Color.LightGray,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "🧰 Charging Case Battery: ${caseBattery}%",
+                                color = Color.White,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                text = "   ≈ ${caseHours} hrs of charging reserve",
+                                color = Color.LightGray,
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "⚙️ Firmware version: ${state.firmwareVersion ?: "—"}",
+                                color = Color.Gray,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "📡 Nearby Devices",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                val sortedDevices = state.devices.sortedWith(
+                    compareByDescending<BleDevice> { it.name?.contains("Even G1", ignoreCase = true) == true }
+                        .thenBy { it.name ?: it.address }
+                )
+
+                when {
+                    !state.bluetoothSupported -> {
+                        Text(
+                            text = "Bluetooth unavailable on this device.",
+                            color = Color(0xFFE57373),
+                            fontSize = 13.sp
+                        )
+                    }
+                    !state.bluetoothOn -> {
+                        Text(
+                            text = "Bluetooth is OFF. Please enable to continue.",
+                            color = Color(0xFFFFC107),
+                            fontSize = 13.sp
+                        )
+                    }
+                    !state.hasCriticalPermissions -> {
+                        Text(
+                            text = "Bluetooth permissions are required to discover devices.",
+                            color = Color(0xFFE57373),
+                            fontSize = 13.sp
+                        )
+                    }
+                    sortedDevices.isEmpty() -> {
+                        Text(
+                            text = "Searching for devices…",
+                            color = Color(0xFFB0BEC5),
+                            fontSize = 13.sp
+                        )
+                    }
+                    else -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            sortedDevices.forEach { device ->
+                                val cardColor = if (device.isSelected) Color(0xFF333333) else Color(0xFF2A2A2A)
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .clickable { onSelect(device) },
+                                    colors = CardDefaults.cardColors(containerColor = cardColor)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.weight(1f),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = device.name ?: "(unknown)",
+                                                color = Color.White,
+                                                fontWeight = if (device.isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "MAC: ${device.address}",
+                                                color = Color(0xFFB0BEC5),
+                                                fontSize = 12.sp
+                                            )
+                                            if (device.isPaired) {
+                                                Text(
+                                                    text = "Paired",
+                                                    color = Color(0xFF4CAF50),
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                        }
+                                        IconButton(onClick = { onPair(device) }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Link,
+                                                contentDescription = "Pair",
+                                                tint = if (device.isPaired) Color(0xFF4CAF50) else Color(0xFFBDBDBD)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-        }
-    }
 
-    @Composable
-    private fun NearbyDevicesSection(
-        devices: List<DiscoveredDevice>,
-        bluetoothOn: Boolean,
-        hasScanPermission: Boolean,
-        pairingStatuses: Map<String, PairingUiStatus>,
-        bondedDevices: Set<String>,
-        cachedDevice: CachedDevice?,
-        previouslyPaired: Boolean,
-        onSelect: (DiscoveredDevice) -> Unit,
-        onPair: (DiscoveredDevice) -> Unit,
-        onRescan: () -> Unit,
-        modifier: Modifier = Modifier,
-    ) {
-        val sortedDevices = remember(devices) {
-            devices.sortedWith(
-                compareByDescending<DiscoveredDevice> { it.name?.contains("Even G1", ignoreCase = true) == true }
-            )
-        }
-        Card(
-            modifier = modifier,
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF242424))
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "💬 Status Console",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 150.dp, max = 300.dp)
+                        .padding(top = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1B1B))
                 ) {
-                    Text(
-                        text = "Nearby devices",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
-                    OutlinedButton(onClick = onRescan) {
-                        Text("Rescan")
-                    }
-                }
-
-                when {
-                    !bluetoothOn -> {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (state.consoleLogs.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Text(
-                                text = "Bluetooth is OFF. Please enable to continue.",
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(24.dp),
-                                color = Color(0xFFB0BEC5)
+                                text = state.statusMessage,
+                                color = Color(0xFFB0BEC5),
+                                textAlign = TextAlign.Center
                             )
                         }
-                    }
-                    !hasScanPermission -> {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "Bluetooth Scan permission required to discover devices.",
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(24.dp),
-                                color = Color(0xFFE57373)
-                            )
-                        }
-                    }
-                    sortedDevices.isEmpty() -> {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "Searching for devices…",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFFB0BEC5)
-                            )
-                        }
-                    }
-                    else -> {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxWidth(),
+                    } else {
+                        val consoleScrollState = rememberScrollState()
+                        Column(
+                            modifier = Modifier
+                                .verticalScroll(consoleScrollState)
+                                .padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            items(sortedDevices, key = { it.address }) { device ->
-                                val isCached = cachedDevice?.address == device.address
-                                val bonded = bondedDevices.contains(device.address)
-                                val status = pairingStatuses[device.address]
-                                    ?: if (bonded || (isCached && previouslyPaired)) PairingUiStatus.PAIRED else PairingUiStatus.IDLE
-                                DeviceRow(
-                                    device = device,
-                                    isCached = isCached,
-                                    status = status,
-                                    isBonded = bonded,
-                                    onSelect = onSelect,
-                                    onPair = onPair
+                            state.consoleLogs.forEach { log ->
+                                Text(
+                                    text = log,
+                                    color = Color.LightGray,
+                                    fontSize = 13.sp
                                 )
                             }
                         }
                     }
                 }
-            }
-        }
-    }
 
-    @Composable
-    private fun DeviceRow(
-        device: DiscoveredDevice,
-        isCached: Boolean,
-        status: PairingUiStatus,
-        isBonded: Boolean,
-        onSelect: (DiscoveredDevice) -> Unit,
-        onPair: (DiscoveredDevice) -> Unit,
-    ) {
-        val statusLabel = when (status) {
-            PairingUiStatus.PAIRING -> "Pairing…"
-            PairingUiStatus.PAIRED -> "Paired"
-            PairingUiStatus.FAILED -> "Failed"
-            PairingUiStatus.IDLE -> null
-        }
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onSelect(device) }
-                .padding(vertical = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = device.name ?: "(unknown)",
-                        color = Color.White,
-                        fontWeight = if (isCached) FontWeight.Bold else FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "MAC: ${device.address}",
-                        color = Color(0xFFB0BEC5),
-                        fontSize = 12.sp
-                    )
-                    statusLabel?.let { label ->
-                        Text(
-                            text = label,
-                            color = when (status) {
-                                PairingUiStatus.FAILED -> Color(0xFFE57373)
-                                PairingUiStatus.PAIRING -> Color(0xFFFFC107)
-                                PairingUiStatus.PAIRED -> Color(0xFF4CAF50)
-                                else -> Color(0xFFB0BEC5)
-                            },
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-                IconButton(
-                    onClick = { onPair(device) },
-                    enabled = status != PairingUiStatus.PAIRING
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = onConnect,
+                    enabled = state.connectButtonEnabled,
+                    colors = ButtonDefaults.buttonColors(containerColor = state.connectButtonColor),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Link,
-                        contentDescription = "Pair",
-                        tint = if (isBonded || status == PairingUiStatus.PAIRED) Color(0xFF4CAF50) else Color(0xFFBDBDBD)
+                    Text(
+                        text = state.connectButtonLabel,
+                        color = if (state.connectButtonColor.luminance() < 0.5f) Color.White else Color.Black,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
         }
     }
 
-    @Composable
-    private fun G1SummaryBox(glasses: List<G1ServiceCommon.Glasses>) {
-        val right = glasses.firstOrNull { it.name?.contains("right", ignoreCase = true) == true }
-        val left = glasses.firstOrNull { it.name?.contains("left", ignoreCase = true) == true }
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "G1 Glasses Summary",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                BatteryRow(label = "Even G1 Right", percent = right?.batteryPercentage)
-                BatteryRow(label = "Even G1 Left", percent = left?.batteryPercentage)
-            }
-        }
-    }
+    data class HubUiState(
+        val connectedDeviceName: String?,
+        val connectionStatus: String,
+        val connectionStatusColor: Color,
+        val serviceStatus: String,
+        val statusMessage: String,
+        val isConnected: Boolean,
+        val pairedGlasses: List<G1ServiceCommon.Glasses>?,
+        val rightBattery: Int?,
+        val leftBattery: Int?,
+        val caseBattery: Int?,
+        val rightConnected: Boolean?,
+        val leftConnected: Boolean?,
+        val firmwareVersion: String?,
+        val devices: List<BleDevice>,
+        val consoleLogs: List<String>,
+        val connectButtonLabel: String,
+        val connectButtonColor: Color,
+        val connectButtonEnabled: Boolean,
+        val bluetoothSupported: Boolean,
+        val bluetoothOn: Boolean,
+        val hasCriticalPermissions: Boolean,
+    )
 
-    @Composable
-    private fun BatteryRow(label: String, percent: Int?) {
-        val (color, badge) = when {
-            percent == null || percent < 0 -> MaterialTheme.colorScheme.onSurfaceVariant to "--%"
-            percent >= 70 -> Color(0xFF4CAF50) to "$percent%"
-            percent >= 30 -> Color(0xFFFFC107) to "$percent%"
-            else -> MaterialTheme.colorScheme.error to "$percent%"
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-            Text("🔋 $badge", color = color, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
+    data class BleDevice(
+        val name: String?,
+        val address: String,
+        val isPaired: Boolean,
+        val isSelected: Boolean,
+    )
 
     @Composable
     private fun <T> collectBinderState(flow: StateFlow<T>?, default: T): State<T> {
