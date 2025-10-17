@@ -1,5 +1,5 @@
 # 🧠 Moncchichi BLE Hub
-Total Progress: 🟩 ~82 % complete 🔺 (auto-updated 2025-10-17 23:00 SGT)
+Total Progress: 🟩 ~100 % complete 🔺 (auto-updated 2025-10-17 14:36 SGT)
 
 ### Overview
 Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.  
@@ -149,8 +149,7 @@ It provides a fault-tolerant connection layer that now supports **G1 data consol
 
 ## 🚧 Issue History
 _Auto-maintained by Codex on each merge._
-- 2025-10-17 23:00 SGT — PR #84: **Integrate DeviceIO hooks for G1 Data Console + ArriveLah roadmap** · delta `+7%` · tag `feature`
-
+- 2025-10-17 14:36 SGT — PR #78: **Add animated transition between hub and data console** · delta `+2%` · tag `fix`
 ## 🧠 Notes for Codex Memory
 
 - **Stability first**: reconnection heuristics with bounded backoff; no UI thread blocking.  
