@@ -62,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -69,11 +70,10 @@ import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
-import com.loopermallee.moncchichi.bluetooth.G1TelemetrySource
 import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.ui.screens.G1DataConsoleScreen
 import com.loopermallee.moncchichi.ui.shared.LocalServiceConnection
-import com.loopermallee.moncchichi.ui.shared.rememberTelemetryLog
+import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import io.texne.g1.basis.client.G1ServiceClient
 import io.texne.g1.basis.client.G1ServiceCommon
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -654,7 +654,9 @@ class TestActivity : ComponentActivity() {
     ) {
         val scrollState = rememberScrollState()
         val service = LocalServiceConnection.current
-        val telemetry = rememberTelemetryLog(service)
+        val telemetryFlow = service?.getTelemetryFlow()
+        val telemetryState = telemetryFlow?.collectAsState(initial = emptyList<G1TelemetryEvent>())
+        val telemetry = telemetryState?.value ?: emptyList()
         val listState = rememberLazyListState()
         LaunchedEffect(telemetry.size) {
             if (telemetry.isNotEmpty()) {
@@ -838,14 +840,14 @@ class TestActivity : ComponentActivity() {
                                 state = listState
                             ) {
                                 items(telemetry) { event ->
-                                    val color = when (event.source) {
-                                        G1TelemetrySource.APP_SEND -> Color.Cyan
-                                        G1TelemetrySource.DEVICE_SEND -> Color(0xFFB388FF)
-                                        G1TelemetrySource.SERVICE -> Color(0xFFFFB300)
-                                        G1TelemetrySource.SYSTEM -> Color.Gray
+                                    val color = when (event.category) {
+                                        G1TelemetryEvent.Category.APP -> Color.Cyan
+                                        G1TelemetryEvent.Category.DEVICE -> Color(0xFFB388FF)
+                                        G1TelemetryEvent.Category.SERVICE -> Color(0xFFFFB300)
+                                        G1TelemetryEvent.Category.SYSTEM -> Color.Gray
                                     }
                                     Text(
-                                        text = "[${event.source}] ${event.message}",
+                                        text = "[${event.category}] ${event.message}",
                                         color = color,
                                         style = MaterialTheme.typography.bodySmall
                                     )

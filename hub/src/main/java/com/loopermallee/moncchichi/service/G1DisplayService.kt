@@ -23,6 +23,7 @@ import com.loopermallee.moncchichi.bluetooth.DeviceIoFacade
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.bluetooth.G1Inbound
+import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import io.texne.g1.hub.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
