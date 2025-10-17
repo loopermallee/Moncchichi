@@ -23,15 +23,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -45,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
@@ -495,34 +499,43 @@ class TestActivity : ComponentActivity() {
             else -> "Searching for devices…"
         }
 
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .background(Color(0xFF121212))
+                .verticalScroll(rememberScrollState())
+                .padding(12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFF1E1E1E))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "Moncchichi BLE Hub",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = contextMessage,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = when (connectionState) {
-                            G1ConnectionState.CONNECTED -> "Status: Connected ✅"
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Moncchichi BLE Hub",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = contextMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFFB0BEC5)
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = when (connectionState) {
+                                G1ConnectionState.CONNECTED -> "Status: Connected ✅"
                             G1ConnectionState.CONNECTING -> "Status: Connecting…"
                             G1ConnectionState.RECONNECTING -> "Status: Reconnecting…"
                             else -> "Status: Disconnected"
@@ -531,20 +544,55 @@ class TestActivity : ComponentActivity() {
                         color = when (connectionState) {
                             G1ConnectionState.CONNECTED -> Color(0xFF4CAF50)
                             G1ConnectionState.CONNECTING, G1ConnectionState.RECONNECTING -> Color(0xFFFFC107)
-                            else -> MaterialTheme.colorScheme.error
+                            else -> Color(0xFFE53935)
                         }
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = if (readiness) "Service ready" else "Service initializing…",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (readiness) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (readiness) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
                     )
                 }
                 BluetoothIndicator(
                     bluetoothSupported = bluetoothSupported,
                     bluetoothOn = bluetoothOn
                 )
+            }
+
+            Text(
+                text = "Status",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val connectedName = cachedDevice?.name ?: cachedDevice?.address ?: "None"
+                    val statusLabel = when (connectionState) {
+                        G1ConnectionState.CONNECTED -> "Connected"
+                        G1ConnectionState.CONNECTING -> "Connecting"
+                        G1ConnectionState.RECONNECTING -> "Reconnecting"
+                        else -> "Disconnected"
+                    }
+                    Text(
+                        text = "Connected to: $connectedName",
+                        color = if (connectionState == G1ConnectionState.CONNECTED) Color(0xFF4CAF50) else Color.LightGray,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Status: $statusLabel",
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Service: ${if (readiness) "Ready" else "Initializing"}",
+                        color = Color(0xFFB0BEC5)
+                    )
+                }
             }
 
             NearbyDevicesSection(
@@ -558,14 +606,18 @@ class TestActivity : ComponentActivity() {
                 onSelect = { onDeviceSelected(it) },
                 onPair = { requestDeviceBond(it) },
                 onRescan = { rescanNearby() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
+                modifier = Modifier.fillMaxWidth()
             )
 
             if (connectedGlasses.isNotEmpty()) {
                 G1SummaryBox(connectedGlasses)
             }
+
+            StatusConsole(
+                logs = logs,
+                contextFallback = contextMessage,
+                modifier = Modifier.fillMaxWidth()
+            )
 
             Button(
                 onClick = { handleConnectAction() },
@@ -574,18 +626,13 @@ class TestActivity : ComponentActivity() {
                     containerColor = buttonUi.color,
                     contentColor = if (buttonUi.color.luminance() < 0.5f) Color.White else Color.Black
                 ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(buttonUi.label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            }
-
-            StatusConsole(
-                logs = logs,
-                contextFallback = contextMessage,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 120.dp, max = 240.dp)
-            )
+                    .padding(top = 16.dp)
+                    .height(50.dp)
+            ) {
+                Text(buttonUi.label, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 
@@ -599,7 +646,7 @@ class TestActivity : ComponentActivity() {
         Card(
             modifier = modifier,
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = tint.copy(alpha = 0.12f))
+            colors = CardDefaults.cardColors(containerColor = tint.copy(alpha = 0.18f))
         ) {
             Row(
                 modifier = Modifier
@@ -623,68 +670,68 @@ class TestActivity : ComponentActivity() {
         contextFallback: String,
         modifier: Modifier = Modifier,
     ) {
-        val listState = rememberLazyListState()
-        LaunchedEffect(logs.size) {
-            if (logs.isNotEmpty()) {
-                listState.animateScrollToItem(logs.lastIndex)
+        val formatter = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+        val scrollState = rememberScrollState()
+        val displayLogs = remember(logs) { logs.takeLast(50) }
+        LaunchedEffect(displayLogs.size) {
+            if (scrollState.maxValue > 0) {
+                scrollState.animateScrollTo(scrollState.maxValue)
             }
         }
-        val formatter = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-        Card(
-            modifier = modifier,
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-        ) {
-            Column(Modifier.fillMaxSize()) {
-                Text(
-                    text = "Status console",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (logs.isEmpty()) {
+        Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Status console",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 150.dp, max = 300.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1B1B)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                if (displayLogs.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 24.dp),
+                            .padding(16.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = contextFallback,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Color(0xFFB0BEC5),
                             textAlign = TextAlign.Center
                         )
                     }
                 } else {
-                    LazyColumn(
+                    Column(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        state = listState,
+                            .fillMaxWidth()
+                            .verticalScroll(scrollState)
+                            .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(logs) { event ->
+                        displayLogs.forEach { event ->
                             val timestamp = formatter.format(Date(event.timestamp))
                             val color = when (event.priority) {
-                                android.util.Log.ERROR -> MaterialTheme.colorScheme.error
+                                android.util.Log.ERROR -> Color(0xFFE53935)
                                 android.util.Log.WARN -> Color(0xFFFFA000)
-                                android.util.Log.INFO -> MaterialTheme.colorScheme.onSurface
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                android.util.Log.INFO -> Color.White
+                                else -> Color(0xFFB0BEC5)
                             }
-                            Column(Modifier.padding(vertical = 4.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
                                     text = "[$timestamp] ${event.tag} ${event.message}",
                                     color = color,
-                                    style = MaterialTheme.typography.bodySmall
+                                    fontSize = 13.sp
                                 )
                                 event.throwable?.let {
                                     Text(
                                         text = it,
                                         color = color,
-                                        style = MaterialTheme.typography.bodySmall
+                                        fontSize = 13.sp
                                     )
                                 }
                             }
@@ -709,14 +756,19 @@ class TestActivity : ComponentActivity() {
         onRescan: () -> Unit,
         modifier: Modifier = Modifier,
     ) {
+        val sortedDevices = remember(devices) {
+            devices.sortedWith(
+                compareByDescending<DiscoveredDevice> { it.name?.contains("Even G1", ignoreCase = true) == true }
+            )
+        }
         Card(
             modifier = modifier,
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF242424))
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -728,7 +780,8 @@ class TestActivity : ComponentActivity() {
                     Text(
                         text = "Nearby devices",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
                     )
                     OutlinedButton(onClick = onRescan) {
                         Text("Rescan")
@@ -742,7 +795,7 @@ class TestActivity : ComponentActivity() {
                                 text = "Bluetooth is OFF. Please enable to continue.",
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(24.dp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = Color(0xFFB0BEC5)
                             )
                         }
                     }
@@ -752,25 +805,25 @@ class TestActivity : ComponentActivity() {
                                 text = "Bluetooth Scan permission required to discover devices.",
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(24.dp),
-                                color = MaterialTheme.colorScheme.error
+                                color = Color(0xFFE57373)
                             )
                         }
                     }
-                    devices.isEmpty() -> {
+                    sortedDevices.isEmpty() -> {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
                                 text = "Searching for devices…",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = Color(0xFFB0BEC5)
                             )
                         }
                     }
                     else -> {
                         LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            items(devices, key = { it.address }) { device ->
+                            items(sortedDevices, key = { it.address }) { device ->
                                 val isCached = cachedDevice?.address == device.address
                                 val bonded = bondedDevices.contains(device.address)
                                 val status = pairingStatuses[device.address]
@@ -806,55 +859,57 @@ class TestActivity : ComponentActivity() {
             PairingUiStatus.FAILED -> "Failed"
             PairingUiStatus.IDLE -> null
         }
-        val symbol = when {
-            status == PairingUiStatus.PAIRING -> "…"
-            isBonded || status == PairingUiStatus.PAIRED -> "🜂"
-            else -> "🔗"
-        }
-        Row(
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { onSelect(device) }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(vertical = 4.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A)),
+            shape = RoundedCornerShape(14.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         text = device.name ?: "(unknown)",
-                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.White,
                         fontWeight = if (isCached) FontWeight.Bold else FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (isBonded || status == PairingUiStatus.PAIRED) {
-                        Text(" ✅", fontSize = 16.sp)
+                    Text(
+                        text = "MAC: ${device.address}",
+                        color = Color(0xFFB0BEC5),
+                        fontSize = 12.sp
+                    )
+                    statusLabel?.let { label ->
+                        Text(
+                            text = label,
+                            color = when (status) {
+                                PairingUiStatus.FAILED -> Color(0xFFE57373)
+                                PairingUiStatus.PAIRING -> Color(0xFFFFC107)
+                                PairingUiStatus.PAIRED -> Color(0xFF4CAF50)
+                                else -> Color(0xFFB0BEC5)
+                            },
+                            fontSize = 12.sp
+                        )
                     }
                 }
-                Text(
-                    text = device.address,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                statusLabel?.let { label ->
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = when (status) {
-                            PairingUiStatus.FAILED -> MaterialTheme.colorScheme.error
-                            PairingUiStatus.PAIRING -> MaterialTheme.colorScheme.secondary
-                            PairingUiStatus.PAIRED -> Color(0xFF4CAF50)
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        }
+                IconButton(
+                    onClick = { onPair(device) },
+                    enabled = status != PairingUiStatus.PAIRING
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = "Pair",
+                        tint = if (isBonded || status == PairingUiStatus.PAIRED) Color(0xFF4CAF50) else Color(0xFFBDBDBD)
                     )
                 }
-            }
-            Button(
-                onClick = { onPair(device) },
-                enabled = status != PairingUiStatus.PAIRING,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Text(symbol, fontSize = 18.sp)
             }
         }
     }
