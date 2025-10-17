@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-17 14:36 SGT",
-  "last_delta": 2,
-  "last_keywords": "fix",
+  "last_update": "2025-10-17 16:01 SGT",
+  "last_delta": 4,
+  "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 78,
+  "last_pr_number": 79,
   "history": [
+    {
+      "when": "2025-10-17 16:01 SGT",
+      "pr": 79,
+      "title": "Add bottom navigation to Moncchichi home",
+      "delta": 4,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-17 14:36 SGT",
       "pr": 78,
