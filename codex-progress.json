@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-17 11:32 SGT",
-  "last_delta": 0,
-  "last_keywords": "neutral",
+  "last_update": "2025-10-17 11:53 SGT",
+  "last_delta": 4,
+  "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 74,
+  "last_pr_number": 75,
   "history": [
+    {
+      "when": "2025-10-17 11:53 SGT",
+      "pr": 75,
+      "title": "Refactor hub screen for compact layout",
+      "delta": 4,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-17 11:32 SGT",
       "pr": 74,
