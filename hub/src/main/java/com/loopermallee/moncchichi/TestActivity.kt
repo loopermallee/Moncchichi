@@ -471,14 +471,12 @@ class TestActivity : ComponentActivity() {
             previousConnectionState = connectionState
         }
 
-        val buttonUi = remember(connectionState, lastFailure) {
-            when {
-                connectionState == G1ConnectionState.CONNECTED -> ConnectButtonUi("Connected ✅", Color(0xFF2ECC71), true)
-                connectionState == G1ConnectionState.CONNECTING || connectionState == G1ConnectionState.RECONNECTING ->
-                    ConnectButtonUi("Connecting…", Color(0xFFFFC107), false)
-                lastFailure -> ConnectButtonUi("Failed ❌", Color(0xFFE53935), true)
-                else -> ConnectButtonUi("Connect", MaterialTheme.colorScheme.primary, true)
-            }
+        val buttonUi = when {
+            connectionState == G1ConnectionState.CONNECTED -> ConnectButtonUi("Connected ✅", Color(0xFF2ECC71), true)
+            connectionState == G1ConnectionState.CONNECTING || connectionState == G1ConnectionState.RECONNECTING ->
+                ConnectButtonUi("Connecting…", Color(0xFFFFC107), false)
+            lastFailure -> ConnectButtonUi("Failed ❌", Color(0xFFE53935), true)
+            else -> ConnectButtonUi("Connect", MaterialTheme.colorScheme.primary, true)
         }
 
         val evenDevice = remember(cachedDevice) {
