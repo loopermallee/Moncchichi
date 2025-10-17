@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 93,
-  "last_update": "2025-10-16 23:55 SGT",
-  "last_delta": 0,
-  "last_keywords": "neutral",
+  "total_progress": 97,
+  "last_update": "2025-10-17 08:17 SGT",
+  "last_delta": 4,
+  "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 69,
+  "last_pr_number": 70,
   "history": [
+    {
+      "when": "2025-10-17 08:17 SGT",
+      "pr": 70,
+      "title": "Add BLE autorecovery, heartbeat recovery, and telemetry",
+      "delta": 4,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 97
+    },
     {
       "when": "2025-10-16 23:55 SGT",
       "pr": 69,
