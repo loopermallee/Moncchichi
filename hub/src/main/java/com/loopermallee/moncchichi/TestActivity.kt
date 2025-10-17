@@ -51,12 +51,14 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.service.G1DisplayService
+import com.loopermallee.moncchichi.ui.G1DataConsoleActivity
 import io.texne.g1.basis.client.G1ServiceClient
 import io.texne.g1.basis.client.G1ServiceCommon
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -603,6 +605,7 @@ class TestActivity : ComponentActivity() {
         onSelect: (BleDevice) -> Unit,
     ) {
         val scrollState = rememberScrollState()
+        val context = LocalContext.current
 
         Box(
             modifier = Modifier
@@ -749,6 +752,18 @@ class TestActivity : ComponentActivity() {
                                 color = if (state.connectButtonColor.luminance() < 0.5f) Color.White else Color.Black,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                val intent = Intent(context, G1DataConsoleActivity::class.java)
+                                context.startActivity(intent)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                        ) {
+                            Text("Open G1 Data Console")
                         }
                     }
                 }
