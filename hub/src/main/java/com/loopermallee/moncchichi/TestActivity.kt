@@ -18,6 +18,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -42,6 +46,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,14 +56,13 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.service.G1DisplayService
-import com.loopermallee.moncchichi.ui.G1DataConsoleActivity
+import com.loopermallee.moncchichi.ui.screens.G1DataConsoleScreen
 import io.texne.g1.basis.client.G1ServiceClient
 import io.texne.g1.basis.client.G1ServiceCommon
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -584,16 +588,36 @@ class TestActivity : ComponentActivity() {
             hasCriticalPermissions = hasCriticalPermissions
         )
 
-        HubScreen(
-            state = hubUiState,
-            onConnect = { handleConnectAction() },
-            onPair = { device ->
-                requestDeviceBond(DiscoveredDevice(device.name, device.address))
-            },
-            onSelect = { device ->
-                onDeviceSelected(DiscoveredDevice(device.name, device.address))
+        var currentScreen by rememberSaveable { mutableStateOf(MoncchichiScreen.HUB) }
+
+        AnimatedContent(
+            targetState = currentScreen,
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            label = "ScreenTransition"
+        ) { screen ->
+            when (screen) {
+                MoncchichiScreen.HUB -> HubScreen(
+                    state = hubUiState,
+                    onConnect = { handleConnectAction() },
+                    onPair = { device ->
+                        requestDeviceBond(DiscoveredDevice(device.name, device.address))
+                    },
+                    onSelect = { device ->
+                        onDeviceSelected(DiscoveredDevice(device.name, device.address))
+                    },
+                    onNavigateToDataConsole = { currentScreen = MoncchichiScreen.DATA_CONSOLE }
+                )
+
+                MoncchichiScreen.DATA_CONSOLE -> G1DataConsoleScreen(
+                    binderProvider = { binder },
+                    onBack = { currentScreen = MoncchichiScreen.HUB },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF101010))
+                        .padding(WindowInsets.safeDrawing.asPaddingValues())
+                )
             }
-        )
+        }
 
     }
 
@@ -603,16 +627,15 @@ class TestActivity : ComponentActivity() {
         onConnect: () -> Unit,
         onPair: (BleDevice) -> Unit,
         onSelect: (BleDevice) -> Unit,
+        onNavigateToDataConsole: () -> Unit,
     ) {
         val scrollState = rememberScrollState()
-        val context = LocalContext.current
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFF101010))
                 .padding(WindowInsets.safeDrawing.asPaddingValues())
-                .padding(16.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -745,7 +768,7 @@ class TestActivity : ComponentActivity() {
                             colors = ButtonDefaults.buttonColors(containerColor = state.connectButtonColor),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(44.dp)
+                                .heightIn(min = 48.dp)
                         ) {
                             Text(
                                 text = state.connectButtonLabel,
@@ -755,13 +778,10 @@ class TestActivity : ComponentActivity() {
                         }
                         Spacer(Modifier.height(8.dp))
                         Button(
-                            onClick = {
-                                val intent = Intent(context, G1DataConsoleActivity::class.java)
-                                context.startActivity(intent)
-                            },
+                            onClick = onNavigateToDataConsole,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(44.dp)
+                                .heightIn(min = 48.dp)
                         ) {
                             Text("Open G1 Data Console")
                         }
@@ -888,6 +908,8 @@ class TestActivity : ComponentActivity() {
             }
         }
     }
+
+    private enum class MoncchichiScreen { HUB, DATA_CONSOLE }
 
     data class HubUiState(
         val connectedDeviceName: String?,
