@@ -13,38 +13,27 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,25 +54,25 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.service.G1DisplayService
 import io.texne.g1.basis.client.G1ServiceClient
 import io.texne.g1.basis.client.G1ServiceCommon
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class TestActivity : ComponentActivity() {
+    private val logger by lazy { MoncchichiLogger(this) }
+    private val logEntries = MutableStateFlow<List<MoncchichiLogger.LogEvent>>(emptyList())
+
     private var serviceBound = false
     private var displayService: G1DisplayService? = null
     private lateinit var scanner: BluetoothScanner
@@ -147,8 +137,13 @@ class TestActivity : ComponentActivity() {
         refreshBondedDevices()
         registerBluetoothReceiver()
         registerBondReceiver()
-        setContent { MaterialTheme { MainScaffold() } }
+        setContent { MaterialTheme { MoncchichiHome() } }
         ensurePermissions()
+        lifecycleScope.launch {
+            MoncchichiLogger.logEvents().collect { event ->
+                logEntries.update { entries -> (entries + event).takeLast(LOG_BUFFER_LIMIT) }
+            }
+        }
         lifecycleScope.launch {
             val client = G1ServiceClient.open(applicationContext)
             serviceClient = client
@@ -186,12 +181,14 @@ class TestActivity : ComponentActivity() {
                     when (state) {
                         BluetoothAdapter.STATE_ON -> {
                             bluetoothState.value = true
+                            logger.i(UI_TAG, "Bluetooth enabled")
                             ensureService()
                             refreshBondedDevices()
                             displayService?.requestNearbyRescan()
                         }
                         BluetoothAdapter.STATE_OFF -> {
                             bluetoothState.value = false
+                            logger.w(UI_TAG, "Bluetooth disabled")
                             pairingStatusState.value = emptyMap()
                         }
                     }
@@ -209,13 +206,20 @@ class TestActivity : ComponentActivity() {
                 val device: BluetoothDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) ?: return
                 val address = device.address
                 when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)) {
-                    BluetoothDevice.BOND_BONDING -> pairingStatusState.update { it + (address to PairingUiStatus.PAIRING) }
+                    BluetoothDevice.BOND_BONDING -> {
+                        pairingStatusState.update { it + (address to PairingUiStatus.PAIRING) }
+                        logger.i(UI_TAG, "Pairing with ${device.name ?: address}")
+                    }
                     BluetoothDevice.BOND_BONDED -> {
                         pairingStatusState.update { it + (address to PairingUiStatus.PAIRED) }
+                        logger.i(UI_TAG, "Connected successfully to ${device.name ?: address}")
                         setCachedDevice(address, device.name)
                         refreshBondedDevices()
                     }
-                    BluetoothDevice.BOND_NONE -> pairingStatusState.update { it + (address to PairingUiStatus.FAILED) }
+                    BluetoothDevice.BOND_NONE -> {
+                        pairingStatusState.update { it + (address to PairingUiStatus.FAILED) }
+                        logger.e(UI_TAG, "Failed to connect to ${device.name ?: address}")
+                    }
                 }
             }
         }
@@ -242,7 +246,8 @@ class TestActivity : ComponentActivity() {
 
     private fun hasCriticalPermissions(): Boolean {
         val snapshot = permissionState.value
-        return (snapshot[Manifest.permission.BLUETOOTH_CONNECT] == true && snapshot[Manifest.permission.BLUETOOTH_SCAN] == true)
+        return snapshot[Manifest.permission.BLUETOOTH_CONNECT] == true &&
+            snapshot[Manifest.permission.BLUETOOTH_SCAN] == true
     }
 
     private fun ensurePermissions() {
@@ -279,13 +284,6 @@ class TestActivity : ComponentActivity() {
             return true
         }
         return ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun requestAllPermissions() {
-        val missing = requiredPermissions().filterNot { hasPermission(it) }
-        if (missing.isNotEmpty()) {
-            permissionRequester.launch(missing.toTypedArray())
-        }
     }
 
     private fun requiredPermissions(): List<String> {
@@ -330,14 +328,20 @@ class TestActivity : ComponentActivity() {
             ensurePermissions()
             return
         }
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        if (adapter == null) {
+            logger.e(UI_TAG, "Device not found: ${device.address}")
+            return
+        }
         val remote = adapter.getRemoteDevice(device.address)
         if (remote.bondState == BluetoothDevice.BOND_BONDED) {
+            logger.i(UI_TAG, "Already paired with ${remote.name ?: remote.address}")
             setCachedDevice(remote.address, remote.name)
             refreshBondedDevices()
             return
         }
         pairingStatusState.update { it + (device.address to PairingUiStatus.PAIRING) }
+        logger.i(UI_TAG, "Attempting connection to ${device.name ?: device.address}")
         remote.createBond()
     }
 
@@ -348,6 +352,7 @@ class TestActivity : ComponentActivity() {
                 return@launch
             }
             setCachedDevice(device.address, device.name, markAsPaired = false)
+            logger.i(UI_TAG, "Attempting connection to ${device.name ?: device.address}")
             displayService?.connect(device.address)
         }
     }
@@ -356,6 +361,7 @@ class TestActivity : ComponentActivity() {
         lifecycleScope.launch {
             if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) return@launch
             if (!bluetoothState.value) return@launch
+            logger.i(UI_TAG, "Searching for devices…")
             scanner.clear()
             scanner.start()
             displayService?.requestNearbyRescan()
@@ -364,7 +370,38 @@ class TestActivity : ComponentActivity() {
 
     private fun requestReconnect() {
         lifecycleScope.launch {
+            logger.i(UI_TAG, "Manual reconnect requested")
             displayService?.requestReconnect()
+        }
+    }
+
+    private fun handleConnectAction() {
+        when {
+            !bluetoothSupportedState.value -> {
+                logger.w(UI_TAG, "Bluetooth not supported on this device")
+            }
+            !bluetoothState.value -> {
+                logger.w(UI_TAG, "Bluetooth is OFF. Prompting user to enable.")
+                Toast.makeText(this, "Please enable Bluetooth to continue.", Toast.LENGTH_SHORT).show()
+                requestEnableBluetooth()
+            }
+            !hasCriticalPermissions() -> {
+                logger.w(UI_TAG, "Bluetooth permissions missing. Requesting…")
+                ensurePermissions()
+            }
+            else -> {
+                val cached = cachedDeviceState.value
+                if (cached == null) {
+                    logger.w(UI_TAG, "Device not found")
+                    rescanNearby()
+                } else {
+                    lifecycleScope.launch {
+                        logger.i(UI_TAG, "Attempting connection to ${cached.name ?: cached.address}")
+                        displayService?.connect(cached.address)
+                            ?: requestReconnect()
+                    }
+                }
+            }
         }
     }
 
@@ -372,16 +409,13 @@ class TestActivity : ComponentActivity() {
         enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
     }
 
-    // ---------------- UI (Compose) ----------------
-
     @Composable
-    private fun MoncchichiHome(onOpenPermissions: () -> Unit) {
+    private fun MoncchichiHome() {
         val binder by binderState.collectAsState()
         val serviceSnapshot by hubState.collectAsState()
         val devices by scanner.devices.collectAsState()
         val connectionState by collectBinderState(binder?.connectionStates, G1ConnectionState.DISCONNECTED)
         val readiness by collectBinderState(binder?.readiness, false)
-        val rssi by collectBinderState(binder?.rssi(), null)
         val bluetoothOn by bluetoothState.collectAsState()
         val bluetoothSupported by bluetoothSupportedState.collectAsState()
         val cachedDevice by cachedDeviceState.collectAsState()
@@ -389,15 +423,11 @@ class TestActivity : ComponentActivity() {
         val bondedDevices by bondedDevicesState.collectAsState()
         val pairingStatuses by pairingStatusState.collectAsState()
         val permissions by permissionState.collectAsState()
-        val anyMissingPermissions = permissions.values.any { !it }
+        val logs by logEntries.collectAsState()
 
         val connectedGlasses = remember(serviceSnapshot) {
-            serviceSnapshot?.glasses?.firstOrNull { it.status == G1ServiceCommon.GlassesStatus.CONNECTED }
+            serviceSnapshot?.glasses?.filter { it.status == G1ServiceCommon.GlassesStatus.CONNECTED } ?: emptyList()
         }
-        val connectedBattery = connectedGlasses?.batteryPercentage
-        val connectedLabel = connectedGlasses?.name ?: connectedGlasses?.id
-
-        var showEnableBluetoothDialog by remember { mutableStateOf(false) }
 
         LaunchedEffect(connectionState, bluetoothOn) {
             if (connectionState == G1ConnectionState.CONNECTED && bluetoothOn) {
@@ -410,308 +440,335 @@ class TestActivity : ComponentActivity() {
         }
 
         val hasScanPermission = permissions[Manifest.permission.BLUETOOTH_SCAN] == true
+        val hasConnectPermission = permissions[Manifest.permission.BLUETOOTH_CONNECT] == true
+        val hasCriticalPermissions = hasScanPermission && hasConnectPermission
+
         LaunchedEffect(bluetoothOn, hasScanPermission, bluetoothSupported) {
             if (bluetoothSupported && bluetoothOn && hasScanPermission) {
-                scanner.start()
+                rescanNearby()
             } else {
                 scanner.stop()
             }
         }
 
-        val baseStatus = remember(
-            bluetoothSupported,
-            bluetoothOn,
-            connectionState,
-            previouslyPaired,
-            cachedDevice,
-            connectedLabel,
-            binder
-        ) {
-            when {
-                !bluetoothSupported -> "Bluetooth unavailable on this device."
-                !bluetoothOn -> "Bluetooth is OFF — please enable to continue."
-                connectionState == G1ConnectionState.CONNECTED -> {
-                    val address = cachedDevice?.address ?: binder?.lastDeviceAddress()
-                    val label = connectedLabel ?: cachedDevice?.name ?: "Even G1"
-                    if (label.contains("Even Realities", ignoreCase = true) && address != null) {
-                        "Linked to Even G1 ✅ [$address]"
-                    } else {
-                        "Linked to ${label}"
-                    }
-                }
-                connectionState == G1ConnectionState.CONNECTING -> "Establishing secure session…"
-                connectionState == G1ConnectionState.RECONNECTING -> {
-                    val name = cachedDevice?.name ?: "Even G1"
-                    val address = cachedDevice?.address ?: binder?.lastDeviceAddress()
-                    if (address != null) {
-                        "Reconnecting to $name [$address]"
-                    } else {
-                        "Reconnecting to Even G1…"
-                    }
-                }
-                previouslyPaired -> "Reconnecting to Even G1…"
-                else -> "Searching for glasses…"
+        var previousConnectionState by remember { mutableStateOf<G1ConnectionState?>(null) }
+        var lastFailure by remember { mutableStateOf(false) }
+        LaunchedEffect(connectionState) {
+            val previous = previousConnectionState
+            if (connectionState == G1ConnectionState.CONNECTED && previous != G1ConnectionState.CONNECTED) {
+                lastFailure = false
+                logger.i(UI_TAG, "Connected successfully")
             }
-        }
-
-        var retryCountdown by remember { mutableStateOf<Int?>(null) }
-        LaunchedEffect(connectionState, bluetoothOn) {
-            if (connectionState == G1ConnectionState.RECONNECTING && bluetoothOn) {
-                retryCountdown = 10
-                while (isActive && retryCountdown != null && retryCountdown!! > 0) {
-                    delay(1_000)
-                    retryCountdown = retryCountdown?.minus(1)
-                }
-            } else {
-                retryCountdown = null
-            }
-        }
-
-        var noDeviceWarning by remember { mutableStateOf(false) }
-        LaunchedEffect(connectionState, devices, cachedDevice, bluetoothOn) {
-            noDeviceWarning = false
-            if (connectionState == G1ConnectionState.RECONNECTING && bluetoothOn) {
-                val target = cachedDevice?.address
-                if (target != null && devices.none { it.address == target }) {
-                    delay(10_000)
-                    if (connectionState == G1ConnectionState.RECONNECTING && bluetoothOn && devices.none { it.address == target }) {
-                        noDeviceWarning = true
-                    }
-                }
-            }
-        }
-
-        val statusMessage = when {
-            noDeviceWarning -> "No known device nearby. Please ensure glasses are in pairing mode."
-            retryCountdown != null && retryCountdown!! > 0 -> "Failed to connect — retrying in ${retryCountdown}s"
-            else -> baseStatus
-        }
-
-        Scaffold { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .background(MaterialTheme.colorScheme.background)
+            if (connectionState == G1ConnectionState.DISCONNECTED &&
+                (previous == G1ConnectionState.CONNECTING || previous == G1ConnectionState.RECONNECTING)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 20.dp, vertical = 16.dp)
-                ) {
-                    ConnectionHeader(
-                        connectionState = connectionState,
-                        bluetoothOn = bluetoothOn,
-                        bluetoothSupported = bluetoothSupported,
-                        batteryPercent = connectedBattery,
-                        deviceLabel = connectedLabel ?: cachedDevice?.name,
-                        rssi = rssi,
-                        statusMessage = statusMessage,
-                        serviceReady = readiness,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(0.2f, fill = true)
-                    )
-                    Spacer(Modifier.height(12.dp))
-        DeviceSection(
-            devices = devices,
-            cachedDevice = cachedDevice,
-            bondedDevices = bondedDevices,
-            pairingStatuses = pairingStatuses,
-            bluetoothOn = bluetoothOn,
-            bluetoothSupported = bluetoothSupported,
-            canScan = hasScanPermission,
-            previouslyPaired = previouslyPaired,
-            onSelect = { onDeviceSelected(it) },
-            onPair = { requestDeviceBond(it) },
-            onRescan = { rescanNearby() },
+                lastFailure = true
+                logger.e(UI_TAG, "Failed to connect")
+            }
+            if (connectionState == G1ConnectionState.CONNECTING || connectionState == G1ConnectionState.RECONNECTING) {
+                lastFailure = false
+            }
+            previousConnectionState = connectionState
+        }
+
+        val buttonUi = when {
+            connectionState == G1ConnectionState.CONNECTED -> ConnectButtonUi("Connected ✅", Color(0xFF2ECC71), true)
+            connectionState == G1ConnectionState.CONNECTING || connectionState == G1ConnectionState.RECONNECTING ->
+                ConnectButtonUi("Connecting…", Color(0xFFFFC107), false)
+            lastFailure -> ConnectButtonUi("Failed ❌", Color(0xFFE53935), true)
+            else -> ConnectButtonUi("Connect", MaterialTheme.colorScheme.primary, true)
+        }
+
+        val evenDevice = remember(cachedDevice) {
+            val name = cachedDevice?.name.orEmpty()
+            name.contains("even", ignoreCase = true) || name.contains("g1", ignoreCase = true)
+        }
+
+        val contextMessage = when {
+            !bluetoothSupported -> "Bluetooth unavailable on this device."
+            !bluetoothOn -> "Bluetooth is OFF. Please enable to continue."
+            !hasCriticalPermissions -> "Bluetooth permissions are required to connect."
+            connectionState == G1ConnectionState.CONNECTED -> "Connected to ${cachedDevice?.name ?: cachedDevice?.address ?: "Even G1"}."
+            lastFailure -> "Failed to connect. Tap Connect to retry."
+            previouslyPaired -> "Reconnecting to Even G1…"
+            cachedDevice != null && !evenDevice -> "Not a supported device."
+            else -> "Searching for devices…"
+        }
+
+        Column(
             modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(0.7f, fill = true)
-                    )
-                    Spacer(Modifier.height(12.dp))
-                   ControlBar(
-                        bluetoothOn = bluetoothOn,
-                        hasCriticalPermissions = hasCriticalPermissions(),
-                        missingPermissions = anyMissingPermissions,
-                        onReconnect = {
-                            if (bluetoothOn) {
-                                requestReconnect()
-                            } else {
-                                showEnableBluetoothDialog = true
-                            }
-                        },
-                        onOpenPermissions = onOpenPermissions,
-                        onRequestPermissions = { requestAllPermissions() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(0.1f, fill = true)
-                    )
-                }
-                if (showEnableBluetoothDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showEnableBluetoothDialog = false },
-                        confirmButton = {
-                            Button(onClick = {
-                                showEnableBluetoothDialog = false
-                                requestEnableBluetooth()
-                            }) { Text("Turn on Bluetooth") }
-                        },
-                        dismissButton = {
-                            OutlinedButton(onClick = { showEnableBluetoothDialog = false }) {
-                                Text("Cancel")
-                            }
-                        },
-                        title = { Text("Bluetooth required") },
-                        text = { Text("Turn on Bluetooth to reconnect to Even G1.") }
-                    )
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun ConnectionHeader(
-        connectionState: G1ConnectionState,
-        bluetoothOn: Boolean,
-        bluetoothSupported: Boolean,
-        batteryPercent: Int?,
-        deviceLabel: String?,
-        rssi: Int?,
-        statusMessage: String,
-        serviceReady: Boolean,
-        modifier: Modifier = Modifier,
-    ) {
-        Column(
-            modifier = modifier
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "Soul Tether Hub",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
-            ConnectionStatusPill(connectionState)
-            BluetoothBanner(bluetoothOn = bluetoothOn, supported = bluetoothSupported)
-            if (deviceLabel != null && batteryPercent != null) {
-                BatteryIndicator(batteryPercent, deviceLabel)
-            }
-            SignalStrengthIndicator(rssi)
-            StatusMessageCard(statusMessage, serviceReady)
-        }
-    }
-
-    @Composable
-    private fun BluetoothBanner(bluetoothOn: Boolean, supported: Boolean) {
-        val (label, color) = when {
-            !supported -> "Bluetooth unsupported" to Color(0xFFE57373)
-            bluetoothOn -> "Bluetooth ON" to Color(0xFF26A69A)
-            else -> "Bluetooth OFF" to Color(0xFFE74C3C)
-        }
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = color.copy(alpha = 0.15f),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = label,
-                color = color,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
-        }
-    }
-
-    @Composable
-    private fun DeviceSection(
-        devices: List<DiscoveredDevice>,
-        cachedDevice: CachedDevice?,
-        bondedDevices: Set<String>,
-        pairingStatuses: Map<String, PairingUiStatus>,
-        bluetoothOn: Boolean,
-        bluetoothSupported: Boolean,
-        canScan: Boolean,
-        previouslyPaired: Boolean,
-        onSelect: (DiscoveredDevice) -> Unit,
-        onPair: (DiscoveredDevice) -> Unit,
-        onRescan: () -> Unit,
-        modifier: Modifier = Modifier,
-    ) {
-        Column(
-            modifier = modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "Moncchichi BLE Hub",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = contextMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = when (connectionState) {
+                            G1ConnectionState.CONNECTED -> "Status: Connected ✅"
+                            G1ConnectionState.CONNECTING -> "Status: Connecting…"
+                            G1ConnectionState.RECONNECTING -> "Status: Reconnecting…"
+                            else -> "Status: Disconnected"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = when (connectionState) {
+                            G1ConnectionState.CONNECTED -> Color(0xFF4CAF50)
+                            G1ConnectionState.CONNECTING, G1ConnectionState.RECONNECTING -> Color(0xFFFFC107)
+                            else -> MaterialTheme.colorScheme.error
+                        }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = if (readiness) "Service ready" else "Service initializing…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (readiness) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                BluetoothIndicator(
+                    bluetoothSupported = bluetoothSupported,
+                    bluetoothOn = bluetoothOn
+                )
+            }
+
+            NearbyDevicesSection(
+                devices = devices,
+                bluetoothOn = bluetoothOn,
+                hasScanPermission = hasScanPermission,
+                pairingStatuses = pairingStatuses,
+                bondedDevices = bondedDevices,
+                cachedDevice = cachedDevice,
+                previouslyPaired = previouslyPaired,
+                onSelect = { onDeviceSelected(it) },
+                onPair = { requestDeviceBond(it) },
+                onRescan = { rescanNearby() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
+
+            if (connectedGlasses.isNotEmpty()) {
+                G1SummaryBox(connectedGlasses)
+            }
+
+            Button(
+                onClick = { handleConnectAction() },
+                enabled = buttonUi.enabled && bluetoothSupported && bluetoothOn && hasCriticalPermissions,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = buttonUi.color,
+                    contentColor = if (buttonUi.color.luminance() < 0.5f) Color.White else Color.Black
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(buttonUi.label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            StatusConsole(
+                logs = logs,
+                contextFallback = contextMessage,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 120.dp, max = 240.dp)
+            )
+        }
+    }
+
+    @Composable
+    private fun BluetoothIndicator(bluetoothSupported: Boolean, bluetoothOn: Boolean, modifier: Modifier = Modifier) {
+        val (label, tint) = when {
+            !bluetoothSupported -> "Unsupported" to MaterialTheme.colorScheme.error
+            bluetoothOn -> "Bluetooth ON" to Color(0xFF4CAF50)
+            else -> "Bluetooth OFF" to MaterialTheme.colorScheme.error
+        }
+        Card(
+            modifier = modifier,
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = tint.copy(alpha = 0.12f))
+        ) {
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Bluetooth,
+                    contentDescription = null,
+                    tint = tint
+                )
+                Text(label, color = tint, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+
+    @Composable
+    private fun StatusConsole(
+        logs: List<MoncchichiLogger.LogEvent>,
+        contextFallback: String,
+        modifier: Modifier = Modifier,
+    ) {
+        val listState = rememberLazyListState()
+        LaunchedEffect(logs.size) {
+            if (logs.isNotEmpty()) {
+                listState.animateScrollToItem(logs.lastIndex)
+            }
+        }
+        val formatter = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+        Card(
+            modifier = modifier,
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        ) {
+            Column(Modifier.fillMaxSize()) {
                 Text(
-                    text = "Nearby devices",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "Status console",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
-                OutlinedButton(onClick = onRescan, enabled = bluetoothOn && bluetoothSupported && canScan) {
-                    Text("Rescan")
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                border = CardDefaults.outlinedCardBorder(),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                if (!bluetoothSupported) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Bluetooth unavailable on this device.")
-                    }
-                } else if (!bluetoothOn) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (logs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text(
-                            text = "Enable Bluetooth to scan for Even G1 glasses.",
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(24.dp)
-                        )
-                    }
-                } else if (!canScan) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "Bluetooth Scan permission required to discover devices.",
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(24.dp),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                } else if (devices.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "Searching...",
-                            style = MaterialTheme.typography.bodyMedium
+                            text = contextFallback,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
                         )
                     }
                 } else {
-                    Column(Modifier.fillMaxSize()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Device Name", modifier = Modifier.weight(0.35f), fontWeight = FontWeight.SemiBold)
-                            Text("MAC", modifier = Modifier.weight(0.3f), fontWeight = FontWeight.SemiBold)
-                            Text("Pair", modifier = Modifier.weight(0.18f), fontWeight = FontWeight.SemiBold)
-                            Text("Status", modifier = Modifier.weight(0.17f), fontWeight = FontWeight.SemiBold)
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        state = listState,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(logs) { event ->
+                            val timestamp = formatter.format(Date(event.timestamp))
+                            val color = when (event.priority) {
+                                android.util.Log.ERROR -> MaterialTheme.colorScheme.error
+                                android.util.Log.WARN -> Color(0xFFFFA000)
+                                android.util.Log.INFO -> MaterialTheme.colorScheme.onSurface
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                            Column(Modifier.padding(vertical = 4.dp)) {
+                                Text(
+                                    text = "[$timestamp] ${event.tag} ${event.message}",
+                                    color = color,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                event.throwable?.let {
+                                    Text(
+                                        text = it,
+                                        color = color,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun NearbyDevicesSection(
+        devices: List<DiscoveredDevice>,
+        bluetoothOn: Boolean,
+        hasScanPermission: Boolean,
+        pairingStatuses: Map<String, PairingUiStatus>,
+        bondedDevices: Set<String>,
+        cachedDevice: CachedDevice?,
+        previouslyPaired: Boolean,
+        onSelect: (DiscoveredDevice) -> Unit,
+        onPair: (DiscoveredDevice) -> Unit,
+        onRescan: () -> Unit,
+        modifier: Modifier = Modifier,
+    ) {
+        Card(
+            modifier = modifier,
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Nearby devices",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    OutlinedButton(onClick = onRescan) {
+                        Text("Rescan")
+                    }
+                }
+
+                when {
+                    !bluetoothOn -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Bluetooth is OFF. Please enable to continue.",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(24.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    !hasScanPermission -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Bluetooth Scan permission required to discover devices.",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(24.dp),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                    devices.isEmpty() -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Searching for devices…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    else -> {
                         LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f, fill = true)
-                                .padding(vertical = 4.dp)
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(devices, key = { it.address }) { device ->
                                 val isCached = cachedDevice?.address == device.address
@@ -722,6 +779,7 @@ class TestActivity : ComponentActivity() {
                                     device = device,
                                     isCached = isCached,
                                     status = status,
+                                    isBonded = bonded,
                                     onSelect = onSelect,
                                     onPair = onPair
                                 )
@@ -738,173 +796,108 @@ class TestActivity : ComponentActivity() {
         device: DiscoveredDevice,
         isCached: Boolean,
         status: PairingUiStatus,
+        isBonded: Boolean,
         onSelect: (DiscoveredDevice) -> Unit,
         onPair: (DiscoveredDevice) -> Unit,
     ) {
+        val statusLabel = when (status) {
+            PairingUiStatus.PAIRING -> "Pairing…"
+            PairingUiStatus.PAIRED -> "Paired"
+            PairingUiStatus.FAILED -> "Failed"
+            PairingUiStatus.IDLE -> null
+        }
+        val symbol = when {
+            status == PairingUiStatus.PAIRING -> "…"
+            isBonded || status == PairingUiStatus.PAIRED -> "🜂"
+            else -> "🔗"
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { onSelect(device) }
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.weight(0.35f)) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = device.name ?: "(unknown)",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (isCached) FontWeight.Bold else FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (isBonded || status == PairingUiStatus.PAIRED) {
+                        Text(" ✅", fontSize = 16.sp)
+                    }
+                }
                 Text(
-                    text = device.name ?: "(unknown)",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (isCached) FontWeight.Bold else FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    text = device.address,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (isCached) {
-                    Text("✅ Known device", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                statusLabel?.let { label ->
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when (status) {
+                            PairingUiStatus.FAILED -> MaterialTheme.colorScheme.error
+                            PairingUiStatus.PAIRING -> MaterialTheme.colorScheme.secondary
+                            PairingUiStatus.PAIRED -> Color(0xFF4CAF50)
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
                 }
             }
-            Text(
-                text = device.address,
-                modifier = Modifier.weight(0.3f),
-                style = MaterialTheme.typography.bodySmall
-            )
             Button(
                 onClick = { onPair(device) },
                 enabled = status != PairingUiStatus.PAIRING,
-                modifier = Modifier.weight(0.18f)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             ) {
-                Text("Pair")
-            }
-            Text(
-                text = when (status) {
-                    PairingUiStatus.PAIRING -> "Pairing…"
-                    PairingUiStatus.PAIRED -> "✅"
-                    PairingUiStatus.FAILED -> "Retry"
-                    PairingUiStatus.IDLE -> "—"
-                },
-                modifier = Modifier.weight(0.17f),
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-
-    @Composable
-    private fun ControlBar(
-        bluetoothOn: Boolean,
-        hasCriticalPermissions: Boolean,
-        missingPermissions: Boolean,
-        onReconnect: () -> Unit,
-        onOpenPermissions: () -> Unit,
-        onRequestPermissions: () -> Unit,
-        modifier: Modifier = Modifier,
-    ) {
-        Column(
-            modifier = modifier,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(
-                    onClick = onReconnect,
-                    enabled = bluetoothOn && hasCriticalPermissions,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Reconnect")
-                }
-                OutlinedButton(
-                    onClick = onOpenPermissions,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Permissions")
-                }
-            }
-            if (missingPermissions) {
-                OutlinedButton(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
-                    Text("Grant missing permissions")
-                }
+                Text(symbol, fontSize = 18.sp)
             }
         }
     }
 
     @Composable
-    private fun ConnectionStatusPill(state: G1ConnectionState) {
-        val (label, color) = when (state) {
-            G1ConnectionState.CONNECTED -> "Connected" to Color(0xFF2ECC71)
-            G1ConnectionState.CONNECTING -> "Connecting…" to Color(0xFFF1C40F)
-            G1ConnectionState.RECONNECTING -> "Reconnecting…" to Color(0xFFF39C12)
-            else -> "Disconnected" to Color(0xFFE74C3C)
-        }
-        Surface(
-            shape = RoundedCornerShape(32.dp),
-            color = color.copy(alpha = 0.16f),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = label,
-                color = color,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(vertical = 10.dp)
-            )
-        }
-    }
-
-    @Composable
-    private fun BatteryIndicator(percent: Int?, deviceLabel: String) {
-        val (color, badge) = when {
-            percent == null -> MaterialTheme.colorScheme.onSurfaceVariant to "Battery: --"
-            percent >= 70 -> Color(0xFF4CAF50) to "Battery: $percent%"
-            percent >= 30 -> Color(0xFFFFC107) to "Battery: $percent%"
-            else -> Color(0xFFF44336) to "Battery: $percent%"
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = "🔋 $badge • $deviceLabel",
-                color = color,
-                textAlign = TextAlign.Center,
-                fontSize = 14.sp
-            )
-        }
-    }
-
-    @Composable
-    private fun SignalStrengthIndicator(rssi: Int?) {
-        val label = rssi?.let { "Signal: ${it} dBm" } ?: "Signal: -- dBm"
-        Text(
-            text = label,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
-    }
-
-    @Composable
-    private fun StatusMessageCard(message: String, serviceReady: Boolean) {
+    private fun G1SummaryBox(glasses: List<G1ServiceCommon.Glasses>) {
+        val right = glasses.firstOrNull { it.name?.contains("right", ignoreCase = true) == true }
+        val left = glasses.firstOrNull { it.name?.contains("left", ignoreCase = true) == true }
         Card(
-            shape = RoundedCornerShape(20.dp),
-            border = CardDefaults.outlinedCardBorder(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center
+                    text = "G1 Glasses Summary",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
-                Text(
-                    text = if (serviceReady) "Service ready" else "Waiting for service…",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                BatteryRow(label = "Even G1 Right", percent = right?.batteryPercentage)
+                BatteryRow(label = "Even G1 Left", percent = left?.batteryPercentage)
             }
+        }
+    }
+
+    @Composable
+    private fun BatteryRow(label: String, percent: Int?) {
+        val (color, badge) = when {
+            percent == null || percent < 0 -> MaterialTheme.colorScheme.onSurfaceVariant to "--%"
+            percent >= 70 -> Color(0xFF4CAF50) to "$percent%"
+            percent >= 30 -> Color(0xFFFFC107) to "$percent%"
+            else -> MaterialTheme.colorScheme.error to "$percent%"
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text("🔋 $badge", color = color, style = MaterialTheme.typography.bodyMedium)
         }
     }
 
@@ -917,157 +910,9 @@ class TestActivity : ComponentActivity() {
         }
     }
 
-    // --------------------------- Permissions Center ---------------------------
-
-    @Composable
-    private fun PermissionsCenter(
-        bluetoothOn: Boolean,
-        bluetoothSupported: Boolean,
-        permissionSnapshot: Map<String, Boolean>,
-        onGrantAll: () -> Unit,
-        onToggleBluetooth: () -> Unit,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "Permissions & Radios",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                border = CardDefaults.outlinedCardBorder(),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text("Bluetooth state", fontWeight = FontWeight.SemiBold)
-                    if (!bluetoothSupported) {
-                        Text("❌ Bluetooth unsupported on this device", color = MaterialTheme.colorScheme.error)
-                    } else {
-                        Text(
-                            text = if (bluetoothOn) "✅ Enabled" else "❌ Disabled",
-                            color = if (bluetoothOn) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
-                        )
-                        OutlinedButton(onClick = onToggleBluetooth) {
-                            Text(if (bluetoothOn) "Open Bluetooth settings" else "Enable Bluetooth")
-                        }
-                    }
-                }
-            }
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                border = CardDefaults.outlinedCardBorder(),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text("App permissions", fontWeight = FontWeight.SemiBold)
-                    requiredPermissions().forEach { perm ->
-                        val granted = permissionSnapshot[perm] == true
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(permissionLabel(perm))
-                            Text(if (granted) "✅" else "❌", color = if (granted) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
-            }
-            Button(onClick = onGrantAll, enabled = permissionSnapshot.values.any { !it }) {
-                Text("Grant permissions")
-            }
-        }
-    }
-
-    private fun permissionLabel(perm: String): String = when (perm) {
-        Manifest.permission.BLUETOOTH_CONNECT -> "Bluetooth Connect"
-        Manifest.permission.BLUETOOTH_SCAN -> "Bluetooth Scan"
-        Manifest.permission.ACCESS_FINE_LOCATION -> "Location Access"
-        Manifest.permission.POST_NOTIFICATIONS -> "Post Notifications"
-        else -> perm.substringAfterLast('.')
-    }
-
-    // --------------------------- Navigation Scaffold ---------------------------
-
-    @Composable
-    private fun MainScaffold() {
-        val navController = rememberNavController()
-        val backStackEntry by navController.currentBackStackEntryAsState()
-        val currentRoute = backStackEntry?.destination?.route
-        val bluetoothOn by bluetoothState.collectAsState()
-        val bluetoothSupported by bluetoothSupportedState.collectAsState()
-        val permissionSnapshot by permissionState.collectAsState()
-
-        Scaffold(
-            bottomBar = { BottomNavigationBar(navController, currentRoute) }
-        ) { padding ->
-            Box(Modifier.padding(padding)) {
-                NavHost(navController = navController, startDestination = "pairing") {
-                    composable("pairing") {
-                        MoncchichiHome(onOpenPermissions = {
-                            navController.navigate("permissions") {
-                                popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        })
-                    }
-                    composable("permissions") {
-                        PermissionsCenter(
-                            bluetoothOn = bluetoothOn,
-                            bluetoothSupported = bluetoothSupported,
-                            permissionSnapshot = permissionSnapshot,
-                            onGrantAll = { requestAllPermissions() },
-                            onToggleBluetooth = { requestEnableBluetooth() }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun BottomNavigationBar(navController: NavHostController, currentRoute: String?) {
-        NavigationBar {
-            NavigationBarItem(
-                selected = currentRoute == "pairing",
-                onClick = {
-                    navController.navigate("pairing") {
-                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
-                icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Pair") },
-                label = { Text("Pairing") }
-            )
-            NavigationBarItem(
-                selected = currentRoute == "permissions",
-                onClick = {
-                    navController.navigate("permissions") {
-                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
-                icon = { Icon(Icons.Default.Settings, contentDescription = "Permissions") },
-                label = { Text("Permissions") }
-            )
-        }
-    }
-
     data class CachedDevice(val address: String, val name: String?)
+
+    data class ConnectButtonUi(val label: String, val color: Color, val enabled: Boolean)
 
     enum class PairingUiStatus { IDLE, PAIRING, PAIRED, FAILED }
 
@@ -1075,5 +920,7 @@ class TestActivity : ComponentActivity() {
         private const val KEY_DEVICE_ADDRESS = "last_device_address"
         private const val KEY_DEVICE_NAME = "last_device_name"
         private const val KEY_PREVIOUSLY_PAIRED = "previously_paired"
+        private const val LOG_BUFFER_LIMIT = 200
+        private const val UI_TAG = "[UI]"
     }
 }
