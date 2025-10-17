@@ -633,8 +633,9 @@ class TestActivity : ComponentActivity() {
             ) {
                 Text(buttonUi.label, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
-        }
-    }
+        } // end of Column
+    } // end of Box
+} // end of HubScreen()
 
     @Composable
     private fun BluetoothIndicator(bluetoothSupported: Boolean, bluetoothOn: Boolean, modifier: Modifier = Modifier) {
