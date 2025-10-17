@@ -32,12 +32,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -590,31 +594,54 @@ class TestActivity : ComponentActivity() {
 
         var currentScreen by rememberSaveable { mutableStateOf(MoncchichiScreen.HUB) }
 
-        AnimatedContent(
-            targetState = currentScreen,
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
-            label = "ScreenTransition"
-        ) { screen ->
-            when (screen) {
-                MoncchichiScreen.HUB -> HubScreen(
-                    state = hubUiState,
-                    onConnect = { handleConnectAction() },
-                    onPair = { device ->
-                        requestDeviceBond(DiscoveredDevice(device.name, device.address))
-                    },
-                    onSelect = { device ->
-                        onDeviceSelected(DiscoveredDevice(device.name, device.address))
-                    },
-                    onNavigateToDataConsole = { currentScreen = MoncchichiScreen.DATA_CONSOLE }
-                )
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                AnimatedContent(
+                    targetState = currentScreen,
+                    transitionSpec = { fadeIn() togetherWith fadeOut() },
+                    label = "ScreenTransition"
+                ) { screen ->
+                    when (screen) {
+                        MoncchichiScreen.HUB -> HubScreen(
+                            state = hubUiState,
+                            onConnect = { handleConnectAction() },
+                            onPair = { device ->
+                                requestDeviceBond(DiscoveredDevice(device.name, device.address))
+                            },
+                            onSelect = { device ->
+                                onDeviceSelected(DiscoveredDevice(device.name, device.address))
+                            },
+                            onNavigateToDataConsole = { currentScreen = MoncchichiScreen.DATA_CONSOLE }
+                        )
 
-                MoncchichiScreen.DATA_CONSOLE -> G1DataConsoleScreen(
-                    binderProvider = { binder },
-                    onBack = { currentScreen = MoncchichiScreen.HUB },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF101010))
-                        .padding(WindowInsets.safeDrawing.asPaddingValues())
+                        MoncchichiScreen.DATA_CONSOLE -> G1DataConsoleScreen(
+                            binderProvider = { binder },
+                            onBack = { currentScreen = MoncchichiScreen.HUB },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF101010))
+                                .padding(WindowInsets.safeDrawing.asPaddingValues())
+                        )
+                    }
+                }
+            }
+
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
+                NavigationBarItem(
+                    selected = currentScreen == MoncchichiScreen.HUB,
+                    onClick = { currentScreen = MoncchichiScreen.HUB },
+                    icon = { Icon(Icons.Default.Home, contentDescription = "Hub") },
+                    label = { Text("Hub") }
+                )
+                NavigationBarItem(
+                    selected = currentScreen == MoncchichiScreen.DATA_CONSOLE,
+                    onClick = { currentScreen = MoncchichiScreen.DATA_CONSOLE },
+                    icon = { Icon(Icons.Default.Build, contentDescription = "Data Console") },
+                    label = { Text("Data Console") }
                 )
             }
         }
