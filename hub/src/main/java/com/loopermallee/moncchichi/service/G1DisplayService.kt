@@ -40,6 +40,8 @@ class G1DisplayService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceManager by lazy { DeviceManager(applicationContext) }
     private val prefs by lazy { getSharedPreferences("g1hub", Context.MODE_PRIVATE) }
+    private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
+    private val bluetoothEnabled = MutableStateFlow(bluetoothAdapter?.isEnabled == true)
     private val ready = MutableStateFlow(false)
     private val _connectionState = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<G1ConnectionState> = _connectionState
@@ -50,11 +52,13 @@ class G1DisplayService : Service() {
             if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
                 when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                     BluetoothAdapter.STATE_ON -> {
+                        bluetoothEnabled.value = true
                         logger.i(SERVICE_TAG, "Bluetooth ON — restarting scan")
                         deviceManager.tryReconnect()
                         deviceManager.startScanNearbyDevices()
                     }
                     BluetoothAdapter.STATE_OFF -> {
+                        bluetoothEnabled.value = false
                         logger.i(SERVICE_TAG, "Bluetooth OFF — suspending connections")
                         deviceManager.disconnect()
                     }
@@ -65,6 +69,10 @@ class G1DisplayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        bluetoothEnabled.value = bluetoothAdapter?.isEnabled == true
+        if (bluetoothAdapter == null) {
+            logger.w(SERVICE_TAG, "${tt()} Bluetooth adapter unavailable")
+        }
         createNotificationChannel()
         registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
         val initial = buildForegroundNotification("Soul Tether starting…")
@@ -98,6 +106,7 @@ class G1DisplayService : Service() {
         serviceScope.launch {
             while (isActive) {
                 delay(30000L)
+                if (!bluetoothEnabled.value) continue
                 if (deviceManager.state.value != G1ConnectionState.CONNECTED) {
                     logger.w(SERVICE_TAG, "${tt()} Connection lost — triggering resilientReconnect()")
                     deviceManager.resilientReconnect()
@@ -168,6 +177,7 @@ class G1DisplayService : Service() {
         deviceManager.close()
         ready.value = false
         _connectionState.value = G1ConnectionState.DISCONNECTED
+        bluetoothEnabled.value = false
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -203,16 +213,26 @@ class G1DisplayService : Service() {
     }
 
     private suspend fun reconnectLoop() {
-        deviceManager.state.collectLatest { state ->
-            if (state == G1ConnectionState.RECONNECTING) {
-                while (coroutineContext.isActive && deviceManager.state.value == G1ConnectionState.RECONNECTING) {
-                    val success = deviceManager.reconnect()
-                    if (success) {
-                        logger.i(RECONNECT_TAG, "${tt()} reconnect succeeded")
-                        break
+        bluetoothEnabled.collectLatest { enabled ->
+            if (!enabled) {
+                logger.i(RECONNECT_TAG, "${tt()} Bluetooth disabled — reconnect loop paused")
+                return@collectLatest
+            }
+            deviceManager.state.collectLatest { state ->
+                if (state == G1ConnectionState.RECONNECTING) {
+                    while (coroutineContext.isActive && bluetoothEnabled.value && deviceManager.state.value == G1ConnectionState.RECONNECTING) {
+                        val success = deviceManager.reconnect()
+                        if (success) {
+                            logger.i(RECONNECT_TAG, "${tt()} reconnect succeeded")
+                            break
+                        }
+                        logger.w(RECONNECT_TAG, "${tt()} retry scheduled")
+                        var remaining = 10
+                        while (remaining > 0 && coroutineContext.isActive && bluetoothEnabled.value && deviceManager.state.value == G1ConnectionState.RECONNECTING) {
+                            delay(1_000L)
+                            remaining--
+                        }
                     }
-                    logger.w(RECONNECT_TAG, "${tt()} retry scheduled")
-                    delay(10_000L)
                 }
             }
         }
