@@ -536,8 +536,7 @@ class TestActivity : ComponentActivity() {
                     append(": ")
                     append(event.message)
                     event.throwable?.let {
-                        append('
-')
+                        append("\n")
                         append("   ")
                         append(it)
                     }
