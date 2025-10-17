@@ -5,7 +5,7 @@ package com.loopermallee.moncchichi.telemetry
  * Used for real-time logging, UI diagnostics, and debugging within Compose.
  */
 sealed class G1TelemetryEvent(
-    val timestamp: Long = System.currentTimeMillis(),
+    val timestamp: Long = java.lang.System.currentTimeMillis(),
     val message: String,
     val category: Category
 ) {
