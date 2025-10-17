@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
-  "total_progress": 99,
-  "last_update": "2025-10-17 09:33 SGT",
+  "total_progress": 100,
+  "last_update": "2025-10-17 10:37 SGT",
   "last_delta": 2,
   "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 71,
+  "last_pr_number": 72,
   "history": [
+    {
+      "when": "2025-10-17 10:37 SGT",
+      "pr": 72,
+      "title": "Restore dynamic TestActivity pairing UI",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-17 09:33 SGT",
       "pr": 71,
