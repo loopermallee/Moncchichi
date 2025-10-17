@@ -21,17 +21,18 @@ import androidx.activity.result.contract.ActivityResultContracts.StartActivityFo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,8 +49,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -608,163 +607,90 @@ class TestActivity : ComponentActivity() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF121212))
+                .background(Color(0xFF101010))
+                .padding(16.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(scrollState)
-                    .padding(12.dp)
+                    .fillMaxSize()
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFF1E1E1E))
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = "🩶 Soul Tether",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = state.statusMessage,
-                        color = Color(0xFFB0BEC5),
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = "Connected to: ${state.connectedDeviceName ?: "None"}",
-                                color = Color.White,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = "Status: ${state.connectionStatus}",
-                                color = state.connectionStatusColor,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "Service: ${state.serviceStatus}",
-                                color = Color(0xFFB0BEC5),
-                                fontSize = 13.sp
-                            )
-                            val bluetoothLabel = when {
-                                !state.bluetoothSupported -> "Bluetooth: Unsupported"
-                                state.bluetoothOn -> "Bluetooth: On"
-                                else -> "Bluetooth: Off"
-                            }
-                            val bluetoothColor = when {
-                                !state.bluetoothSupported -> Color(0xFFE53935)
-                                state.bluetoothOn -> Color(0xFF4CAF50)
-                                else -> Color(0xFFFFC107)
-                            }
-                            Text(
-                                text = bluetoothLabel,
-                                color = bluetoothColor,
-                                fontSize = 13.sp
-                            )
-                            val permissionColor = if (state.hasCriticalPermissions) {
-                                Color(0xFFB0BEC5)
-                            } else {
-                                Color(0xFFE57373)
-                            }
-                            Text(
-                                text = if (state.hasCriticalPermissions) "Permissions: Granted" else "Permissions: Missing",
-                                color = permissionColor,
-                                fontSize = 13.sp
-                            )
+                if (state.isConnected) {
+                    val rightBattery = state.rightBattery
+                    val leftBattery = state.leftBattery
+                    val caseBattery = state.caseBattery
+                    val estimateUsageHours = when {
+                        rightBattery != null && leftBattery != null -> {
+                            val average = (rightBattery + leftBattery) / 2.0
+                            String.format(Locale.US, "%.1f", average * 0.09)
                         }
+                        rightBattery != null -> String.format(Locale.US, "%.1f", rightBattery * 0.09)
+                        leftBattery != null -> String.format(Locale.US, "%.1f", leftBattery * 0.09)
+                        else -> null
                     }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                if (!state.pairedGlasses.isNullOrEmpty()) {
-                    val rightBattery = state.rightBattery ?: 0
-                    val leftBattery = state.leftBattery ?: 0
-                    val caseBattery = state.caseBattery ?: 0
-                    val rightHours = "%.1f".format(rightBattery * 0.09)
-                    val leftHours = "%.1f".format(leftBattery * 0.09)
-                    val caseHours = "%.1f".format(caseBattery * 0.10)
+                    val batteryEmoji: (Int?) -> String = { value ->
+                        value?.let {
+                            when {
+                                it > 70 -> "🟢"
+                                it > 30 -> "🟡"
+                                else -> "🔴"
+                            }
+                        } ?: ""
+                    }
 
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
+                            .clip(RoundedCornerShape(12.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1C))
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "🕶️ Even G1 Glasses (Paired)",
-                                color = Color.White,
+                                "🕶️ Even G1 Glasses (Paired)",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
+                                fontSize = 18.sp,
+                                color = Color.White
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column {
-                                    Text(
-                                        text = "• Right Lens Battery: ${rightBattery}%",
-                                        color = Color.White,
-                                        fontSize = 14.sp
-                                    )
-                                    Text(
-                                        text = if (state.rightConnected == true) "   Status: Connected ✅" else "   Status: Disconnected ❌",
-                                        color = if (state.rightConnected == true) Color(0xFF4CAF50) else Color(0xFFE53935),
-                                        fontSize = 13.sp
-                                    )
-                                    Text(
-                                        text = "   ≈ ${rightHours} hrs of use remaining",
-                                        color = Color.LightGray,
-                                        fontSize = 11.sp
-                                    )
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = "• Left Lens Battery: ${leftBattery}%",
-                                        color = Color.White,
-                                        fontSize = 14.sp
-                                    )
-                                    Text(
-                                        text = if (state.leftConnected == true) "   Status: Connected ✅" else "   Status: Disconnected ❌",
-                                        color = if (state.leftConnected == true) Color(0xFF4CAF50) else Color(0xFFE53935),
-                                        fontSize = 13.sp
-                                    )
-                                    Text(
-                                        text = "   ≈ ${leftHours} hrs of use remaining",
-                                        color = Color.LightGray,
-                                        fontSize = 11.sp
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(Modifier.height(4.dp))
                             Text(
-                                text = "🧰 Charging Case Battery: ${caseBattery}%",
-                                color = Color.White,
-                                fontSize = 14.sp
+                                "Right Lens Battery: ${rightBattery ?: "--"}% ${batteryEmoji(rightBattery)}",
+                                color = Color.Gray
                             )
                             Text(
-                                text = "   ≈ ${caseHours} hrs of charging reserve",
-                                color = Color.LightGray,
-                                fontSize = 11.sp
+                                "Left Lens Battery: ${leftBattery ?: "--"}% ${batteryEmoji(leftBattery)}",
+                                color = Color.Gray
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "⚙️ Firmware version: ${state.firmwareVersion ?: "—"}",
+                                "Case Battery: ${caseBattery ?: "--"}%",
+                                color = Color.Gray
+                            )
+                            Text(
+                                "Firmware: ${state.firmwareVersion ?: "v—"}",
+                                color = Color.Gray
+                            )
+                            Text(
+                                "Est. Usage: ${estimateUsageHours ?: "—"} hrs",
+                                fontSize = 12.sp,
+                                color = Color(0xFFAAAAAA)
+                            )
+                        }
+                    }
+                } else {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF181818))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "🔌 No G1 Glasses Connected",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                "Please power on your glasses and ensure Bluetooth is enabled.",
                                 color = Color.Gray,
                                 fontSize = 13.sp
                             )
@@ -772,59 +698,132 @@ class TestActivity : ComponentActivity() {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                val logs = state.consoleLogs.takeIf { it.isNotEmpty() } ?: listOf(state.statusMessage)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp, max = 220.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF151515)),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF151515))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            "🔍 Connection Console",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text("Device: ${state.connectedDeviceName ?: "—"}", color = Color.Gray)
+                        Text("State: ${state.connectionStatus}", color = state.connectionStatusColor)
+                        Text("Service: ${state.serviceStatus}", color = Color.Gray)
+                        Spacer(Modifier.height(6.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 60.dp, max = 120.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            logs.forEach { message ->
+                                Text(
+                                    text = message,
+                                    color = Color(0xFFCCCCCC),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = onConnect,
+                            enabled = state.connectButtonEnabled,
+                            colors = ButtonDefaults.buttonColors(containerColor = state.connectButtonColor),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                        ) {
+                            Text(
+                                text = state.connectButtonLabel,
+                                color = if (state.connectButtonColor.luminance() < 0.5f) Color.White else Color.Black,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
 
                 Text(
-                    text = "📡 Nearby Devices",
+                    "Nearby Devices",
                     color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp
                 )
-                Spacer(modifier = Modifier.height(6.dp))
 
-                val sortedDevices = state.devices.sortedWith(
-                    compareByDescending<BleDevice> { it.name?.contains("Even G1", ignoreCase = true) == true }
-                        .thenBy { it.name ?: it.address }
-                )
+                val sortedDevices = remember(state.devices) {
+                    state.devices.sortedWith(
+                        compareByDescending<BleDevice> { it.name?.contains("Even G1", ignoreCase = true) == true }
+                            .thenBy { it.name ?: it.address }
+                    )
+                }
+                val devicesContainerModifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp, max = 350.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF181818))
 
                 when {
                     !state.bluetoothSupported -> {
-                        Text(
-                            text = "Bluetooth unavailable on this device.",
-                            color = Color(0xFFE57373),
-                            fontSize = 13.sp
-                        )
+                        Box(
+                            modifier = devicesContainerModifier,
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Bluetooth unavailable on this device.", color = Color(0xFFE57373))
+                        }
                     }
                     !state.bluetoothOn -> {
-                        Text(
-                            text = "Bluetooth is OFF. Please enable to continue.",
-                            color = Color(0xFFFFC107),
-                            fontSize = 13.sp
-                        )
+                        Box(
+                            modifier = devicesContainerModifier,
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Bluetooth is OFF. Please enable to continue.", color = Color(0xFFFFC107))
+                        }
                     }
                     !state.hasCriticalPermissions -> {
-                        Text(
-                            text = "Bluetooth permissions are required to discover devices.",
-                            color = Color(0xFFE57373),
-                            fontSize = 13.sp
-                        )
+                        Box(
+                            modifier = devicesContainerModifier,
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Bluetooth permissions are required to discover devices.", color = Color(0xFFE57373))
+                        }
                     }
                     sortedDevices.isEmpty() -> {
-                        Text(
-                            text = "Searching for devices…",
-                            color = Color(0xFFB0BEC5),
-                            fontSize = 13.sp
-                        )
+                        Box(
+                            modifier = devicesContainerModifier,
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Searching for devices…", color = Color(0xFFB0BEC5))
+                        }
                     }
                     else -> {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            sortedDevices.forEach { device ->
-                                val cardColor = if (device.isSelected) Color(0xFF333333) else Color(0xFF2A2A2A)
+                        LazyColumn(
+                            modifier = devicesContainerModifier,
+                            contentPadding = PaddingValues(vertical = 6.dp)
+                        ) {
+                            items(sortedDevices) { device ->
+                                val cardColor = if (device.isSelected) Color(0xFF2A2A2A) else Color(0xFF222222)
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .clickable { onSelect(device) },
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                        .clickable {
+                                            if (device.isPaired) {
+                                                onSelect(device)
+                                            } else {
+                                                onPair(device)
+                                            }
+                                        },
                                     colors = CardDefaults.cardColors(containerColor = cardColor)
                                 ) {
                                     Row(
@@ -834,37 +833,36 @@ class TestActivity : ComponentActivity() {
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text(
-                                                text = device.name ?: "(unknown)",
+                                                device.name ?: "Unknown Device",
                                                 color = Color.White,
-                                                fontWeight = if (device.isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                fontWeight = FontWeight.Medium
                                             )
                                             Text(
-                                                text = "MAC: ${device.address}",
-                                                color = Color(0xFFB0BEC5),
+                                                device.address,
+                                                color = Color.Gray,
                                                 fontSize = 12.sp
                                             )
-                                            if (device.isPaired) {
+                                            Text(
+                                                if (device.isPaired) "Paired" else "Tap to pair",
+                                                color = if (device.isPaired) Color(0xFF00E676) else Color(0xFFFFD54F),
+                                                fontSize = 12.sp
+                                            )
+                                            if (device.isSelected) {
                                                 Text(
-                                                    text = "Paired",
-                                                    color = Color(0xFF4CAF50),
+                                                    "Selected",
+                                                    color = Color(0xFF81D4FA),
                                                     fontSize = 12.sp
                                                 )
                                             }
                                         }
-                                        IconButton(onClick = { onPair(device) }) {
-                                            Icon(
-                                                imageVector = Icons.Default.Link,
-                                                contentDescription = "Pair",
-                                                tint = if (device.isPaired) Color(0xFF4CAF50) else Color(0xFFBDBDBD)
-                                            )
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.Bluetooth,
+                                            contentDescription = "Pair",
+                                            tint = if (device.isPaired) Color(0xFF00E676) else Color.Gray,
+                                            modifier = Modifier.size(24.dp)
+                                        )
                                     }
                                 }
                             }
@@ -872,68 +870,30 @@ class TestActivity : ComponentActivity() {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
                 Text(
-                    text = "💬 Status Console",
+                    "Status Console",
                     color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp
                 )
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 150.dp, max = 300.dp)
-                        .padding(top = 8.dp),
+                        .heightIn(min = 160.dp, max = 260.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1B1B1B)),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1B1B))
                 ) {
-                    if (state.consoleLogs.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = state.statusMessage,
-                                color = Color(0xFFB0BEC5),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    } else {
-                        val consoleScrollState = rememberScrollState()
-                        Column(
-                            modifier = Modifier
-                                .verticalScroll(consoleScrollState)
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            state.consoleLogs.forEach { log ->
-                                Text(
-                                    text = log,
-                                    color = Color.LightGray,
-                                    fontSize = 13.sp
-                                )
-                            }
+                    Column(
+                        modifier = Modifier
+                            .padding(12.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        logs.forEach { log ->
+                            Text(log, color = Color(0xFFDDDDDD), fontSize = 12.sp)
                         }
                     }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(
-                    onClick = onConnect,
-                    enabled = state.connectButtonEnabled,
-                    colors = ButtonDefaults.buttonColors(containerColor = state.connectButtonColor),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                ) {
-                    Text(
-                        text = state.connectButtonLabel,
-                        color = if (state.connectButtonColor.luminance() < 0.5f) Color.White else Color.Black,
-                        fontWeight = FontWeight.Bold
-                    )
                 }
             }
         }
