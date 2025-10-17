@@ -608,6 +608,7 @@ class TestActivity : ComponentActivity() {
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFF101010))
+                .padding(WindowInsets.safeDrawing.asPaddingValues())
                 .padding(16.dp)
         ) {
             Column(
@@ -620,60 +621,58 @@ class TestActivity : ComponentActivity() {
                     val rightBattery = state.rightBattery
                     val leftBattery = state.leftBattery
                     val caseBattery = state.caseBattery
-                    val estimateUsageHours = when {
-                        rightBattery != null && leftBattery != null -> {
-                            val average = (rightBattery + leftBattery) / 2.0
-                            String.format(Locale.US, "%.1f", average * 0.09)
-                        }
-                        rightBattery != null -> String.format(Locale.US, "%.1f", rightBattery * 0.09)
-                        leftBattery != null -> String.format(Locale.US, "%.1f", leftBattery * 0.09)
-                        else -> null
+                    val primaryBatteries = listOfNotNull(rightBattery, leftBattery)
+                    val batteryValues = if (primaryBatteries.isNotEmpty()) {
+                        primaryBatteries
+                    } else {
+                        listOfNotNull(caseBattery)
                     }
-                    val batteryEmoji: (Int?) -> String = { value ->
-                        value?.let {
-                            when {
-                                it > 70 -> "🟢"
-                                it > 30 -> "🟡"
-                                else -> "🔴"
-                            }
-                        } ?: ""
+                    val unifiedBattery = batteryValues.takeIf { it.isNotEmpty() }?.average()
+                    val batteryEmoji = when {
+                        unifiedBattery == null -> ""
+                        unifiedBattery > 70 -> "🟢"
+                        unifiedBattery > 30 -> "🟡"
+                        else -> "🔴"
                     }
+                    val estimateUsageHours = unifiedBattery?.let { String.format(Locale.US, "%.1f", it * 0.09) }
 
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp)),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1C))
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                "🕶️ Even G1 Glasses (Paired)",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
-                                color = Color.White
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "Right Lens Battery: ${rightBattery ?: "--"}% ${batteryEmoji(rightBattery)}",
-                                color = Color.Gray
-                            )
-                            Text(
-                                "Left Lens Battery: ${leftBattery ?: "--"}% ${batteryEmoji(leftBattery)}",
-                                color = Color.Gray
-                            )
-                            Text(
-                                "Case Battery: ${caseBattery ?: "--"}%",
-                                color = Color.Gray
-                            )
-                            Text(
-                                "Firmware: ${state.firmwareVersion ?: "v—"}",
-                                color = Color.Gray
-                            )
-                            Text(
-                                "Est. Usage: ${estimateUsageHours ?: "—"} hrs",
-                                fontSize = 12.sp,
-                                color = Color(0xFFAAAAAA)
-                            )
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "G1 Even Realities Glasses Summary",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            color = Color.White,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp)),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1C))
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    "🕶️ Even G1 Glasses (Paired)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Battery: ${unifiedBattery?.toInt() ?: "--"}% $batteryEmoji",
+                                    color = Color.Gray
+                                )
+                                Text(
+                                    "Firmware: ${state.firmwareVersion ?: "v—"}",
+                                    color = Color.Gray
+                                )
+                                Text(
+                                    "Est. Usage: ${estimateUsageHours ?: "—"} hrs",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFAAAAAA)
+                                )
+                            }
                         }
                     }
                 } else {
@@ -870,31 +869,7 @@ class TestActivity : ComponentActivity() {
                     }
                 }
 
-                Text(
-                    "Status Console",
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp
-                )
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 160.dp, max = 260.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1B1B1B)),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1B1B))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .padding(12.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        logs.forEach { log ->
-                            Text(log, color = Color(0xFFDDDDDD), fontSize = 12.sp)
-                        }
-                    }
-                }
+                // Status Console removed per updated requirements.
             }
         }
     }
