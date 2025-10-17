@@ -27,6 +27,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.runBlocking
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
@@ -80,6 +81,7 @@ internal class DeviceManager(
     private var reconnectAttempt = 0
     private var reconnectFailureCount: Int =
         preferences.getInt(KEY_RECONNECT_FAILURES, 0)
+    private var notifyCallback: ((service: UUID, characteristic: UUID, value: ByteArray) -> Unit)? = null
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -148,12 +150,18 @@ internal class DeviceManager(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
+            val payload = characteristic.value?.copyOf() ?: return
             if (characteristic.uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
-                val payload = characteristic.value
                 writableIncoming.tryEmit(payload)
                 awaitingAck.set(false)
                 lastAckTimestamp = SystemClock.elapsedRealtime()
             }
+
+            notifyCallback?.invoke(
+                characteristic.service?.uuid ?: BluetoothConstants.UART_SERVICE_UUID,
+                characteristic.uuid,
+                payload,
+            )
         }
 
         override fun onCharacteristicRead(
@@ -511,6 +519,30 @@ internal class DeviceManager(
         val state: ConnectionState,
         val timestamp: Long,
     )
+
+    fun setOnNotification(cb: (service: UUID, characteristic: UUID, value: ByteArray) -> Unit) {
+        notifyCallback = cb
+    }
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    fun write(serviceUuid: UUID, charUuid: UUID, data: ByteArray): Boolean {
+        if (serviceUuid != BluetoothConstants.UART_SERVICE_UUID) {
+            logger.w(TAG, "${tt()} write(): unexpected service $serviceUuid")
+        }
+        if (writeCharacteristic?.uuid != charUuid) {
+            logger.w(TAG, "${tt()} write(): unexpected char $charUuid (expected ${writeCharacteristic?.uuid})")
+        }
+        return try {
+            runBlocking { sendCommand(data.copyOf()) }
+        } catch (t: Throwable) {
+            logger.e(TAG, "${tt()} write(): exception", t)
+            false
+        }
+    }
+
+    fun triggerNotification(serviceUuid: UUID, charUuid: UUID, value: ByteArray) {
+        notifyCallback?.invoke(serviceUuid, charUuid, value.copyOf())
+    }
 
     private companion object {
         private val subDevices = mutableListOf<BluetoothDevice>()
