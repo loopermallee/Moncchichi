@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.icons.extended)
+    implementation("androidx.compose.ui:ui-text")
     implementation(libs.coroutines.android)
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation(libs.hilt.android)

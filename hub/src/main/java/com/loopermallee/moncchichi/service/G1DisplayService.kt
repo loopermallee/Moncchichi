@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -22,6 +23,7 @@ import com.loopermallee.moncchichi.bluetooth.DeviceIoFacade
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.bluetooth.G1Inbound
+import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import io.texne.g1.hub.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -176,6 +178,10 @@ class G1DisplayService : Service() {
     fun sendTextPage(text: String): Boolean = ioFacade.sendTextPage(text)
 
     fun inboundFlow(): SharedFlow<G1Inbound> = ioFacade.inbound
+
+    fun getTelemetryFlow(): StateFlow<List<G1TelemetryEvent>> = deviceManager.telemetryFlow
+
+    fun getCurrentDevice(): BluetoothDevice? = deviceManager.currentDevice()
 
     fun getConnectedDeviceName(): String? {
         return deviceManager.currentDeviceName()
