@@ -13,22 +13,14 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.weight
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -294,13 +286,6 @@ class TestActivity : ComponentActivity() {
         return ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun requestAllPermissions() {
-        val missing = requiredPermissions().filterNot { hasPermission(it) }
-        if (missing.isNotEmpty()) {
-            permissionRequester.launch(missing.toTypedArray())
-        }
-    }
-
     private fun requiredPermissions(): List<String> {
         val base = mutableListOf(
             Manifest.permission.BLUETOOTH_CONNECT,
@@ -397,6 +382,7 @@ class TestActivity : ComponentActivity() {
             }
             !bluetoothState.value -> {
                 logger.w(UI_TAG, "Bluetooth is OFF. Prompting user to enable.")
+                Toast.makeText(this, "Please enable Bluetooth to continue.", Toast.LENGTH_SHORT).show()
                 requestEnableBluetooth()
             }
             !hasCriticalPermissions() -> {
@@ -525,7 +511,7 @@ class TestActivity : ComponentActivity() {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = "Moncchichi",
+                        text = "Moncchichi BLE Hub",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -538,7 +524,7 @@ class TestActivity : ComponentActivity() {
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = when (connectionState) {
-                            G1ConnectionState.CONNECTED -> "Status: Connected"
+                            G1ConnectionState.CONNECTED -> "Status: Connected ✅"
                             G1ConnectionState.CONNECTING -> "Status: Connecting…"
                             G1ConnectionState.RECONNECTING -> "Status: Reconnecting…"
                             else -> "Status: Disconnected"
@@ -563,6 +549,26 @@ class TestActivity : ComponentActivity() {
                 )
             }
 
+            NearbyDevicesSection(
+                devices = devices,
+                bluetoothOn = bluetoothOn,
+                hasScanPermission = hasScanPermission,
+                pairingStatuses = pairingStatuses,
+                bondedDevices = bondedDevices,
+                cachedDevice = cachedDevice,
+                previouslyPaired = previouslyPaired,
+                onSelect = { onDeviceSelected(it) },
+                onPair = { requestDeviceBond(it) },
+                onRescan = { rescanNearby() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
+
+            if (connectedGlasses.isNotEmpty()) {
+                G1SummaryBox(connectedGlasses)
+            }
+
             Button(
                 onClick = { handleConnectAction() },
                 enabled = buttonUi.enabled && bluetoothSupported && bluetoothOn && hasCriticalPermissions,
@@ -577,30 +583,11 @@ class TestActivity : ComponentActivity() {
 
             StatusConsole(
                 logs = logs,
+                contextFallback = contextMessage,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(0.3f, fill = true)
+                    .heightIn(min = 120.dp, max = 240.dp)
             )
-
-            NearbyDevicesSection(
-                devices = devices,
-                bluetoothOn = bluetoothOn,
-                hasScanPermission = hasScanPermission,
-                pairingStatuses = pairingStatuses,
-                bondedDevices = bondedDevices,
-                cachedDevice = cachedDevice,
-                previouslyPaired = previouslyPaired,
-                onSelect = { onDeviceSelected(it) },
-                onPair = { requestDeviceBond(it) },
-                onRescan = { rescanNearby() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(0.7f, fill = true)
-            )
-
-            if (connectedGlasses.isNotEmpty()) {
-                G1SummaryBox(connectedGlasses)
-            }
         }
     }
 
@@ -633,7 +620,11 @@ class TestActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun StatusConsole(logs: List<MoncchichiLogger.LogEvent>, modifier: Modifier = Modifier) {
+    private fun StatusConsole(
+        logs: List<MoncchichiLogger.LogEvent>,
+        contextFallback: String,
+        modifier: Modifier = Modifier,
+    ) {
         val listState = rememberLazyListState()
         LaunchedEffect(logs.size) {
             if (logs.isNotEmpty()) {
@@ -655,21 +646,28 @@ class TestActivity : ComponentActivity() {
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    state = listState
-                ) {
-                    if (logs.isEmpty()) {
-                        item {
-                            Text(
-                                text = "Waiting for activity…",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    } else {
+                if (logs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = contextFallback,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        state = listState,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         items(logs) { event ->
                             val timestamp = formatter.format(Date(event.timestamp))
                             val color = when (event.priority) {
