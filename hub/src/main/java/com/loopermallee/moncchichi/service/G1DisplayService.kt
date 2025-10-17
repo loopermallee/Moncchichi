@@ -18,13 +18,16 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.TestActivity
+import com.loopermallee.moncchichi.bluetooth.DeviceIoFacade
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
+import com.loopermallee.moncchichi.bluetooth.G1Inbound
 import io.texne.g1.hub.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +42,7 @@ class G1DisplayService : Service() {
     private val logger by lazy { MoncchichiLogger(this) }
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceManager by lazy { DeviceManager(applicationContext) }
+    private val ioFacade by lazy { DeviceIoFacade(deviceManager, serviceScope) }
     private val prefs by lazy { getSharedPreferences("g1hub", Context.MODE_PRIVATE) }
     private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
     private val bluetoothEnabled = MutableStateFlow(bluetoothAdapter?.isEnabled == true)
@@ -89,6 +93,7 @@ class G1DisplayService : Service() {
         registerPowerAwareReconnect()
         _connectionState.value = deviceManager.state.value
         deviceManager.startScanNearbyDevices()
+        ioFacade.start()
         serviceScope.launch {
             getLastDeviceAddress()?.let { last ->
                 logger.i(SERVICE_TAG, "${tt()} Attempting auto-connect to $last")
@@ -164,6 +169,14 @@ class G1DisplayService : Service() {
         }
     }
 
+    fun requestBattery(): Boolean = ioFacade.requestBattery()
+
+    fun requestFirmware(): Boolean = ioFacade.requestFirmware()
+
+    fun sendTextPage(text: String): Boolean = ioFacade.sendTextPage(text)
+
+    fun inboundFlow(): SharedFlow<G1Inbound> = ioFacade.inbound
+
     fun getConnectedDeviceName(): String? {
         return deviceManager.currentDeviceName()
     }
@@ -174,6 +187,7 @@ class G1DisplayService : Service() {
             runCatching { unregisterReceiver(receiver) }
         }
         powerReceiver = null
+        ioFacade.stop()
         deviceManager.close()
         ready.value = false
         _connectionState.value = G1ConnectionState.DISCONNECTED
@@ -349,6 +363,14 @@ class G1DisplayService : Service() {
         fun rescanNearbyDevices() {
             this@G1DisplayService.requestNearbyRescan()
         }
+
+        fun requestBattery(): Boolean = this@G1DisplayService.requestBattery()
+
+        fun requestFirmware(): Boolean = this@G1DisplayService.requestFirmware()
+
+        fun sendTextPage(text: String): Boolean = this@G1DisplayService.sendTextPage(text)
+
+        fun inbound() = this@G1DisplayService.inboundFlow()
     }
 
     fun rememberLastDevice(address: String) {

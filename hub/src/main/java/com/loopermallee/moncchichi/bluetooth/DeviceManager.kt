@@ -20,8 +20,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
@@ -44,6 +47,8 @@ class DeviceManager(
     val rssi: StateFlow<Int?> = _rssi.asStateFlow()
     private val _nearbyDevices = MutableStateFlow<List<String>>(emptyList())
     val nearbyDevices: StateFlow<List<String>> = _nearbyDevices.asStateFlow()
+    private val notificationEvents = MutableSharedFlow<ByteArray>(extraBufferCapacity = 32)
+    val notifications: SharedFlow<ByteArray> = notificationEvents.asSharedFlow()
 
     private val transactionQueueLazy = lazy { G1TransactionQueue(scope, logger) }
     private val transactionQueue: G1TransactionQueue
@@ -131,6 +136,7 @@ class DeviceManager(
                 "[BLEEvent]",
                 "${tt()} Characteristic changed: $uuid, value=${characteristic.value.toHexString()}",
             )
+            notificationEvents.tryEmit(characteristic.value.copyOf())
         }
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
@@ -198,6 +204,10 @@ class DeviceManager(
             offset += chunkLength
         }
         return true
+    }
+
+    suspend fun sendRawCommand(payload: ByteArray, label: String = "RawCommand"): Boolean {
+        return sendCommand(payload, label)
     }
 
     fun close() {
