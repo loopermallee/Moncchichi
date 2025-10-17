@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -176,6 +177,10 @@ class G1DisplayService : Service() {
     fun sendTextPage(text: String): Boolean = ioFacade.sendTextPage(text)
 
     fun inboundFlow(): SharedFlow<G1Inbound> = ioFacade.inbound
+
+    fun getTelemetryFlow(): StateFlow<List<G1TelemetryEvent>> = deviceManager.telemetryFlow
+
+    fun getCurrentDevice(): BluetoothDevice? = deviceManager.currentDevice()
 
     fun getConnectedDeviceName(): String? {
         return deviceManager.currentDeviceName()

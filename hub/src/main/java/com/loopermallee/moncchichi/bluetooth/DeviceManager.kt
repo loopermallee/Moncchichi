@@ -36,6 +36,20 @@ import kotlin.math.min
 private const val DEVICE_MANAGER_TAG = "[DeviceManager]"
 private const val RECONNECT_TAG = "[Reconnect]"
 
+data class G1TelemetryEvent(
+    val timestamp: Long = System.currentTimeMillis(),
+    val source: G1TelemetrySource,
+    val message: String,
+    val payload: ByteArray? = null,
+)
+
+enum class G1TelemetrySource {
+    APP_SEND,
+    DEVICE_SEND,
+    SERVICE,
+    SYSTEM,
+}
+
 class DeviceManager(
     private val context: Context,
 ) {
@@ -49,6 +63,8 @@ class DeviceManager(
     val nearbyDevices: StateFlow<List<String>> = _nearbyDevices.asStateFlow()
     private val notificationEvents = MutableSharedFlow<ByteArray>(extraBufferCapacity = 32)
     val notifications: SharedFlow<ByteArray> = notificationEvents.asSharedFlow()
+    private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
+    val telemetryFlow: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
 
     private val transactionQueueLazy = lazy { G1TransactionQueue(scope, logger) }
     private val transactionQueue: G1TransactionQueue
@@ -132,11 +148,13 @@ class DeviceManager(
             characteristic: BluetoothGattCharacteristic,
         ) {
             val uuid = characteristic.uuid.toString()
+            val payload = characteristic.value.copyOf()
             logger.debug(
                 "[BLEEvent]",
-                "${tt()} Characteristic changed: $uuid, value=${characteristic.value.toHexString()}",
+                "${tt()} Characteristic changed: $uuid, value=${payload.toHexString()}",
             )
-            notificationEvents.tryEmit(characteristic.value.copyOf())
+            logTelemetry(G1TelemetrySource.DEVICE_SEND, "Notify: $uuid", payload)
+            notificationEvents.tryEmit(payload)
         }
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
@@ -274,6 +292,7 @@ class DeviceManager(
     }
 
     private suspend fun sendCommand(payload: ByteArray, label: String): Boolean {
+        logTelemetry(G1TelemetrySource.APP_SEND, "SendCommand: $label", payload)
         return transactionQueue.run(label) {
             writePayload(payload)
         }
@@ -382,6 +401,7 @@ class DeviceManager(
             connectionMutex.withLock {
                 updateState(G1ConnectionState.CONNECTING)
                 logger.i(DEVICE_MANAGER_TAG, "${tt()} Connecting to ${device.address}")
+                logTelemetry(G1TelemetrySource.SERVICE, "Connecting to ${device.address}")
                 gatt?.close()
                 gatt = device.connectGatt(context, false, gattCallback)
                 if (gatt == null) {
@@ -403,6 +423,7 @@ class DeviceManager(
         var delayMs = 2_000L
         repeat(maxRetries) { attempt ->
             logger.debug(RECONNECT_TAG, "${tt()} Attempt ${attempt + 1}")
+            logTelemetry(G1TelemetrySource.SYSTEM, "Reconnecting attempt #${attempt + 1}")
             if (tryReconnectInternal()) return true
             delay(delayMs)
             delayMs = min(delayMs * 2, 30_000L)
@@ -442,6 +463,13 @@ class DeviceManager(
         scope.launch {
             reconnectWithBackoff()
         }
+    }
+
+    private fun logTelemetry(source: G1TelemetrySource, message: String, payload: ByteArray? = null) {
+        val event = G1TelemetryEvent(System.currentTimeMillis(), source, message, payload)
+        val updated = (_telemetryFlow.value + event).takeLast(500)
+        _telemetryFlow.value = updated
+        logger.i("[Telemetry]", "$source → $message (${payload?.size ?: 0} bytes)")
     }
 
     private fun ByteArray?.toHexString(): String {

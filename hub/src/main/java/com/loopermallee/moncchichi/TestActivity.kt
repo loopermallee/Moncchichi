@@ -19,14 +19,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -44,6 +47,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
@@ -65,8 +69,11 @@ import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
+import com.loopermallee.moncchichi.bluetooth.G1TelemetrySource
 import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.ui.screens.G1DataConsoleScreen
+import com.loopermallee.moncchichi.ui.shared.LocalServiceConnection
+import com.loopermallee.moncchichi.ui.shared.rememberTelemetryLog
 import io.texne.g1.basis.client.G1ServiceClient
 import io.texne.g1.basis.client.G1ServiceCommon
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,8 +81,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 class TestActivity : ComponentActivity() {
@@ -86,6 +91,7 @@ class TestActivity : ComponentActivity() {
     private var displayService: G1DisplayService? = null
     private lateinit var scanner: BluetoothScanner
     private val binderState = MutableStateFlow<G1DisplayService.LocalBinder?>(null)
+    private val serviceState = MutableStateFlow<G1DisplayService?>(null)
     private val hubState = MutableStateFlow<G1ServiceCommon.State?>(null)
     private var serviceClient: G1ServiceClient? = null
 
@@ -103,6 +109,7 @@ class TestActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val localBinder = binder as? G1DisplayService.LocalBinder
             displayService = localBinder?.getService()
+            serviceState.value = displayService
             binderState.value = localBinder
             serviceBound = true
             lifecycleScope.launch {
@@ -117,6 +124,7 @@ class TestActivity : ComponentActivity() {
         override fun onServiceDisconnected(name: ComponentName?) {
             serviceBound = false
             displayService = null
+            serviceState.value = null
             binderState.value = null
         }
     }
@@ -146,7 +154,14 @@ class TestActivity : ComponentActivity() {
         refreshBondedDevices()
         registerBluetoothReceiver()
         registerBondReceiver()
-        setContent { MaterialTheme { MoncchichiHome() } }
+        setContent {
+            MaterialTheme {
+                val service by serviceState.collectAsState()
+                CompositionLocalProvider(LocalServiceConnection provides service) {
+                    MoncchichiHome()
+                }
+            }
+        }
         ensurePermissions()
         lifecycleScope.launch {
             MoncchichiLogger.logEvents().collect { event ->
@@ -284,6 +299,7 @@ class TestActivity : ComponentActivity() {
             runCatching { unbindService(connection) }
             serviceBound = false
             displayService = null
+            serviceState.value = null
             binderState.value = null
         }
     }
@@ -533,26 +549,6 @@ class TestActivity : ComponentActivity() {
             .mapNotNull { it?.firmwareVersion }
             .firstOrNull()
 
-        val formatter = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-        val consoleMessages = remember(logs) {
-            logs.takeLast(50).map { event ->
-                val timestamp = formatter.format(Date(event.timestamp))
-                buildString {
-                    append("[")
-                    append(timestamp)
-                    append("] ")
-                    append(event.tag)
-                    append(": ")
-                    append(event.message)
-                    event.throwable?.let {
-                        append("\n")
-                        append("   ")
-                        append(it)
-                    }
-                }
-            }
-        }
-
         val bleDevices = remember(devices, pairingStatuses, bondedDevices, cachedDevice, previouslyPaired) {
             devices.map { discovered ->
                 val pairingStatus = pairingStatuses[discovered.address]
@@ -583,7 +579,7 @@ class TestActivity : ComponentActivity() {
             leftConnected = leftGlasses?.status == G1ServiceCommon.GlassesStatus.CONNECTED,
             firmwareVersion = firmwareVersion,
             devices = bleDevices,
-            consoleLogs = if (consoleMessages.isNotEmpty()) consoleMessages else listOf(contextMessage),
+            connectionState = connectionState,
             connectButtonLabel = buttonUi.label,
             connectButtonColor = buttonUi.color,
             connectButtonEnabled = buttonUi.enabled && bluetoothSupported && bluetoothOn && hasCriticalPermissions,
@@ -657,6 +653,23 @@ class TestActivity : ComponentActivity() {
         onNavigateToDataConsole: () -> Unit,
     ) {
         val scrollState = rememberScrollState()
+        val service = LocalServiceConnection.current
+        val telemetry = rememberTelemetryLog(service)
+        val listState = rememberLazyListState()
+        LaunchedEffect(telemetry.size) {
+            if (telemetry.isNotEmpty()) {
+                listState.animateScrollToItem(telemetry.lastIndex)
+            }
+        }
+        val device = service?.getCurrentDevice()
+        val deviceName = device?.name ?: state.connectedDeviceName ?: "None"
+        val mac = device?.address ?: "N/A"
+        val bannerTarget = when (state.connectionState) {
+            G1ConnectionState.CONNECTED -> Color(0xFF4CAF50)
+            G1ConnectionState.RECONNECTING -> Color(0xFFFFC107)
+            else -> Color(0xFFF44336)
+        }
+        val bannerColor by animateColorAsState(bannerTarget, animationSpec = tween(600), label = "hubBanner")
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -670,6 +683,41 @@ class TestActivity : ComponentActivity() {
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Text(
+                    text = "Connected Device: $deviceName",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "MAC: $mac",
+                    color = Color(0xFF9E9E9E),
+                    fontSize = 12.sp
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(bannerColor, RoundedCornerShape(8.dp))
+                        .padding(12.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Status: ${state.connectionState.name}",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = state.statusMessage,
+                            color = Color.White.copy(alpha = 0.9f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "Service: ${state.serviceStatus}",
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
                 if (state.isConnected) {
                     val rightBattery = state.rightBattery
                     val leftBattery = state.leftBattery
@@ -750,45 +798,60 @@ class TestActivity : ComponentActivity() {
                     }
                 }
 
-                val logs = state.consoleLogs.takeIf { it.isNotEmpty() } ?: listOf(state.statusMessage)
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 220.dp)
+                        .heightIn(min = 160.dp, max = 260.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF151515)),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF151515))
                 ) {
                     Column(
                         modifier = Modifier
-                            .padding(12.dp)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            "🔍 Connection Console",
+                            "📡 Live Telemetry",
                             fontWeight = FontWeight.Bold,
                             color = Color.White
                         )
-                        Spacer(Modifier.height(2.dp))
-                        Text("Device: ${state.connectedDeviceName ?: "—"}", color = Color.Gray)
-                        Text("State: ${state.connectionStatus}", color = state.connectionStatusColor)
-                        Text("Service: ${state.serviceStatus}", color = Color.Gray)
-                        Spacer(Modifier.height(6.dp))
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 60.dp, max = 120.dp)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            logs.forEach { message ->
+                        if (telemetry.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 80.dp, max = 140.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text(
-                                    text = message,
-                                    color = Color(0xFFCCCCCC),
-                                    fontSize = 12.sp
+                                    text = "Waiting for BLE activity…",
+                                    color = Color(0xFF9E9E9E),
+                                    textAlign = TextAlign.Center
                                 )
                             }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 80.dp, max = 140.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                state = listState
+                            ) {
+                                items(telemetry) { event ->
+                                    val color = when (event.source) {
+                                        G1TelemetrySource.APP_SEND -> Color.Cyan
+                                        G1TelemetrySource.DEVICE_SEND -> Color(0xFFB388FF)
+                                        G1TelemetrySource.SERVICE -> Color(0xFFFFB300)
+                                        G1TelemetrySource.SYSTEM -> Color.Gray
+                                    }
+                                    Text(
+                                        text = "[${event.source}] ${event.message}",
+                                        color = color,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
                         }
-                        Spacer(Modifier.height(8.dp))
                         Button(
                             onClick = onConnect,
                             enabled = state.connectButtonEnabled,
@@ -803,7 +866,6 @@ class TestActivity : ComponentActivity() {
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Spacer(Modifier.height(8.dp))
                         Button(
                             onClick = onNavigateToDataConsole,
                             modifier = Modifier
@@ -945,6 +1007,7 @@ class TestActivity : ComponentActivity() {
         val serviceStatus: String,
         val statusMessage: String,
         val isConnected: Boolean,
+        val connectionState: G1ConnectionState,
         val pairedGlasses: List<G1ServiceCommon.Glasses>?,
         val rightBattery: Int?,
         val leftBattery: Int?,
@@ -953,7 +1016,6 @@ class TestActivity : ComponentActivity() {
         val leftConnected: Boolean?,
         val firmwareVersion: String?,
         val devices: List<BleDevice>,
-        val consoleLogs: List<String>,
         val connectButtonLabel: String,
         val connectButtonColor: Color,
         val connectButtonEnabled: Boolean,
