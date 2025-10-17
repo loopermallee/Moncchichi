@@ -5,6 +5,10 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -42,6 +46,14 @@ class MoncchichiLogger private constructor(
         val formatted = "$tag $message"
         Log.println(priority, DEFAULT_TAG, formatted)
         error?.let { Log.println(priority, DEFAULT_TAG, Log.getStackTraceString(it)) }
+        val event = LogEvent(
+            timestamp = System.currentTimeMillis(),
+            priority = priority,
+            tag = tag,
+            message = message,
+            throwable = error?.let { Log.getStackTraceString(it) }
+        )
+        logStream.tryEmit(event)
         val entry = buildString {
             append(dateFormat.format(Date()))
             append(' ')
@@ -139,6 +151,22 @@ class MoncchichiLogger private constructor(
         private const val MAX_FILE_BYTES = 1_000_000L
         private const val LOG_FILE_RETENTION = 3
 
+        private val logStream = MutableSharedFlow<LogEvent>(
+            replay = 50,
+            extraBufferCapacity = 150,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST
+        )
+
         operator fun invoke(context: Context): MoncchichiLogger = MoncchichiLogger(context)
+
+        fun logEvents(): SharedFlow<LogEvent> = logStream.asSharedFlow()
     }
+
+    data class LogEvent(
+        val timestamp: Long,
+        val priority: Int,
+        val tag: String,
+        val message: String,
+        val throwable: String? = null,
+    )
 }
