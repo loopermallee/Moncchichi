@@ -1,161 +1,83 @@
-# 🧠 Moncchichi BLE Hub
-Total Progress: 🟩 ~100 % complete 🔺 (auto-updated 2025-10-17 22:24 SGT)
+# 🧠 Moncchichi
 
-### Overview
-Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.  
-It provides a fault-tolerant connection layer that now supports **G1 data console communication**, with upcoming plans for **ChatGPT assistant**, **teleprompter overlays**, **diagnostic telemetry**, and **smart transport HUDs** via the **ArriveLah** integration.
-
-> 🎯 **Current priority:** Core BLE stability, diagnostics, and real-time data exchange reliability.
+Moncchichi is a collection of Android components that build a reliable Bluetooth Low Energy (BLE) pipeline for the Even Realities G1 smart glasses. The repository contains the background service that manages the connection, a Jetpack Compose hub for pairing and diagnostics, a teleprompter/subtitles companion, and helper libraries that make it possible for any client app to speak to the glasses.
 
 ---
 
-## ⚙️ Architecture Overview
-
-| Module | Description |
-|-------|-------------|
-| **service/** | Core BLE connection and state management (`DeviceManager`, `G1DisplayService`). |
-| **hub/** | UI layer, pairing dashboard, indicators, device table, Permissions Center, and G1 Data Console. |
-| **core/** | Shared utilities (logger, enums, helpers). |
-| **client/** | External communication bridge (assistant / remote control). |
-| **aidl/** | IPC layer for inter-module communication. |
-| **subtitles/** | Reserved for teleprompter & caption streaming. |
+## Current capabilities
+- **Binder backed BLE service** – `service/` exposes a foreground `G1DisplayService` that keeps a persistent BLE session alive, persists reconnect hints, surfaces heartbeat telemetry, and accepts direct connect requests from trusted clients.【F:service/src/main/java/com/loopermallee/moncchichi/bluetooth/G1DisplayService.kt†L1-L143】【F:service/src/main/java/com/loopermallee/moncchichi/bluetooth/G1DisplayService.kt†L180-L268】
+- **Soul Tether hub app** – `hub/` ships a Compose driven dashboard for scanning, selecting, and controlling glasses, a connection log, and a dedicated data console for manual protocol experiments.【F:hub/src/main/AndroidManifest.xml†L1-L41】【F:hub/src/main/java/com/loopermallee/moncchichi/ui/screens/G1DataConsoleScreen.kt†L1-L115】
+- **Client APIs** – `client/` provides the `G1ServiceManager` and `G1ServiceClient` wrappers so external processes can bind to the service, observe state, and push formatted pages or free-form messages without touching AIDL directly.【F:client/src/main/java/io/texne/g1/basis/client/G1ServiceManager.kt†L1-L116】【F:client/src/main/java/io/texne/g1/basis/client/G1ServiceCommon.kt†L1-L123】【F:client/src/main/java/io/texne/g1/basis/client/G1ServiceClient.kt†L1-L110】
+- **Speech driven subtitles demo** – `subtitles/` is a standalone Hilt + Compose app that streams Android SpeechRecognizer partial results to the glasses, manages a queue of paged captions, and renders a HUD preview overlay for live debugging.【F:subtitles/src/main/java/io/texne/g1/subtitles/ui/SubtitlesScreen.kt†L1-L142】【F:subtitles/src/main/java/io/texne/g1/subtitles/ui/SubtitlesViewModel.kt†L1-L157】【F:subtitles/src/main/java/io/texne/g1/subtitles/model/Recognizer.kt†L1-L104】
+- **AIDL contract packages** – `aidl/` defines the shared IPC surface (`IG1Service`, `IG1ServiceClient`, parcelable `G1Glasses`, and state callbacks) that both the hub and subtitles modules depend on.【F:aidl/src/main/aidl/io/texne/g1/basis/service/protocol/IG1Service.aidl†L1-L38】【F:aidl/src/main/aidl/io/texne/g1/basis/service/protocol/G1Glasses.aidl†L1-L44】
+- **Sample display service** – `android/app/` embeds a minimal implementation of `IG1DisplayService` and a native activity that demonstrates driving the on-device renderer from a plain Android Activity.【F:android/app/src/main/java/io/texne/g1/basis/service/G1DisplayService.kt†L1-L135】【F:android/app/src/main/java/com/teleprompter/MainActivity.kt†L1-L55】
 
 ---
 
-## 📊 Auto Progress Tracker
-
-| Category | Last Updated | Status | % Complete | Trend |
-|---|---|---|---:|:---:|
-| Build System | 2025-10-17 | ✅ Stable (Gradle 8.10; Kotlin 2.x ready) | **100%** | ➖ |
-| BLE Core (Service) | 2025-10-17 | 🟢 Stable and functional (bidirectional data flow; `connect(address)` live-tested) | **95%** | 🔺 +10% |
-| Diagnostics & Recovery | 2025-10-17 | ⚙️ Advanced (contextual troubleshooting checklist + real-time logs) | **70%** | 🔺 +15% |
-| UX / Structural Polish | 2025-10-17 | 🟢 Upgraded (dynamic state UI, scrollable table, Permissions Center, Data Console UI) | **80%** | 🔺 +8% |
-| Assistant & Teleprompter | 2025-10-17 | 💤 Deferred (architecture placeholder only) | **10%** | ➖ |
-| Smart Mobility Layer | 2025-10-17 | 🟦 Planned (ArriveLah bus arrival integration) | **0%** | ➖ |
-
-**Total Progress:** 🟩 **~82 % complete**
-
-> Notes:
-> - Added **G1 Data Console screen** (real BLE command send/receive with device feedback).  
-> - Improved **troubleshooting checklist** with real-time Bluetooth on/off and connection context.  
-> - Introduced **dynamic pairing console** (live MAC + device name).  
-> - Started design groundwork for **ArriveLah integration** (bus arrival HUD).  
+## Module map
+| Module | What it contains |
+| --- | --- |
+| `core/` | Shared BLE models (`G1Device`, connection state enums) and logging utilities used by the service and hub.【F:core/src/main/java/io/texne/g1/basis/core/G1BLEManager.kt†L1-L53】【F:core/src/main/java/com/loopermallee/moncchichi/bluetooth/G1ConnectionState.kt†L1-L54】 |
+| `service/` | The foreground BLE manager, reconnection heuristics, telemetry flow, and binder exposed commands (`connect`, `sendMessage`, display helpers).【F:service/src/main/java/com/loopermallee/moncchichi/bluetooth/G1DisplayService.kt†L1-L224】 |
+| `hub/` | Soul Tether Compose UI, data console, pairing dashboard, service binding repository, and instrumentation entry points.【F:hub/src/main/java/io/texne/g1/hub/model/Repository.kt†L1-L70】【F:hub/src/main/java/io/texne/g1/hub/ui/ApplicationViewModel.kt†L1-L135】 |
+| `client/` | Thin Kotlin APIs that hide binder boilerplate and expose high level helpers to display formatted pages or start discovery without managing `ServiceConnection` manually.【F:client/src/main/java/io/texne/g1/basis/client/G1ServiceCommon.kt†L1-L123】【F:client/src/main/java/io/texne/g1/basis/client/G1ServiceManager.kt†L1-L116】 |
+| `subtitles/` | Speech recognizer pipeline, HUD preview overlay, and caption pagination logic for the teleprompter experience.【F:subtitles/src/main/java/io/texne/g1/subtitles/model/Repository.kt†L1-L146】【F:subtitles/src/main/java/io/texne/g1/subtitles/ui/G1HudOverlay.kt†L1-L120】 |
+| `android/app/` | The sample display service that mirrors teleprompter commands and a barebones UI to exercise it.【F:android/app/src/main/java/io/texne/g1/basis/service/G1DisplayService.kt†L1-L135】 |
+| `aidl/` | Parcelable and binder interface definitions shared by every module that binds to the BLE service.【F:aidl/src/main/aidl/io/texne/g1/basis/service/protocol/IG1Service.aidl†L1-L38】 |
+| `docs/` | Engineering notes (for example the nullability audit that tracks Kotlin vs AIDL guarantees).【F:docs/nullability-audit.md†L1-L15】 |
 
 ---
 
-## 🧩 Development Roadmap (Stability-first)
-
-### Phase 2A — Core Stabilization *(Current)*
-**Goal:** No deadlocks, quick recovery, predictable lifecycle.
-
-- ✅ Expose `connect(address)` in `G1DisplayService` (manual selection flows).
-- ✅ Compose-state driven pairing dashboard (connection state, Bluetooth on/off, battery, device table).
-- ✅ Scrollable device table (shows **name + MAC**; tap to connect).
-- ✅ Dynamic connection states: **CONNECTING → CONNECTED → DISCONNECTED → RECONNECTING**.
-- ✅ Bidirectional BLE data exchange verified via Data Console.
-- 🟡 Reconnect heuristics with bounded exponential backoff (tune intervals & limits).
-- 🟡 Foreground service audit: verify service restarts after process reclaim.
-- 🔜 GATT timeouts & safe cancellation wrappers for long ops.
-
-**Exit criteria:** 30-minute soak with 0 fatal drops and <3s average reconnect.
+## Architecture snapshot
+1. **AIDL contract** – `aidl/` defines the IPC shape for service discovery, glass status, display commands, and telemetry callbacks.【F:aidl/src/main/aidl/io/texne/g1/basis/service/protocol/IG1StateCallback.aidl†L1-L26】
+2. **Foreground BLE service** – `service/` binds to the Android BLE stack, tracks connection state, and publishes binder methods consumed by higher layers.【F:service/src/main/java/com/loopermallee/moncchichi/bluetooth/G1DisplayService.kt†L1-L224】
+3. **Client wrappers** – `client/` turns binder APIs into coroutines, adds formatting helpers, and normalizes optional fields like battery percentage.【F:client/src/main/java/io/texne/g1/basis/client/G1ServiceCommon.kt†L1-L123】
+4. **Hub UI** – `hub/` binds to `G1ServiceManager`, renders Compose screens for discovery and telemetry, and lets developers send test payloads from the data console.【F:hub/src/main/java/io/texne/g1/hub/model/Repository.kt†L1-L70】【F:hub/src/main/java/com/loopermallee/moncchichi/ui/screens/G1DataConsoleScreen.kt†L1-L115】
+5. **Companion apps** – `subtitles/` and the sample `android/app/` consume the same client API to provide specialized experiences (speech-driven captions or native teleprompter controls).【F:subtitles/src/main/java/io/texne/g1/subtitles/model/Repository.kt†L1-L146】【F:android/app/src/main/java/com/teleprompter/MainActivity.kt†L1-L55】
 
 ---
 
-### Phase 2B — Diagnostics & Recovery Tools
-**Goal:** See problems as they happen and self-heal.
-
-- ✅ Live pairing log in UI (handshake steps, failures, last error).
-- ✅ Contextual troubleshooting checklist (Bluetooth on/off ✔, scanning… ⏳, device found ✔/✖, services discovered ⏳/✔, notifications enabled ⏳/✔).
-- 🟡 Persist last 200 log lines (ring buffer) and surface in UI.
-- 🔜 “Tap-to-Inspect” overlay to show recent BLE events without leaving screen.
-- 🔜 Optional verbose mode: CCCD writes, MTU, PHY, characteristic errors.
-
-**Exit criteria:** A user can identify where a failure occurred in ≤10s without adb logs.
+## Prerequisites
+- Android Studio Koala Feature Drop (2024.1.2) or newer with AGP 8.8 support.
+- Android SDK 34 and latest Google Play services repos.
+- JDK 17 (Gradle and Kotlin toolchains are configured for Java 17).【F:build.gradle.kts†L1-L41】
+- A device or emulator with Bluetooth LE (hardware testing recommended for G1 glasses).
 
 ---
 
-### Phase 3 — UX & Permissions Polish
-**Goal:** Frictionless first run and clear controls.
+## Build & run
+1. **Sync the project**
+   ```bash
+   ./gradlew tasks
+   ```
+   This also downloads the shared `basis` dependencies declared in `gradle/libs.versions.toml` (Kotlin 1.9.24, Compose BOM 2025.01).【F:gradle/libs.versions.toml†L1-L44】
+2. **Assemble the hub**
+   ```bash
+   ./gradlew :hub:assembleDebug
+   ```
+   Install the resulting APK to interact with the Soul Tether dashboard and data console.
+3. **Run the subtitles demo**
+   ```bash
+   ./gradlew :subtitles:installDebug
+   ```
+   Once the hub service is installed on the same device, launch the subtitles app to stream speech recognition results to the glasses via the shared binder.
+4. **Exercise the standalone display service**
+   ```bash
+   ./gradlew :android:app:installDebug
+   ```
+   This deploys the sample `IG1DisplayService` implementation used by the teleprompter activity.
 
-- ✅ **Permissions Center** screen (read-only status list + **Grant All** trigger; updates if user revokes later).
-- ✅ Bottom-bar shortcut to open Permissions Center from pairing screen.
-- ✅ Bluetooth state indicator chip that updates in real time.
-- ✅ Battery badge with color: **green ≥ 50%**, **yellow 20–49%**, **red < 20%**.
-- 🔜 First-run onboarding: short 3-step guide (enable BT → grant permissions → connect).
-- 🔜 Micro-animations (subtle fade for checklist rows, progress pulses during handshake).
-
-**Exit criteria:** New users can pair and understand state without trial & error.
-
----
-
-### Phase 4 — Release Engineering
-**Goal:** Repeatable builds and app stability score.
-
-- ✅ CI build green on hub/core/service modules.
-- 🔜 Strict lint + baseline; treat warnings as errors (module by module).
-- 🔜 Crash & ANR monitoring (open-source friendly; file-based breadcrumbs).
-- 🔜 Compatibility matrix (Android 10–14; Bluetooth stacks variance notes).
-
-**Exit criteria:** Reproducible release build with changelog and stability report.
-
----
-
-### Phase 5 — Feature Expansion (Deferred)
-**Goal:** Add value once the BLE transport layer is fully stable.
-
-| Category | Planned Features | Source / Reference | Notes |
-|-----------|------------------|--------------------|-------|
-| Teleprompter / Captions | Reinstate `subtitles/` rendering path | Even SDK + Gadgetbridge text overlay | Requires stable GATT streaming |
-| Assistant Bridge | ChatGPT integration via bounded timeout | Moncchichi client module | Gated by BLE stability |
-| CommandQueue | Orderly write/read operations | Gadgetbridge core BLE engine | Prevents characteristic collision |
-| Device Bonding & Pair Cache | Persist bond info for instant reconnect | Gadgetbridge `DeviceSupport` | Critical for seamless UX |
-| Battery & Charging State | Report both glasses + case battery levels | Gadgetbridge `BatteryInfo` | Color-coded icons (green ≥50%, yellow 20–49%, red <20%) |
-| Device Info Display | Serial #, hardware revision, firmware | Gadgetbridge `DeviceInfo` | Optional “Copy / QR Export” |
-| Weather Sync | Fetch & push local weather data | Gadgetbridge `WeatherService` | Needs location + network permission |
-| Notifications | Mirror phone notifications | Gadgetbridge `NotificationCenter` | Optional per-app filter |
-| Settings Sync | Centralize device preferences | Gadgetbridge `SettingsSupport` | Integrates into Permissions/Settings hub |
-| Silent Mode | Turn off HUD display remotely | Gadgetbridge display control | Quick-toggle button in dashboard |
-| Screen Position / Height | Adjust HUD placement | Gadgetbridge `ScreenConfig` | Saved per device profile |
-| Depth Effect | Simulated HUD depth offset | Gadgetbridge UI extensions | Optional visual mode |
-| Head Tilt Activation Angle | Configure gesture sensitivity | Gadgetbridge `SensorControl` | Calibration with live feedback |
-| Auto Brightness | Ambient light-driven adjustment | Gadgetbridge `LightSensorService` | Requires firmware support |
-| Manual Brightness Level | Adjustable brightness slider | Gadgetbridge `DisplayControl` | Range 0–100% |
-| Wear Detection | Detect on/off-face status | Gadgetbridge `WearDetection` | Auto sleep/wake for battery saving |
-| 12h / 24h Time Mode | Clock format switch | Gadgetbridge `TimeFormat` | Mirrors system locale |
-| Minimal Dashboard on Connect | Hide non-critical widgets when paired | Gadgetbridge `DashboardMode` | Optional toggle for cleaner UI |
-
-🟦 **Progress:** ~10 % (research and architecture planning)  
-🕓 **Next step:** Design a modular *Capability Profile* layer referencing Gadgetbridge’s open-source implementations while keeping Moncchichi’s UX consistent.
-
-**Exit criteria:** Features gated by a stable BLE layer (no regressions).
+Unit tests are not yet wired up for the modules; rely on the Gradle assemble tasks and device-level smoke tests when validating changes.
 
 ---
 
-### Phase 6 — Smart Mobility Layer *(Planned)*
-**Goal:** Integrate public-transport data and display bus arrivals via Even G1.
-
-| Category | Planned Features | Source / Reference | Notes |
-|-----------|------------------|--------------------|-------|
-| Bus Arrival Integration | Fetch real-time bus arrivals | [cheeaun/arrivelah](https://github.com/loopermallee/cheeaun-arrivelah) | GPS-aware; uses LTA DataMall |
-| Favorite Services | Save & display selected buses | Moncchichi DataStore | Mirrors HUD overlay |
-| Location Sync | Detect nearest stop automatically | Fused Location Provider | Battery-aware polling |
-| HUD Display | Push arrivals to Even G1 | G1 Data Console Protocol | Text overlay on right lens |
-| Voice Query | “When’s my next bus?” | ChatGPT Assistant Bridge | Spoken or textual feedback |
-
-🟦 **Progress:** ~0 % (architecture planning)  
-🕓 **Next step:** Prototype `BusArrivalService` using your hosted ArriveLah API.
+## Development notes
+- All modules use Kotlin coroutines for asynchronous work; service-level flows surface connection status, battery telemetry, and speech recognition events.【F:service/src/main/java/com/loopermallee/moncchichi/bluetooth/G1DisplayService.kt†L24-L93】【F:subtitles/src/main/java/io/texne/g1/subtitles/model/Repository.kt†L33-L67】
+- Jetpack Compose + Material 3 drive both hub and subtitles UIs, with Hilt providing dependency injection across modules.【F:hub/src/main/java/io/texne/g1/hub/G1HubApplication.kt†L1-L8】【F:subtitles/src/main/java/io/texne/g1/subtitles/ui/SubtitlesScreen.kt†L1-L142】
+- Speech recognition, formatted display helpers, and HUD overlays live in their own modules to keep the BLE service lean and testable.【F:subtitles/src/main/java/io/texne/g1/subtitles/model/Recognizer.kt†L1-L104】【F:client/src/main/java/io/texne/g1/basis/client/G1ServiceCommon.kt†L64-L123】
+- Additional engineering notes (such as nullability audits) are tracked under `docs/` to document Kotlin/AIDL guarantees.【F:docs/nullability-audit.md†L1-L15】
 
 ---
 
-## 🚧 Issue History
-_Auto-maintained by Codex on each merge._
-- 2025-10-17 22:24 SGT — PR #80: **Revamp G1 data console experience** · delta `+2%` · tag `fix`
-## 🧠 Notes for Codex Memory
-
-- **Stability first**: reconnection heuristics with bounded backoff; no UI thread blocking.  
-- Track and display **MAC addresses** in device list; tap-to-connect via `G1DisplayService.connect(address)`.  
-- Keep **assistant/teleprompter** decoupled from BLE service until stability proven.  
-- **Dynamic UI** only: real-time Bluetooth on/off, connection phase, battery badge, scrollable device table.  
-- **Troubleshooting checklist** refreshes each connect attempt; shows per-step status.  
-- Log state transitions and last error cause; persist a small rolling buffer for on-device inspection.  
-- **ArriveLah integration** planned as Phase 6 under Smart Mobility Layer (bus arrivals + HUD overlay).  
+## License
+This project is licensed under the Apache License 2.0. See [`LICENSE`](LICENSE) for details.
