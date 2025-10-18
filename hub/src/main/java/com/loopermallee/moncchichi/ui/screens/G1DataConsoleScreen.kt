@@ -173,6 +173,7 @@ fun DeviceConsoleBody(
     LaunchedEffect(connectionState) {
         if (!isConnected) {
             battery = "—"
+            firmware = "—"
         }
         if (connectionState == G1ConnectionState.DISCONNECTED) {
             statusMessage = null
@@ -182,6 +183,7 @@ fun DeviceConsoleBody(
     DisposableEffect(binder) {
         var inboundJob: Job? = null
         var connectionJob: Job? = null
+        var vitalsJob: Job? = null
         val inboundFlow = binder?.inbound()
         if (inboundFlow != null) {
             inboundJob = scope.launch {
@@ -219,9 +221,34 @@ fun DeviceConsoleBody(
             connectionState = G1ConnectionState.DISCONNECTED
         }
 
+        val vitalsFlow = binder?.vitals()
+        if (vitalsFlow != null) {
+            vitalsJob = scope.launch {
+                vitalsFlow.collectLatest { vitals ->
+                    vitals.battery?.let { level ->
+                        battery = "$level%"
+                        batteryPulse.value = true
+                        launch {
+                            delay(400)
+                            batteryPulse.value = false
+                        }
+                    }
+                    vitals.firmware?.takeIf { it.isNotBlank() }?.let { version ->
+                        firmware = version
+                        firmwarePulse.value = true
+                        launch {
+                            delay(400)
+                            firmwarePulse.value = false
+                        }
+                    }
+                }
+            }
+        }
+
         onDispose {
             inboundJob?.cancel()
             connectionJob?.cancel()
+            vitalsJob?.cancel()
         }
     }
 

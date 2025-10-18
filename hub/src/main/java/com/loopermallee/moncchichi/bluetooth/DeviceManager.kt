@@ -3,32 +3,33 @@ package com.loopermallee.moncchichi.bluetooth
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothGattService
-import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.ble.G1BleUartClient
+import com.loopermallee.moncchichi.ble.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -48,25 +49,41 @@ class DeviceManager(
     val rssi: StateFlow<Int?> = _rssi.asStateFlow()
     private val _nearbyDevices = MutableStateFlow<List<String>>(emptyList())
     val nearbyDevices: StateFlow<List<String>> = _nearbyDevices.asStateFlow()
-    private val notificationEvents = MutableSharedFlow<ByteArray>(extraBufferCapacity = 32)
+    private val notificationEvents = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val notifications: SharedFlow<ByteArray> = notificationEvents.asSharedFlow()
+
+    private val telemetryCollector = FlowCollector<ByteArray> { payload ->
+        try {
+            val hex = payload.toHexString()
+            logTelemetry("DEVICE", "[NOTIFY]", "Notify (${payload.size} bytes) → $hex")
+            notificationEvents.tryEmit(payload)
+            G1ReplyParser.parse(payload, ::bleLog)
+        } catch (error: Throwable) {
+            logger.e(
+                DEVICE_MANAGER_TAG,
+                "${tt()} telemetry collector failure: ${error.message}",
+                error
+            )
+        }
+    }
     private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
     val telemetryFlow: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
+    val vitals: StateFlow<G1ReplyParser.DeviceVitals> = G1ReplyParser.vitalsFlow.asStateFlow()
 
     private val transactionQueueLazy = lazy { G1TransactionQueue(scope, logger) }
     private val transactionQueue: G1TransactionQueue
         get() = transactionQueueLazy.value
-    private val connectionMutex = Mutex()
-    private val connectionWaiters = mutableListOf<CompletableDeferred<Boolean>>()
 
-    private var gatt: BluetoothGatt? = null
-    private var writeCharacteristic: BluetoothGattCharacteristic? = null
-    private var notifyCharacteristic: BluetoothGattCharacteristic? = null
+    private val connectionMutex = Mutex()
+
+    private var bleClient: G1BleUartClient? = null
     private var trackedDevice: BluetoothDevice? = null
-    @Volatile
-    private var isInitializing = false
+    private var incomingJob: Job? = null
+    private var clientStateJob: Job? = null
+    private var clientRssiJob: Job? = null
     private var rssiJob: Job? = null
     private var scanCallback: ScanCallback? = null
+    private var reconnectJob: Job? = null
 
     init {
         logger.i(
@@ -75,84 +92,45 @@ class DeviceManager(
         )
     }
 
-    private fun requireGatt(): BluetoothGatt? {
-        if (gatt == null) {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} Gatt not initialized yet – skipping action")
-            return null
-        }
-        return gatt
+    private fun bleLog(message: String) {
+        logger.i(DEVICE_MANAGER_TAG, "${tt()} $message")
+        logTelemetry("BLE", "[LOG]", message)
     }
 
-    // NOTE: All BLE actions must check requireGatt() before use
-    // This replaces previous lateinit usage to avoid Kotlin compiler crashes
+    fun currentDevice(): BluetoothDevice? = trackedDevice
 
-    private val gattCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            logger.i(DEVICE_MANAGER_TAG, "${tt()} Gatt state change status=$status newState=$newState")
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    this@DeviceManager.gatt = gatt
-                    trackedDevice = gatt.device
-                    updateState(G1ConnectionState.CONNECTED)
-                    startRssiMonitor()
-                    gatt.discoverServices()
-                    completeWaiters(true)
-                }
-                BluetoothProfile.STATE_CONNECTING -> {
-                    updateState(G1ConnectionState.CONNECTING)
-                }
-                BluetoothProfile.STATE_DISCONNECTING -> {
-                    updateState(G1ConnectionState.RECONNECTING)
-                }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    logger.w(DEVICE_MANAGER_TAG, "${tt()} Disconnected from ${gatt.device.address}")
-                    cleanup()
-                    val targetState = if (_stateFlow.value == G1ConnectionState.DISCONNECTED) {
-                        G1ConnectionState.DISCONNECTED
-                    } else {
-                        G1ConnectionState.RECONNECTING
-                    }
-                    updateState(targetState)
-                    completeWaiters(false)
-                }
-                else -> {
-                    logger.w(DEVICE_MANAGER_TAG, "${tt()} Unknown Bluetooth state $newState")
-                }
-            }
-        }
+    fun currentDeviceName(): String? = trackedDevice?.name
 
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                logger.w(DEVICE_MANAGER_TAG, "${tt()} Service discovery failed with status $status")
-                updateState(G1ConnectionState.RECONNECTING)
-                return
-            }
-            initializeCharacteristics(gatt)
-        }
-
-        override fun onCharacteristicChanged(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-        ) {
-            val uuid = characteristic.uuid.toString()
-            val payload = characteristic.value.copyOf()
-            logger.debug(
-                "[BLEEvent]",
-                "${tt()} Characteristic changed: $uuid, value=${payload.toHexString()}",
-            )
-            logTelemetry("DEVICE", "[NOTIFY]", "Notify: $uuid (${payload.size} bytes)")
-            notificationEvents.tryEmit(payload)
-        }
-
-        override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                _rssi.value = rssi
-            } else {
-                logger.w(DEVICE_MANAGER_TAG, "${tt()} RSSI read failed: status=$status")
-            }
-        }
+    fun notifyWaiting() {
+        updateState(G1ConnectionState.RECONNECTING)
     }
 
+    fun shutdown() = scope.cancel("DeviceManager destroyed")
+
+    fun close() {
+        if (transactionQueueLazy.isInitialized()) {
+            transactionQueue.close()
+        }
+        disconnect()
+        shutdown()
+    }
+
+    fun disconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        rssiJob?.cancel()
+        rssiJob = null
+        clientStateJob?.cancel()
+        incomingJob?.cancel()
+        clientRssiJob?.cancel()
+        bleClient?.close()
+        bleClient = null
+        _rssi.value = null
+        updateState(G1ConnectionState.DISCONNECTED)
+        G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
+    }
+
+    @SuppressLint("MissingPermission")
     suspend fun connect(address: String): Boolean {
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
         return connect(adapter.getRemoteDevice(address))
@@ -164,27 +142,10 @@ class DeviceManager(
         return connectDevice(device)
     }
 
-    fun currentDevice(): BluetoothDevice? = trackedDevice
-
-    fun currentDeviceName(): String? = gatt?.device?.name
-
-    fun notifyWaiting() {
-        updateState(G1ConnectionState.RECONNECTING)
-    }
-
-    @SuppressLint("MissingPermission")
-    fun disconnect() {
-        logger.i(DEVICE_MANAGER_TAG, "${tt()} Manual disconnect requested")
-        gatt?.disconnect()
-        gatt?.close()
-        cleanup()
-        updateState(G1ConnectionState.DISCONNECTED)
-    }
-
     suspend fun reconnect(maxRetries: Int = 5): Boolean {
-        if (trackedDevice == null) return false
+        val device = trackedDevice ?: return false
         updateState(G1ConnectionState.RECONNECTING)
-        return reconnectWithBackoff(maxRetries)
+        return connectDevice(device)
     }
 
     suspend fun sendHeartbeat(): Boolean {
@@ -197,7 +158,9 @@ class DeviceManager(
 
     suspend fun sendText(message: String): Boolean {
         val payload = message.encodeToByteArray()
-        if (payload.isEmpty()) return sendCommand(byteArrayOf(BluetoothConstants.OPCODE_SEND_TEXT), "SendTextEmpty")
+        if (payload.isEmpty()) {
+            return sendCommand(byteArrayOf(BluetoothConstants.OPCODE_SEND_TEXT), "SendTextEmpty")
+        }
         var offset = 0
         while (offset < payload.size) {
             val chunkLength = min(BluetoothConstants.MAX_CHUNK_SIZE - 1, payload.size - offset)
@@ -215,26 +178,11 @@ class DeviceManager(
         return sendCommand(payload, label)
     }
 
-    fun close() {
-        if (transactionQueueLazy.isInitialized()) {
-            transactionQueue.close()
-        }
-        disconnect()
-        shutdown()
-    }
-
-    fun shutdown() = scope.cancel("DeviceManager destroyed")
-
-    @SuppressLint("MissingPermission")
     fun startRssiMonitor() {
         if (rssiJob?.isActive == true) return
         rssiJob = scope.launch {
             while (isActive) {
-                try {
-                    gatt?.readRemoteRssi()
-                } catch (t: Throwable) {
-                    logger.w(DEVICE_MANAGER_TAG, "${tt()} Failed to request RSSI", t)
-                }
+                bleClient?.readRemoteRssi()
                 delay(2_000L)
             }
         }
@@ -278,156 +226,18 @@ class DeviceManager(
         }
     }
 
-    private suspend fun sendCommand(payload: ByteArray, label: String): Boolean {
-        logTelemetry("APP", "[WRITE]", "SendCommand: $label (${payload.size} bytes)")
-        return transactionQueue.run(label) {
-            writePayload(payload)
+    fun tryReconnect() {
+        if (reconnectJob?.isActive == true) return
+        val device = trackedDevice ?: return
+        updateState(G1ConnectionState.RECONNECTING)
+        reconnectJob = scope.launch {
+            reconnectWithBackoff(device)
         }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun writePayload(payload: ByteArray): Boolean {
-        val characteristic = writeCharacteristic ?: return false.also {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; characteristic not ready")
-        }
-        characteristic.value = payload
-        return try {
-            requireGatt()?.writeCharacteristic(characteristic) ?: run {
-                logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; GATT is null")
-                false
-            }
-        } catch (t: Throwable) {
-            logger.e(DEVICE_MANAGER_TAG, "${tt()} writeCharacteristic failed", t)
-            false
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun initializeCharacteristics(gatt: BluetoothGatt) {
-        val service: BluetoothGattService? = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
-        if (service == null) {
-            logger.e(DEVICE_MANAGER_TAG, "${tt()} UART service missing")
-            updateState(G1ConnectionState.RECONNECTING)
-            return
-        }
-
-        writeCharacteristic = service.getCharacteristic(BluetoothConstants.UART_WRITE_CHARACTERISTIC_UUID)
-        notifyCharacteristic = service.getCharacteristic(BluetoothConstants.UART_READ_CHARACTERISTIC_UUID)
-
-        if (writeCharacteristic == null || notifyCharacteristic == null) {
-            logger.e(DEVICE_MANAGER_TAG, "${tt()} UART characteristics missing")
-            updateState(G1ConnectionState.RECONNECTING)
-            return
-        }
-
-        val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
-        if (!enabled) {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} Failed to enable notifications")
-            return
-        }
-
-        val cccd = notifyCharacteristic!!.getDescriptor(BluetoothConstants.CCCD_UUID)
-        if (cccd == null) {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} Missing CCCD descriptor on notify characteristic")
-            return
-        }
-
-        cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-        val wrote = try {
-            requireGatt()?.writeDescriptor(cccd) ?: false
-        } catch (t: Throwable) {
-            logger.e(DEVICE_MANAGER_TAG, "${tt()} writeDescriptor(CCCD) failed", t)
-            false
-        }
-
-        if (!wrote) {
-            logger.w(DEVICE_MANAGER_TAG, "${tt()} Failed to write CCCD descriptor")
-            return
-        }
-
-        logger.i(DEVICE_MANAGER_TAG, "${tt()} Notifications enabled via CCCD")
-    }
-
-    private fun cleanup() {
-        writeCharacteristic = null
-        notifyCharacteristic = null
-        gatt = null
-        stopRssiMonitor()
-        _nearbyDevices.value = emptyList()
-    }
-
-    private fun updateState(newState: G1ConnectionState) {
-        if (_stateFlow.value == newState) return
-        logger.i(DEVICE_MANAGER_TAG, "${tt()} State ${_stateFlow.value} -> $newState")
-        _stateFlow.value = newState
-    }
-
-    private fun completeWaiters(success: Boolean) {
-        if (connectionWaiters.isEmpty()) return
-        connectionWaiters.toList().forEach { waiter ->
-            if (!waiter.isCompleted) {
-                waiter.complete(success)
-            }
-        }
-        connectionWaiters.clear()
-    }
-
-    @SuppressLint("MissingPermission")
-    private suspend fun connectDevice(device: BluetoothDevice): Boolean {
-        val proceed = synchronized(this) {
-            if (isInitializing) {
-                logger.w(DEVICE_MANAGER_TAG, "${tt()} connectDevice skipped: initialization in progress")
-                false
-            } else {
-                isInitializing = true
-                true
-            }
-        }
-        if (!proceed) return false
-        return try {
-            connectionMutex.withLock {
-                updateState(G1ConnectionState.CONNECTING)
-                logger.i(DEVICE_MANAGER_TAG, "${tt()} Connecting to ${device.address}")
-                logTelemetry("SERVICE", "[CONNECT]", "Connecting to ${device.address}")
-                gatt?.close()
-                gatt = device.connectGatt(context, false, gattCallback)
-                if (gatt == null) {
-                    logger.e(DEVICE_MANAGER_TAG, "${tt()} connectGatt returned null")
-                    updateState(G1ConnectionState.DISCONNECTED)
-                    false
-                } else {
-                    val deferred = CompletableDeferred<Boolean>()
-                    connectionWaiters += deferred
-                    withTimeoutOrNull(20_000L) { deferred.await() } ?: false
-                }
-            }
-        } finally {
-            isInitializing = false
-        }
-    }
-
-    private suspend fun reconnectWithBackoff(maxRetries: Int = 5): Boolean {
-        var delayMs = 2_000L
-        repeat(maxRetries) { attempt ->
-            logger.debug(RECONNECT_TAG, "${tt()} Attempt ${attempt + 1}")
-            logTelemetry("SYSTEM", "[RECONNECT]", "Reconnecting attempt #${attempt + 1}")
-            if (tryReconnectInternal()) return true
-            delay(delayMs)
-            delayMs = min(delayMs * 2, 30_000L)
-        }
-        updateState(G1ConnectionState.DISCONNECTED)
-        return false
-    }
-
-    private suspend fun tryReconnectInternal(): Boolean {
-        val device = trackedDevice ?: return false
-        return connectDevice(device)
-    }
-
-    @SuppressLint("MissingPermission")
-    suspend fun resilientReconnect(maxRetries: Int = 5, delayMs: Long = 8000L) {
+    suspend fun resilientReconnect(maxRetries: Int = 5, delayMs: Long = 8_000L) {
         var attempt = 0
-        while (attempt < maxRetries && _stateFlow.value != G1ConnectionState.CONNECTED) {
+        while (attempt < maxRetries && state.value != G1ConnectionState.CONNECTED) {
             attempt++
             logger.w(RECONNECT_TAG, "${tt()} reconnect attempt $attempt/$maxRetries")
             val success = reconnect()
@@ -438,24 +248,115 @@ class DeviceManager(
             }
             delay(delayMs)
         }
-        if (_stateFlow.value != G1ConnectionState.CONNECTED) {
+        if (state.value != G1ConnectionState.CONNECTED) {
             logger.e(RECONNECT_TAG, "${tt()} reconnect failed after $maxRetries attempts")
             updateState(G1ConnectionState.DISCONNECTED)
         }
     }
 
-    fun tryReconnect() {
-        val device = trackedDevice ?: return
-        updateState(G1ConnectionState.RECONNECTING)
-        scope.launch {
-            reconnectWithBackoff()
+    private suspend fun connectDevice(device: BluetoothDevice): Boolean {
+        return connectionMutex.withLock {
+            updateState(G1ConnectionState.CONNECTING)
+            trackedDevice = device
+            logTelemetry("SERVICE", "[CONNECT]", "Connecting to ${device.address}")
+            val client = G1BleUartClient(context, device, ::bleLog, scope)
+            replaceClient(client)
+            client.connect()
+            val result = withTimeoutOrNull(20_000L) {
+                client.connectionState
+                    .filter { it != G1BleUartClient.ConnectionState.CONNECTING }
+                    .first()
+            }
+            val success = result == G1BleUartClient.ConnectionState.CONNECTED
+            if (!success) {
+                logger.w(DEVICE_MANAGER_TAG, "${tt()} connectDevice timeout or failure")
+                updateState(G1ConnectionState.DISCONNECTED)
+                G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
+            }
+            success
         }
+    }
+
+    private suspend fun reconnectWithBackoff(device: BluetoothDevice, maxRetries: Int = 5): Boolean {
+        var delayMs = 2_000L
+        repeat(maxRetries) { attempt ->
+            logger.debug(RECONNECT_TAG, "${tt()} Attempt ${attempt + 1}")
+            logTelemetry("SYSTEM", "[RECONNECT]", "Reconnecting attempt #${attempt + 1}")
+            val success = connectDevice(device)
+            if (success) return true
+            delay(delayMs)
+            delayMs = min(delayMs * 2, 30_000L)
+        }
+        updateState(G1ConnectionState.DISCONNECTED)
+        return false
+    }
+
+    private fun replaceClient(client: G1BleUartClient) {
+        incomingJob?.cancel()
+        clientStateJob?.cancel()
+        clientRssiJob?.cancel()
+        bleClient?.close()
+        bleClient = client
+
+        incomingJob = scope.launch {
+            client.observeNotifications(telemetryCollector)
+        }
+
+        clientStateJob = client.connectionState.onEach { state ->
+            when (state) {
+                G1BleUartClient.ConnectionState.CONNECTED -> {
+                    updateState(G1ConnectionState.CONNECTED)
+                }
+                G1BleUartClient.ConnectionState.CONNECTING -> {
+                    updateState(G1ConnectionState.CONNECTING)
+                }
+                G1BleUartClient.ConnectionState.DISCONNECTED -> {
+                    if (this@DeviceManager.state.value == G1ConnectionState.CONNECTED) {
+                        updateState(G1ConnectionState.RECONNECTING)
+                    } else {
+                        updateState(G1ConnectionState.DISCONNECTED)
+                    }
+                    _rssi.value = null
+                    G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
+                }
+            }
+        }.launchIn(scope)
+
+        clientRssiJob = scope.launch {
+            client.rssi.collectLatest { value ->
+                _rssi.value = value
+            }
+        }
+    }
+
+    private suspend fun sendCommand(payload: ByteArray, label: String): Boolean {
+        logTelemetry("APP", "[WRITE]", "SendCommand: $label (${payload.size} bytes)")
+        return transactionQueue.run(label) {
+            writePayload(payload)
+        }
+    }
+
+    private fun writePayload(payload: ByteArray): Boolean {
+        val client = bleClient ?: return false.also {
+            logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload skipped; client not ready")
+        }
+        val ok = client.write(payload)
+        if (!ok) {
+            logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload failed to enqueue")
+        }
+        return ok
     }
 
     private fun logTelemetry(source: String, tag: String, message: String) {
         val event = G1TelemetryEvent(source = source, tag = tag, message = message)
         _telemetryFlow.value = (_telemetryFlow.value + event).takeLast(500)
         logger.i("[Telemetry]", event.toString())
+    }
+
+    private fun updateState(newState: G1ConnectionState) {
+        if (_stateFlow.value == newState) return
+        logger.i(DEVICE_MANAGER_TAG, "${tt()} State ${_stateFlow.value} -> $newState")
+        _stateFlow.value = newState
     }
 
     private fun ByteArray?.toHexString(): String {

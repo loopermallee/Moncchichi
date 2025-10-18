@@ -23,6 +23,7 @@ import com.loopermallee.moncchichi.bluetooth.DeviceIoFacade
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.bluetooth.G1Inbound
+import com.loopermallee.moncchichi.ble.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import io.texne.g1.hub.R
 import kotlinx.coroutines.CoroutineScope
@@ -180,6 +181,7 @@ class G1DisplayService : Service() {
     fun inboundFlow(): SharedFlow<G1Inbound> = ioFacade.inbound
 
     fun getTelemetryFlow(): StateFlow<List<G1TelemetryEvent>> = deviceManager.telemetryFlow
+    fun getVitalsFlow(): StateFlow<G1ReplyParser.DeviceVitals> = deviceManager.vitals
 
     fun getCurrentDevice(): BluetoothDevice? = deviceManager.currentDevice()
 
@@ -377,6 +379,8 @@ class G1DisplayService : Service() {
         fun sendTextPage(text: String): Boolean = this@G1DisplayService.sendTextPage(text)
 
         fun inbound() = this@G1DisplayService.inboundFlow()
+
+        fun vitals(): StateFlow<G1ReplyParser.DeviceVitals> = this@G1DisplayService.getVitalsFlow()
     }
 
     fun rememberLastDevice(address: String) {
