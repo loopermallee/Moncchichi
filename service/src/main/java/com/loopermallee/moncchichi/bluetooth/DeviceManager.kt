@@ -13,6 +13,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.ble.DeviceVitals
+import com.loopermallee.moncchichi.core.ble.G1ReplyParser
+import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -32,6 +35,7 @@ import kotlinx.coroutines.runBlocking
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
+import kotlin.text.Charsets
 
 private const val TAG = "DeviceManager"
 
@@ -40,13 +44,15 @@ internal class DeviceManager(
     private val scope: CoroutineScope,
 ) {
     private val logger by lazy { MoncchichiLogger(context) }
-    private val _telemetryFlow = MutableStateFlow<List<String>>(emptyList())
-    val telemetry: StateFlow<List<String>> = _telemetryFlow.asStateFlow()
+    private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
+    val telemetry: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
+    private val _vitals = MutableStateFlow(DeviceVitals())
+    val vitals: StateFlow<DeviceVitals> = _vitals.asStateFlow()
 
-    private fun logTelemetry(tag: String, msg: String) {
-        val entry = "[$tag] $msg"
-        _telemetryFlow.value = (_telemetryFlow.value + entry).takeLast(200)
-        logger.i(tag, msg)
+    private fun logTelemetry(source: String, tag: String, message: String) {
+        val event = G1TelemetryEvent(source = source, tag = tag, message = message)
+        _telemetryFlow.value = (_telemetryFlow.value + event).takeLast(200)
+        logger.i(source, event.toString())
     }
     private val preferences: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -155,27 +161,51 @@ internal class DeviceManager(
         ) {
             val value = characteristic.value ?: return
             val payload = value.copyOf()
-            val uuid = characteristic.uuid.toString()
+            val uuid = characteristic.uuid
+            val uuidString = uuid.toString()
             val hex = value.joinToString(" ") { "%02X".format(it) }
 
-            when {
-                value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_BATTERY -> {
-                    val battery = value.getOrNull(1)?.toInt() ?: -1
-                    logTelemetry("DEVICE", "Battery update: ${battery}%")
-                    if (battery in 0..100) {
-                        updateBatteryLevel(battery)
+            logTelemetry("DEVICE", "[NOTIFY]", "Notification from $uuidString → [$hex]")
+
+            if (uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
+                val text = payload.toString(Charsets.UTF_8)
+                logger.i("[UART_RX]", "${tt()} Received: $text ($hex)")
+                val parsed = G1ReplyParser.parse(payload)
+                if (parsed != null) {
+                    val current = _vitals.value
+                    val merged = DeviceVitals(
+                        batteryPercent = parsed.batteryPercent ?: current.batteryPercent,
+                        firmwareVersion = parsed.firmwareVersion ?: current.firmwareVersion,
+                    )
+                    if (merged != current) {
+                        _vitals.value = merged
+                    }
+                    parsed.batteryPercent?.let { level ->
+                        logTelemetry("DEVICE", "[BATTERY]", "Battery = ${level}%")
+                        updateBatteryLevel(level)
+                    }
+                    parsed.firmwareVersion?.let { fw ->
+                        logTelemetry("DEVICE", "[FIRMWARE]", "Firmware = $fw")
+                    }
+                } else {
+                    when {
+                        value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_BATTERY -> {
+                            val battery = value.getOrNull(1)?.toInt() ?: -1
+                            logTelemetry("DEVICE", "[BATTERY]", "Battery update: ${battery}%")
+                            if (battery in 0..100) {
+                                updateBatteryLevel(battery)
+                            }
+                        }
+                        value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_FIRMWARE -> {
+                            val fw = value.drop(1).toByteArray().decodeToString().trim()
+                            logTelemetry("DEVICE", "[FIRMWARE]", "Firmware: v$fw")
+                            if (fw.isNotEmpty()) {
+                                _vitals.value = _vitals.value.copy(firmwareVersion = fw)
+                            }
+                        }
                     }
                 }
-                value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_FIRMWARE -> {
-                    val fw = value.drop(1).toByteArray().decodeToString().trim()
-                    logTelemetry("DEVICE", "Firmware: v$fw")
-                }
-                else -> {
-                    logTelemetry("DEVICE", "Notification from $uuid → [$hex]")
-                }
-            }
 
-            if (characteristic.uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
                 writableIncoming.tryEmit(payload)
                 awaitingAck.set(false)
                 lastAckTimestamp = SystemClock.elapsedRealtime()
@@ -236,7 +266,7 @@ internal class DeviceManager(
     private fun initializeCharacteristics(gatt: BluetoothGatt) {
         val service: BluetoothGattService? = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
         if (service == null) {
-            logTelemetry("SERVICE", "UART service missing")
+            logTelemetry("SERVICE", "[SERVICES]", "UART service missing")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -247,7 +277,7 @@ internal class DeviceManager(
         readCharacteristic = notifyCharacteristic
 
         if (writeCharacteristic == null || notifyCharacteristic == null) {
-            logTelemetry("SERVICE", "UART characteristics missing")
+            logTelemetry("SERVICE", "[SERVICES]", "UART characteristics missing")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -255,7 +285,7 @@ internal class DeviceManager(
 
         val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
         if (!enabled) {
-            logTelemetry("SERVICE", "Failed to enable notifications")
+            logTelemetry("SERVICE", "[NOTIFY]", "Failed to enable notifications")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -266,21 +296,21 @@ internal class DeviceManager(
             cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             val success = gatt.writeDescriptor(cccd)
             if (!success) {
-                logTelemetry("SERVICE", "Failed to write CCCD descriptor")
+                logTelemetry("SERVICE", "[NOTIFY]", "Failed to write CCCD descriptor")
                 updateState(gatt.device, G1ConnectionState.RECONNECTING)
                 setConnectionState(ConnectionState.ERROR)
                 return
             } else {
-                logTelemetry("SERVICE", "CCCD descriptor written successfully")
+                logTelemetry("SERVICE", "[NOTIFY]", "CCCD descriptor written successfully")
             }
         } else {
-            logTelemetry("SERVICE", "Missing CCCD descriptor on notify characteristic")
+            logTelemetry("SERVICE", "[NOTIFY]", "Missing CCCD descriptor on notify characteristic")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
         }
 
-        logTelemetry("SERVICE", "Notifications enabled for UART_READ_CHARACTERISTIC")
+        logTelemetry("SERVICE", "[NOTIFY]", "Notifications enabled for UART_READ_CHARACTERISTIC")
         bluetoothGatt = gatt
         setConnectionState(ConnectionState.CONNECTED)
         updateState(gatt.device, G1ConnectionState.CONNECTED)
@@ -388,6 +418,18 @@ internal class DeviceManager(
     }
 
     suspend fun clearScreen(): Boolean = sendCommand(byteArrayOf(BluetoothConstants.OPCODE_CLEAR_SCREEN))
+
+    suspend fun queryBattery(): Boolean {
+        val ascii = "BAT?\n".toByteArray()
+        val binary = byteArrayOf(0xF1.toByte(), 0x10, 0x00)
+        return sendCommand(ascii) || sendCommand(binary)
+    }
+
+    suspend fun queryFirmware(): Boolean {
+        val ascii = "FW?\n".toByteArray()
+        val binary = byteArrayOf(0xF1.toByte(), 0x11, 0x00)
+        return sendCommand(ascii) || sendCommand(binary)
+    }
 
     @SuppressLint("MissingPermission")
     private suspend fun sendCommand(payload: ByteArray): Boolean {
@@ -554,6 +596,7 @@ internal class DeviceManager(
         if (level in 0..100) {
             batteryLevelState.value = level
             preferences.edit().putInt(KEY_LAST_BATTERY, level).apply()
+            _vitals.value = _vitals.value.copy(batteryPercent = level)
             logger.debug(TAG, "${tt()} Battery level $level%")
         }
     }

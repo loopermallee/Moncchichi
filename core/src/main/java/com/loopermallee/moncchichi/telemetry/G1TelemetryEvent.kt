@@ -1,23 +1,25 @@
 package com.loopermallee.moncchichi.telemetry
 
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 /**
- * Represents a unified telemetry event emitted by DeviceManager, Service, and Hub layers.
- * Used for real-time logging, UI diagnostics, and debugging within Compose.
+ * Single line of structured telemetry the UI and logs can observe.
  */
-sealed class G1TelemetryEvent(
-    val timestamp: Long = java.lang.System.currentTimeMillis(),
+data class G1TelemetryEvent(
+    /** Wall-clock timestamp in milliseconds so consumers can sort across sources. */
+    val ts: Long = System.currentTimeMillis(),
+    /** Origin of the event (e.g., APP, SERVICE, DEVICE, SYSTEM). */
+    val source: String,
+    /** Short category or tag for the event such as "[BLE]" or "[NOTIFY]". */
+    val tag: String,
+    /** Human friendly description of the event. */
     val message: String,
-    val category: Category
 ) {
-    enum class Category { APP, SERVICE, DEVICE, SYSTEM }
-
-    class App(message: String) : G1TelemetryEvent(message = message, category = Category.APP)
-    class Service(message: String) : G1TelemetryEvent(message = message, category = Category.SERVICE)
-    class Device(message: String) : G1TelemetryEvent(message = message, category = Category.DEVICE)
-    class System(message: String) : G1TelemetryEvent(message = message, category = Category.SYSTEM)
-
     override fun toString(): String {
-        val shortTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(timestamp)
-        return "[$shortTime][$category] $message"
+        val formatter = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+        val time = formatter.format(Date(ts))
+        return "[$time][$source]$tag $message"
     }
 }

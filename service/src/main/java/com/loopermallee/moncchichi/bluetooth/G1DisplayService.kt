@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.ble.DeviceVitals
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -71,8 +72,15 @@ class G1DisplayService : Service() {
                         G1ConnectionState.DISCONNECTED
                     }
                 }
+                val previous = connectionStateFlow.value
                 connectionStateFlow.value = nextState
                 cacheServiceState(nextState)
+                if (nextState == G1ConnectionState.CONNECTED && previous != G1ConnectionState.CONNECTED) {
+                    serviceScope.launch {
+                        deviceManager.queryBattery()
+                        deviceManager.queryFirmware()
+                    }
+                }
                 if (nextState == G1ConnectionState.DISCONNECTED &&
                     deviceManager.getLastConnectedAddress() == null
                 ) {
@@ -187,6 +195,7 @@ class G1DisplayService : Service() {
 
         val stateFlow: StateFlow<G1ConnectionState> = readableStateFlow
         val batteryFlow: StateFlow<Int?> = deviceManager.batteryLevel
+        val vitalsFlow: StateFlow<DeviceVitals> = deviceManager.vitals
 
         fun connect(address: String) {
             this@G1DisplayService.connect(address)
@@ -194,6 +203,14 @@ class G1DisplayService : Service() {
 
         fun heartbeat() {
             checkBinderHeartbeat()
+        }
+
+        fun queryBattery() {
+            serviceScope.launch { deviceManager.queryBattery() }
+        }
+
+        fun queryFirmware() {
+            serviceScope.launch { deviceManager.queryFirmware() }
         }
 
         fun checkBinderHeartbeat(): Boolean {

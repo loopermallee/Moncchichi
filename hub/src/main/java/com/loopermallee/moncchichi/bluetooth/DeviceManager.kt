@@ -140,7 +140,7 @@ class DeviceManager(
                 "[BLEEvent]",
                 "${tt()} Characteristic changed: $uuid, value=${payload.toHexString()}",
             )
-            logTelemetry(G1TelemetryEvent.Device("Notify: $uuid (${payload.size} bytes)"))
+            logTelemetry("DEVICE", "[NOTIFY]", "Notify: $uuid (${payload.size} bytes)")
             notificationEvents.tryEmit(payload)
         }
 
@@ -279,7 +279,7 @@ class DeviceManager(
     }
 
     private suspend fun sendCommand(payload: ByteArray, label: String): Boolean {
-        logTelemetry(G1TelemetryEvent.App("SendCommand: $label (${payload.size} bytes)"))
+        logTelemetry("APP", "[WRITE]", "SendCommand: $label (${payload.size} bytes)")
         return transactionQueue.run(label) {
             writePayload(payload)
         }
@@ -388,7 +388,7 @@ class DeviceManager(
             connectionMutex.withLock {
                 updateState(G1ConnectionState.CONNECTING)
                 logger.i(DEVICE_MANAGER_TAG, "${tt()} Connecting to ${device.address}")
-                logTelemetry(G1TelemetryEvent.Service("Connecting to ${device.address}"))
+                logTelemetry("SERVICE", "[CONNECT]", "Connecting to ${device.address}")
                 gatt?.close()
                 gatt = device.connectGatt(context, false, gattCallback)
                 if (gatt == null) {
@@ -410,7 +410,7 @@ class DeviceManager(
         var delayMs = 2_000L
         repeat(maxRetries) { attempt ->
             logger.debug(RECONNECT_TAG, "${tt()} Attempt ${attempt + 1}")
-            logTelemetry(G1TelemetryEvent.System("Reconnecting attempt #${attempt + 1}"))
+            logTelemetry("SYSTEM", "[RECONNECT]", "Reconnecting attempt #${attempt + 1}")
             if (tryReconnectInternal()) return true
             delay(delayMs)
             delayMs = min(delayMs * 2, 30_000L)
@@ -452,9 +452,9 @@ class DeviceManager(
         }
     }
 
-    private fun logTelemetry(event: G1TelemetryEvent) {
-        val updated = (_telemetryFlow.value + event).takeLast(500)
-        _telemetryFlow.value = updated
+    private fun logTelemetry(source: String, tag: String, message: String) {
+        val event = G1TelemetryEvent(source = source, tag = tag, message = message)
+        _telemetryFlow.value = (_telemetryFlow.value + event).takeLast(500)
         logger.i("[Telemetry]", event.toString())
     }
 
