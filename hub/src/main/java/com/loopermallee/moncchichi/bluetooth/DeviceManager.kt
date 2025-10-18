@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
@@ -301,27 +302,25 @@ class DeviceManager(
             client.observeNotifications(telemetryCollector)
         }
 
-        clientStateJob = scope.launch {
-            client.connectionState.onEach { state ->
-                when (state) {
-                    G1BleUartClient.ConnectionState.CONNECTED -> {
-                        updateState(G1ConnectionState.CONNECTED)
-                    }
-                    G1BleUartClient.ConnectionState.CONNECTING -> {
-                        updateState(G1ConnectionState.CONNECTING)
-                    }
-                    G1BleUartClient.ConnectionState.DISCONNECTED -> {
-                        if (this@DeviceManager.state.value == G1ConnectionState.CONNECTED) {
-                            updateState(G1ConnectionState.RECONNECTING)
-                        } else {
-                            updateState(G1ConnectionState.DISCONNECTED)
-                        }
-                        _rssi.value = null
-                        G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
-                    }
+        clientStateJob = client.connectionState.onEach { state ->
+            when (state) {
+                G1BleUartClient.ConnectionState.CONNECTED -> {
+                    updateState(G1ConnectionState.CONNECTED)
                 }
-            }.collect()
-        }
+                G1BleUartClient.ConnectionState.CONNECTING -> {
+                    updateState(G1ConnectionState.CONNECTING)
+                }
+                G1BleUartClient.ConnectionState.DISCONNECTED -> {
+                    if (this@DeviceManager.state.value == G1ConnectionState.CONNECTED) {
+                        updateState(G1ConnectionState.RECONNECTING)
+                    } else {
+                        updateState(G1ConnectionState.DISCONNECTED)
+                    }
+                    _rssi.value = null
+                    G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
+                }
+            }
+        }.launchIn(scope)
 
         clientRssiJob = scope.launch {
             client.rssi.collectLatest { value ->
