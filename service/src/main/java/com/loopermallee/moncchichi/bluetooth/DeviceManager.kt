@@ -32,10 +32,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.runBlocking
+import java.util.EnumMap
 import java.util.UUID
+import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 import kotlin.text.Charsets
+import kotlin.concurrent.withLock
 
 private const val TAG = "DeviceManager"
 
@@ -82,6 +85,10 @@ internal class DeviceManager(
     private var readCharacteristic: BluetoothGattCharacteristic? = null
     private var batteryCharacteristic: BluetoothGattCharacteristic? = null
 
+    private var periodicVitalsJob: Job? = null
+    private val queryStateLock = ReentrantLock()
+    private val queryStates = EnumMap<QueryToken, PendingQueryState>(QueryToken::class.java)
+
     private var heartbeatJob: Job? = null
     private var heartbeatTimeoutJob: Job? = null
     private val awaitingAck = AtomicBoolean(false)
@@ -97,6 +104,13 @@ internal class DeviceManager(
     private var reconnectFailureCount: Int =
         preferences.getInt(KEY_RECONNECT_FAILURES, 0)
     private var notifyCallback: ((service: UUID, characteristic: UUID, value: ByteArray) -> Unit)? = null
+
+    private enum class QueryToken { BATTERY, FIRMWARE }
+
+    private data class PendingQueryState(
+        var attempts: Int = 0,
+        var job: Job? = null,
+    )
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -124,6 +138,8 @@ internal class DeviceManager(
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     logger.debug(TAG, "${tt()} onConnectionStateChange: disconnected")
                     stopHeartbeat()
+                    stopPeriodicVitals()
+                    resetPendingQuery()
                     clearConnection()
                     setConnectionState(ConnectionState.DISCONNECTED)
                     val wasManual = manualDisconnect.getAndSet(false)
@@ -181,10 +197,12 @@ internal class DeviceManager(
                         _vitals.value = merged
                     }
                     parsed.batteryPercent?.let { level ->
+                        completePendingQuery(QueryToken.BATTERY)
                         logTelemetry("DEVICE", "[BATTERY]", "Battery = ${level}%")
                         updateBatteryLevel(level)
                     }
                     parsed.firmwareVersion?.let { fw ->
+                        completePendingQuery(QueryToken.FIRMWARE)
                         logTelemetry("DEVICE", "[FIRMWARE]", "Firmware = $fw")
                     }
                 } else {
@@ -193,6 +211,7 @@ internal class DeviceManager(
                             val battery = value.getOrNull(1)?.toInt() ?: -1
                             logTelemetry("DEVICE", "[BATTERY]", "Battery update: ${battery}%")
                             if (battery in 0..100) {
+                                completePendingQuery(QueryToken.BATTERY)
                                 updateBatteryLevel(battery)
                             }
                         }
@@ -200,6 +219,7 @@ internal class DeviceManager(
                             val fw = value.drop(1).toByteArray().decodeToString().trim()
                             logTelemetry("DEVICE", "[FIRMWARE]", "Firmware: v$fw")
                             if (fw.isNotEmpty()) {
+                                completePendingQuery(QueryToken.FIRMWARE)
                                 _vitals.value = _vitals.value.copy(firmwareVersion = fw)
                             }
                         }
@@ -225,6 +245,7 @@ internal class DeviceManager(
         ) {
             if (characteristic.uuid == batteryCharacteristic?.uuid && status == BluetoothGatt.GATT_SUCCESS) {
                 val level = characteristic.value?.firstOrNull()?.toInt() ?: return
+                completePendingQuery(QueryToken.BATTERY)
                 updateBatteryLevel(level)
             }
         }
@@ -315,6 +336,13 @@ internal class DeviceManager(
         setConnectionState(ConnectionState.CONNECTED)
         updateState(gatt.device, G1ConnectionState.CONNECTED)
         startHeartbeat()
+        startPeriodicVitals()
+        scope.launch {
+            logTelemetry("APP", "[VITALS]", "Auto querying vitals post-connect")
+            queryBattery()
+            delay(200)
+            queryFirmware()
+        }
         maybeReadBatteryLevel(gatt)
     }
 
@@ -377,6 +405,8 @@ internal class DeviceManager(
     @SuppressLint("MissingPermission")
     fun disconnect() {
         stopHeartbeat()
+        stopPeriodicVitals()
+        resetPendingQuery()
         setConnectionState(ConnectionState.DISCONNECTING)
         manualDisconnect.set(true)
         reconnectJob?.cancel()
@@ -396,6 +426,121 @@ internal class DeviceManager(
         readCharacteristic = null
         batteryCharacteristic = null
         currentDeviceAddress = null
+    }
+
+    private fun startPeriodicVitals() {
+        periodicVitalsJob?.cancel()
+        periodicVitalsJob = scope.launch {
+            while (isActive) {
+                if (writableConnectionState.value != ConnectionState.CONNECTED) {
+                    break
+                }
+                queryBattery()
+                delay(250)
+                queryFirmware()
+                delay(VITALS_POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun stopPeriodicVitals() {
+        periodicVitalsJob?.cancel()
+        periodicVitalsJob = null
+    }
+
+    private fun resetPendingQuery(token: QueryToken) {
+        val job = queryStateLock.withLock { queryStates.remove(token)?.job }
+        job?.cancel()
+    }
+
+    private fun resetPendingQuery() {
+        val jobs = queryStateLock.withLock {
+            val running = queryStates.values.mapNotNull { it.job }
+            queryStates.clear()
+            running
+        }
+        jobs.forEach { it.cancel() }
+    }
+
+    private fun prepareQuery(token: QueryToken) {
+        val previous = queryStateLock.withLock {
+            val state = queryStates.getOrPut(token) { PendingQueryState() }
+            val job = state.job
+            state.job = null
+            state.attempts = 0
+            job
+        }
+        previous?.cancel()
+    }
+
+    private fun scheduleQueryTimeout(token: QueryToken) {
+        val attempts = queryStateLock.withLock {
+            val state = queryStates.getOrPut(token) { PendingQueryState() }
+            val previous = state.job
+            state.job = null
+            previous?.cancel()
+            state.attempts += 1
+            state.attempts
+        }
+        val job = scope.launch {
+            delay(QUERY_TIMEOUT_MS)
+            var attemptNumber = 0
+            val giveUp = queryStateLock.withLock {
+                val state = queryStates[token] ?: return@launch
+                if (state.attempts < QUERY_MAX_RETRIES) {
+                    attemptNumber = state.attempts
+                    state.job = null
+                    false
+                } else {
+                    queryStates.remove(token)
+                    true
+                }
+            }
+            if (giveUp) {
+                logTelemetry(
+                    "SERVICE",
+                    "[VITALS]",
+                    "Giving up on ${token.name} after $QUERY_MAX_RETRIES attempts",
+                )
+                return@launch
+            }
+            logTelemetry(
+                "SERVICE",
+                "[VITALS]",
+                "Timeout waiting for ${token.name} reply; retry #$attemptNumber",
+            )
+            ensureNotifications()
+            when (token) {
+                QueryToken.BATTERY -> queryBattery(fromRetry = true)
+                QueryToken.FIRMWARE -> queryFirmware(fromRetry = true)
+            }
+        }
+        queryStateLock.withLock {
+            val state = queryStates.getOrPut(token) { PendingQueryState() }
+            state.job?.cancel()
+            state.job = job
+            state.attempts = attempts
+        }
+    }
+
+    private fun completePendingQuery(token: QueryToken) {
+        resetPendingQuery(token)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun ensureNotifications() {
+        val gatt = bluetoothGatt ?: return
+        val characteristic = readCharacteristic ?: return
+        val enabled = gatt.setCharacteristicNotification(characteristic, true)
+        if (!enabled) {
+            logTelemetry("SERVICE", "[NOTIFY]", "Failed to re-enable notifications during retry")
+            return
+        }
+        val descriptor = characteristic.getDescriptor(BluetoothConstants.CCCD_UUID) ?: return
+        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        if (!gatt.writeDescriptor(descriptor)) {
+            logTelemetry("SERVICE", "[NOTIFY]", "Failed to rewrite CCCD during retry")
+        }
     }
 
     suspend fun sendText(message: String): Boolean {
@@ -419,16 +564,38 @@ internal class DeviceManager(
 
     suspend fun clearScreen(): Boolean = sendCommand(byteArrayOf(BluetoothConstants.OPCODE_CLEAR_SCREEN))
 
-    suspend fun queryBattery(): Boolean {
+    suspend fun queryBattery(fromRetry: Boolean = false): Boolean {
+        if (!fromRetry) {
+            prepareQuery(QueryToken.BATTERY)
+        }
         val ascii = "BAT?\n".toByteArray()
         val binary = byteArrayOf(0xF1.toByte(), 0x10, 0x00)
-        return sendCommand(ascii) || sendCommand(binary)
+        val success = sendCommand(ascii)
+        val fallback = if (!success) sendCommand(binary) else true
+        val result = success || fallback
+        if (result) {
+            scheduleQueryTimeout(QueryToken.BATTERY)
+        } else {
+            resetPendingQuery(QueryToken.BATTERY)
+        }
+        return result
     }
 
-    suspend fun queryFirmware(): Boolean {
+    suspend fun queryFirmware(fromRetry: Boolean = false): Boolean {
+        if (!fromRetry) {
+            prepareQuery(QueryToken.FIRMWARE)
+        }
         val ascii = "FW?\n".toByteArray()
         val binary = byteArrayOf(0xF1.toByte(), 0x11, 0x00)
-        return sendCommand(ascii) || sendCommand(binary)
+        val success = sendCommand(ascii)
+        val fallback = if (!success) sendCommand(binary) else true
+        val result = success || fallback
+        if (result) {
+            scheduleQueryTimeout(QueryToken.FIRMWARE)
+        } else {
+            resetPendingQuery(QueryToken.FIRMWARE)
+        }
+        return result
     }
 
     @SuppressLint("MissingPermission")
@@ -641,6 +808,9 @@ internal class DeviceManager(
         private const val KEY_RECONNECT_FAILURES = "reconnect_failures"
         private const val KEY_LAST_BATTERY = "last_battery_level"
         private const val RECONNECT_TIMEOUT_MS = 15_000L
+        private const val QUERY_TIMEOUT_MS = 5_000L
+        private const val QUERY_MAX_RETRIES = 3
+        private const val VITALS_POLL_INTERVAL_MS = 30_000L
         private val BATTERY_SERVICE_UUID: UUID = UUID.fromString("0000180F-0000-1000-8000-00805f9b34fb")
         private val BATTERY_LEVEL_CHARACTERISTIC_UUID: UUID =
             UUID.fromString("00002A19-0000-1000-8000-00805f9b34fb")
