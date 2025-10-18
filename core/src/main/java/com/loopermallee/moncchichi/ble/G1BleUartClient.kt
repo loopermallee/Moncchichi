@@ -11,11 +11,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -99,6 +101,10 @@ class G1BleUartClient(
 
     fun readRemoteRssi(): Boolean {
         return gatt?.readRemoteRssi() == true
+    }
+
+    suspend fun observeNotifications(collector: FlowCollector<ByteArray>) {
+        incoming.collect(collector)
     }
 
     // ----------- Callbacks -----------

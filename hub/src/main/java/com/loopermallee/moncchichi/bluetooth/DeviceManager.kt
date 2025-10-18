@@ -16,6 +16,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -49,6 +50,21 @@ class DeviceManager(
     val nearbyDevices: StateFlow<List<String>> = _nearbyDevices.asStateFlow()
     private val notificationEvents = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val notifications: SharedFlow<ByteArray> = notificationEvents.asSharedFlow()
+
+    private val telemetryCollector = FlowCollector<ByteArray> { payload ->
+        try {
+            val hex = payload.toHexString()
+            logTelemetry("DEVICE", "[NOTIFY]", "Notify (${payload.size} bytes) → $hex")
+            notificationEvents.tryEmit(payload)
+            G1ReplyParser.parse(payload, ::bleLog)
+        } catch (error: Throwable) {
+            logger.e(
+                DEVICE_MANAGER_TAG,
+                "${tt()} telemetry collector failure: ${error.message}",
+                error
+            )
+        }
+    }
     private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
     val telemetryFlow: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
     val vitals: StateFlow<G1ReplyParser.DeviceVitals> = G1ReplyParser.vitalsFlow.asStateFlow()
@@ -282,12 +298,7 @@ class DeviceManager(
         bleClient = client
 
         incomingJob = scope.launch {
-            client.incoming.collectLatest { payload ->
-                val hex = payload.toHexString()
-                logTelemetry("DEVICE", "[NOTIFY]", "Notify (${payload.size} bytes) → $hex")
-                notificationEvents.tryEmit(payload)
-                G1ReplyParser.parse(payload, ::bleLog)
-            }
+            client.observeNotifications(telemetryCollector)
         }
 
         clientStateJob = scope.launch {
