@@ -48,6 +48,7 @@ import com.loopermallee.moncchichi.bluetooth.G1Inbound
 import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.ui.shared.LocalServiceConnection
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
+import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -391,14 +392,15 @@ fun DeviceConsoleBody(
                         state = listState
                     ) {
                         items(telemetry) { event ->
-                            val color = when (event.category) {
-                                G1TelemetryEvent.Category.APP -> Color.Cyan
-                                G1TelemetryEvent.Category.DEVICE -> Color(0xFFB388FF)
-                                G1TelemetryEvent.Category.SERVICE -> Color(0xFFFFB300)
-                                G1TelemetryEvent.Category.SYSTEM -> Color.Gray
+                            val color = when (event.source.uppercase(Locale.US)) {
+                                "APP" -> Color.Cyan
+                                "DEVICE" -> Color(0xFFB388FF)
+                                "SERVICE" -> Color(0xFFFFB300)
+                                "SYSTEM" -> Color.Gray
+                                else -> MaterialTheme.colorScheme.onSurface
                             }
                             Text(
-                                text = "[${event.category}] ${event.message}",
+                                text = event.toString(),
                                 color = color,
                                 style = MaterialTheme.typography.bodyMedium
                             )

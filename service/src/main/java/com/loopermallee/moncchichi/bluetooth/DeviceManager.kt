@@ -13,6 +13,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -40,13 +41,13 @@ internal class DeviceManager(
     private val scope: CoroutineScope,
 ) {
     private val logger by lazy { MoncchichiLogger(context) }
-    private val _telemetryFlow = MutableStateFlow<List<String>>(emptyList())
-    val telemetry: StateFlow<List<String>> = _telemetryFlow.asStateFlow()
+    private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
+    val telemetry: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
 
-    private fun logTelemetry(tag: String, msg: String) {
-        val entry = "[$tag] $msg"
-        _telemetryFlow.value = (_telemetryFlow.value + entry).takeLast(200)
-        logger.i(tag, msg)
+    private fun logTelemetry(source: String, tag: String, message: String) {
+        val event = G1TelemetryEvent(source = source, tag = tag, message = message)
+        _telemetryFlow.value = (_telemetryFlow.value + event).takeLast(200)
+        logger.i(source, event.toString())
     }
     private val preferences: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -161,17 +162,17 @@ internal class DeviceManager(
             when {
                 value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_BATTERY -> {
                     val battery = value.getOrNull(1)?.toInt() ?: -1
-                    logTelemetry("DEVICE", "Battery update: ${battery}%")
+                    logTelemetry("DEVICE", "[BATTERY]", "Battery update: ${battery}%")
                     if (battery in 0..100) {
                         updateBatteryLevel(battery)
                     }
                 }
                 value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_FIRMWARE -> {
                     val fw = value.drop(1).toByteArray().decodeToString().trim()
-                    logTelemetry("DEVICE", "Firmware: v$fw")
+                    logTelemetry("DEVICE", "[FIRMWARE]", "Firmware: v$fw")
                 }
                 else -> {
-                    logTelemetry("DEVICE", "Notification from $uuid → [$hex]")
+                    logTelemetry("DEVICE", "[NOTIFY]", "Notification from $uuid → [$hex]")
                 }
             }
 
@@ -236,7 +237,7 @@ internal class DeviceManager(
     private fun initializeCharacteristics(gatt: BluetoothGatt) {
         val service: BluetoothGattService? = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
         if (service == null) {
-            logTelemetry("SERVICE", "UART service missing")
+            logTelemetry("SERVICE", "[SERVICES]", "UART service missing")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -247,7 +248,7 @@ internal class DeviceManager(
         readCharacteristic = notifyCharacteristic
 
         if (writeCharacteristic == null || notifyCharacteristic == null) {
-            logTelemetry("SERVICE", "UART characteristics missing")
+            logTelemetry("SERVICE", "[SERVICES]", "UART characteristics missing")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -255,7 +256,7 @@ internal class DeviceManager(
 
         val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
         if (!enabled) {
-            logTelemetry("SERVICE", "Failed to enable notifications")
+            logTelemetry("SERVICE", "[NOTIFY]", "Failed to enable notifications")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -266,21 +267,21 @@ internal class DeviceManager(
             cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             val success = gatt.writeDescriptor(cccd)
             if (!success) {
-                logTelemetry("SERVICE", "Failed to write CCCD descriptor")
+                logTelemetry("SERVICE", "[NOTIFY]", "Failed to write CCCD descriptor")
                 updateState(gatt.device, G1ConnectionState.RECONNECTING)
                 setConnectionState(ConnectionState.ERROR)
                 return
             } else {
-                logTelemetry("SERVICE", "CCCD descriptor written successfully")
+                logTelemetry("SERVICE", "[NOTIFY]", "CCCD descriptor written successfully")
             }
         } else {
-            logTelemetry("SERVICE", "Missing CCCD descriptor on notify characteristic")
+            logTelemetry("SERVICE", "[NOTIFY]", "Missing CCCD descriptor on notify characteristic")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
         }
 
-        logTelemetry("SERVICE", "Notifications enabled for UART_READ_CHARACTERISTIC")
+        logTelemetry("SERVICE", "[NOTIFY]", "Notifications enabled for UART_READ_CHARACTERISTIC")
         bluetoothGatt = gatt
         setConnectionState(ConnectionState.CONNECTED)
         updateState(gatt.device, G1ConnectionState.CONNECTED)
