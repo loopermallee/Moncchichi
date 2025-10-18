@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-18 22:12 SGT",
+  "last_update": "2025-10-18 22:44 SGT",
   "last_delta": 2,
   "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 83,
+  "last_pr_number": 85,
   "history": [
+    {
+      "when": "2025-10-18 22:44 SGT",
+      "pr": 85,
+      "title": "Add periodic vitals polling and BLE query retries",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-18 22:12 SGT",
       "pr": 83,
