@@ -11,8 +11,12 @@ import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.ble.DeviceVitals
+import com.loopermallee.moncchichi.core.ble.G1ReplyParser
+import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -23,15 +27,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.runBlocking
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
+import kotlin.text.Charsets
 
 private const val TAG = "DeviceManager"
 
@@ -40,13 +45,15 @@ internal class DeviceManager(
     private val scope: CoroutineScope,
 ) {
     private val logger by lazy { MoncchichiLogger(context) }
-    private val _telemetryFlow = MutableStateFlow<List<String>>(emptyList())
-    val telemetry: StateFlow<List<String>> = _telemetryFlow.asStateFlow()
+    private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
+    val telemetry: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
+    private val _vitals = MutableStateFlow(DeviceVitals())
+    val vitals: StateFlow<DeviceVitals> = _vitals.asStateFlow()
 
-    private fun logTelemetry(tag: String, msg: String) {
-        val entry = "[$tag] $msg"
-        _telemetryFlow.value = (_telemetryFlow.value + entry).takeLast(200)
-        logger.i(tag, msg)
+    private fun logTelemetry(source: String, tag: String, message: String) {
+        val event = G1TelemetryEvent(source = source, tag = tag, message = message)
+        _telemetryFlow.value = (_telemetryFlow.value + event).takeLast(200)
+        logger.i(source, event.toString())
     }
     private val preferences: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -78,6 +85,11 @@ internal class DeviceManager(
 
     private var heartbeatJob: Job? = null
     private var heartbeatTimeoutJob: Job? = null
+    private var vitalsPollingJob: Job? = null
+    private var batteryTimeoutJob: Job? = null
+    private var firmwareTimeoutJob: Job? = null
+    private var batteryQueryAttempts = 0
+    private var firmwareQueryAttempts = 0
     private val awaitingAck = AtomicBoolean(false)
     private val manualDisconnect = AtomicBoolean(false)
     private val reconnecting = AtomicBoolean(false)
@@ -118,6 +130,7 @@ internal class DeviceManager(
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     logger.debug(TAG, "${tt()} onConnectionStateChange: disconnected")
                     stopHeartbeat()
+                    stopVitalsPolling()
                     clearConnection()
                     setConnectionState(ConnectionState.DISCONNECTED)
                     val wasManual = manualDisconnect.getAndSet(false)
@@ -155,27 +168,55 @@ internal class DeviceManager(
         ) {
             val value = characteristic.value ?: return
             val payload = value.copyOf()
-            val uuid = characteristic.uuid.toString()
+            val uuid = characteristic.uuid
+            val uuidString = uuid.toString()
             val hex = value.joinToString(" ") { "%02X".format(it) }
 
-            when {
-                value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_BATTERY -> {
-                    val battery = value.getOrNull(1)?.toInt() ?: -1
-                    logTelemetry("DEVICE", "Battery update: ${battery}%")
-                    if (battery in 0..100) {
-                        updateBatteryLevel(battery)
+            logTelemetry("DEVICE", "[NOTIFY]", "Notification from $uuidString → [$hex]")
+
+            if (uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
+                val text = payload.toString(Charsets.UTF_8)
+                logger.i("[UART_RX]", "${tt()} Received: $text ($hex)")
+                val parsed = G1ReplyParser.parse(payload)
+                if (parsed != null) {
+                    val current = _vitals.value
+                    val merged = DeviceVitals(
+                        batteryPercent = parsed.batteryPercent ?: current.batteryPercent,
+                        firmwareVersion = parsed.firmwareVersion ?: current.firmwareVersion,
+                    )
+                    if (merged != current) {
+                        _vitals.value = merged
+                    }
+                    parsed.batteryPercent?.let { level ->
+                        clearBatteryTimeout()
+                        logTelemetry("DEVICE", "[BATTERY]", "Battery = ${level}%")
+                        updateBatteryLevel(level)
+                    }
+                    parsed.firmwareVersion?.let { fw ->
+                        clearFirmwareTimeout()
+                        logTelemetry("DEVICE", "[FIRMWARE]", "Firmware = $fw")
+                    }
+                } else {
+                    when {
+                        value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_BATTERY -> {
+                            val battery = value.getOrNull(1)?.toInt() ?: -1
+                            clearBatteryTimeout()
+                            logTelemetry("DEVICE", "[BATTERY]", "Battery update: ${battery}%")
+                            if (battery in 0..100) {
+                                updateBatteryLevel(battery)
+                            }
+                        }
+                        value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_FIRMWARE -> {
+                            val fw = value.drop(1).toByteArray().decodeToString().trim()
+                            clearFirmwareTimeout()
+                            logTelemetry("DEVICE", "[FIRMWARE]", "Firmware: v$fw")
+                            if (fw.isNotEmpty()) {
+                                _vitals.value = _vitals.value.copy(firmwareVersion = fw)
+                            }
+                        }
                     }
                 }
-                value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_FIRMWARE -> {
-                    val fw = value.drop(1).toByteArray().decodeToString().trim()
-                    logTelemetry("DEVICE", "Firmware: v$fw")
-                }
-                else -> {
-                    logTelemetry("DEVICE", "Notification from $uuid → [$hex]")
-                }
-            }
 
-            if (characteristic.uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
                 writableIncoming.tryEmit(payload)
                 awaitingAck.set(false)
                 lastAckTimestamp = SystemClock.elapsedRealtime()
@@ -236,7 +277,7 @@ internal class DeviceManager(
     private fun initializeCharacteristics(gatt: BluetoothGatt) {
         val service: BluetoothGattService? = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
         if (service == null) {
-            logTelemetry("SERVICE", "UART service missing")
+            logTelemetry("SERVICE", "[SERVICES]", "UART service missing")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -247,7 +288,7 @@ internal class DeviceManager(
         readCharacteristic = notifyCharacteristic
 
         if (writeCharacteristic == null || notifyCharacteristic == null) {
-            logTelemetry("SERVICE", "UART characteristics missing")
+            logTelemetry("SERVICE", "[SERVICES]", "UART characteristics missing")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -255,7 +296,7 @@ internal class DeviceManager(
 
         val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
         if (!enabled) {
-            logTelemetry("SERVICE", "Failed to enable notifications")
+            logTelemetry("SERVICE", "[NOTIFY]", "Failed to enable notifications")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
@@ -263,28 +304,44 @@ internal class DeviceManager(
 
         val cccd = notifyCharacteristic.getDescriptor(BluetoothConstants.CCCD_UUID)
         if (cccd != null) {
-            cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            val success = gatt.writeDescriptor(cccd)
-            if (!success) {
-                logTelemetry("SERVICE", "Failed to write CCCD descriptor")
+            val wrote = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt.writeDescriptor(
+                        cccd,
+                        BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE,
+                    ) == BluetoothGatt.GATT_SUCCESS
+                } else {
+                    @Suppress("DEPRECATION")
+                    run {
+                        cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        gatt.writeDescriptor(cccd)
+                    }
+                }
+            } catch (t: Throwable) {
+                logger.e(TAG, "${tt()} Failed to write CCCD descriptor", t)
+                false
+            }
+            if (!wrote) {
+                logTelemetry("SERVICE", "[NOTIFY]", "Failed to write CCCD descriptor")
                 updateState(gatt.device, G1ConnectionState.RECONNECTING)
                 setConnectionState(ConnectionState.ERROR)
                 return
             } else {
-                logTelemetry("SERVICE", "CCCD descriptor written successfully")
+                logTelemetry("SERVICE", "[NOTIFY]", "CCCD descriptor written successfully")
             }
         } else {
-            logTelemetry("SERVICE", "Missing CCCD descriptor on notify characteristic")
+            logTelemetry("SERVICE", "[NOTIFY]", "Missing CCCD descriptor on notify characteristic")
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
         }
 
-        logTelemetry("SERVICE", "Notifications enabled for UART_READ_CHARACTERISTIC")
+        logTelemetry("SERVICE", "[NOTIFY]", "Notifications enabled for UART_READ_CHARACTERISTIC")
         bluetoothGatt = gatt
         setConnectionState(ConnectionState.CONNECTED)
         updateState(gatt.device, G1ConnectionState.CONNECTED)
         startHeartbeat()
+        startVitalsPolling()
         maybeReadBatteryLevel(gatt)
     }
 
@@ -344,9 +401,156 @@ internal class DeviceManager(
         }
     }
 
+    private fun startVitalsPolling() {
+        vitalsPollingJob?.cancel()
+        vitalsPollingJob = scope.launch {
+            // Initial probe to populate UI quickly.
+            if (isConnected()) {
+                try {
+                    queryBattery()
+                } catch (t: Throwable) {
+                    logger.w(TAG, "${tt()} Initial battery query failed: ${t.message}")
+                }
+                delay(250)
+                try {
+                    queryFirmware()
+                } catch (t: Throwable) {
+                    logger.w(TAG, "${tt()} Initial firmware query failed: ${t.message}")
+                }
+            }
+            while (isActive) {
+                delay(VITALS_POLL_MS)
+                if (!isConnected()) continue
+                try {
+                    queryBattery()
+                } catch (t: Throwable) {
+                    logger.w(TAG, "${tt()} Battery poll failed: ${t.message}")
+                }
+                delay(250)
+                try {
+                    queryFirmware()
+                } catch (t: Throwable) {
+                    logger.w(TAG, "${tt()} Firmware poll failed: ${t.message}")
+                }
+            }
+        }
+    }
+
+    private fun stopVitalsPolling() {
+        vitalsPollingJob?.cancel()
+        vitalsPollingJob = null
+        clearBatteryTimeout()
+        clearFirmwareTimeout()
+    }
+
+    private fun scheduleBatteryTimeout(resetAttempts: Boolean) {
+        if (resetAttempts) {
+            clearBatteryTimeout()
+        }
+        if (!isConnected()) return
+        batteryTimeoutJob?.cancel()
+        batteryTimeoutJob = scope.launch {
+            delay(QUERY_TIMEOUT_MS)
+            if (!isConnected()) {
+                clearBatteryTimeout()
+                return@launch
+            }
+            val attempts = batteryQueryAttempts + 1
+            if (attempts > QUERY_MAX_RETRIES) {
+                logTelemetry("SERVICE", "[BATTERY]", "Giving up after $QUERY_MAX_RETRIES retries")
+                clearBatteryTimeout()
+                return@launch
+            }
+            batteryQueryAttempts = attempts
+            logTelemetry("SERVICE", "[BATTERY]", "Timeout waiting for reply, retry #$attempts")
+            refreshNotificationSubscription("battery retry #$attempts")
+            sendBatteryQueryOnce()
+            batteryTimeoutJob = null
+            scheduleBatteryTimeout(resetAttempts = false)
+        }
+    }
+
+    private fun scheduleFirmwareTimeout(resetAttempts: Boolean) {
+        if (resetAttempts) {
+            clearFirmwareTimeout()
+        }
+        if (!isConnected()) return
+        firmwareTimeoutJob?.cancel()
+        firmwareTimeoutJob = scope.launch {
+            delay(QUERY_TIMEOUT_MS)
+            if (!isConnected()) {
+                clearFirmwareTimeout()
+                return@launch
+            }
+            val attempts = firmwareQueryAttempts + 1
+            if (attempts > QUERY_MAX_RETRIES) {
+                logTelemetry("SERVICE", "[FIRMWARE]", "Giving up after $QUERY_MAX_RETRIES retries")
+                clearFirmwareTimeout()
+                return@launch
+            }
+            firmwareQueryAttempts = attempts
+            logTelemetry("SERVICE", "[FIRMWARE]", "Timeout waiting for reply, retry #$attempts")
+            refreshNotificationSubscription("firmware retry #$attempts")
+            sendFirmwareQueryOnce()
+            firmwareTimeoutJob = null
+            scheduleFirmwareTimeout(resetAttempts = false)
+        }
+    }
+
+    private fun clearBatteryTimeout() {
+        batteryTimeoutJob?.cancel()
+        batteryTimeoutJob = null
+        batteryQueryAttempts = 0
+    }
+
+    private fun clearFirmwareTimeout() {
+        firmwareTimeoutJob?.cancel()
+        firmwareTimeoutJob = null
+        firmwareQueryAttempts = 0
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun refreshNotificationSubscription(reason: String) {
+        val gatt = bluetoothGatt ?: return
+        val notifyCharacteristic = readCharacteristic ?: return
+        val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
+        if (!enabled) {
+            logTelemetry("SERVICE", "[NOTIFY]", "Failed to refresh notifications ($reason)")
+            return
+        }
+        val cccd = notifyCharacteristic.getDescriptor(BluetoothConstants.CCCD_UUID)
+        if (cccd == null) {
+            logTelemetry("SERVICE", "[NOTIFY]", "Missing CCCD while refreshing ($reason)")
+            return
+        }
+        val wrote = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeDescriptor(
+                    cccd,
+                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE,
+                ) == BluetoothGatt.GATT_SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                run {
+                    cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    gatt.writeDescriptor(cccd)
+                }
+            }
+        } catch (t: Throwable) {
+            logger.e(TAG, "${tt()} Failed to refresh CCCD", t)
+            false
+        }
+        logTelemetry(
+            "SERVICE",
+            "[NOTIFY]",
+            "Refreshed CCCD for $reason → ${if (wrote) "OK" else "FAIL"}"
+        )
+    }
+
     @SuppressLint("MissingPermission")
     fun disconnect() {
         stopHeartbeat()
+        stopVitalsPolling()
         setConnectionState(ConnectionState.DISCONNECTING)
         manualDisconnect.set(true)
         reconnectJob?.cancel()
@@ -366,6 +570,8 @@ internal class DeviceManager(
         readCharacteristic = null
         batteryCharacteristic = null
         currentDeviceAddress = null
+        clearBatteryTimeout()
+        clearFirmwareTimeout()
     }
 
     suspend fun sendText(message: String): Boolean {
@@ -389,20 +595,78 @@ internal class DeviceManager(
 
     suspend fun clearScreen(): Boolean = sendCommand(byteArrayOf(BluetoothConstants.OPCODE_CLEAR_SCREEN))
 
+    private suspend fun sendBatteryQueryOnce(): Boolean {
+        val ascii = "BAT?\n".toByteArray()
+        if (sendCommand(ascii)) {
+            return true
+        }
+        val binary = byteArrayOf(0xF1.toByte(), 0x10, 0x00)
+        return sendCommand(binary)
+    }
+
+    private suspend fun sendFirmwareQueryOnce(): Boolean {
+        val ascii = "FW?\n".toByteArray()
+        if (sendCommand(ascii)) {
+            return true
+        }
+        val binary = byteArrayOf(0xF1.toByte(), 0x11, 0x00)
+        return sendCommand(binary)
+    }
+
+    suspend fun queryBattery(): Boolean {
+        val success = sendBatteryQueryOnce()
+        if (success) {
+            logTelemetry("SERVICE", "[BATTERY]", "Query sent")
+            scheduleBatteryTimeout(resetAttempts = true)
+        } else {
+            logTelemetry("SERVICE", "[BATTERY]", "Query send failed")
+        }
+        return success
+    }
+
+    suspend fun queryFirmware(): Boolean {
+        val success = sendFirmwareQueryOnce()
+        if (success) {
+            logTelemetry("SERVICE", "[FIRMWARE]", "Query sent")
+            scheduleFirmwareTimeout(resetAttempts = true)
+        } else {
+            logTelemetry("SERVICE", "[FIRMWARE]", "Query send failed")
+        }
+        return success
+    }
+
     @SuppressLint("MissingPermission")
     private suspend fun sendCommand(payload: ByteArray): Boolean {
         return writeMutex.withLock {
             val gatt = bluetoothGatt ?: return@withLock false
             val characteristic = writeCharacteristic ?: return@withLock false
-            characteristic.value = payload
             val success = try {
-                gatt.writeCharacteristic(characteristic)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt.writeCharacteristic(
+                        characteristic,
+                        payload,
+                        BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE,
+                    ) == BluetoothGatt.GATT_SUCCESS
+                } else {
+                    @Suppress("DEPRECATION")
+                    run {
+                        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                        characteristic.value = payload
+                        gatt.writeCharacteristic(characteristic)
+                    }
+                }
             } catch (t: Throwable) {
                 logger.e(TAG, "${tt()} sendCommand: failed", t)
                 false
             }
+            val shouldLog = payload.firstOrNull() != BluetoothConstants.OPCODE_HEARTBEAT
             if (!success) {
                 logger.w(TAG, "${tt()} sendCommand: write failed")
+                if (shouldLog) {
+                    logTelemetry("SERVICE", "[WRITE]", "Failed len=${payload.size}")
+                }
+            } else if (shouldLog) {
+                logTelemetry("SERVICE", "[WRITE]", "OK len=${payload.size}")
             }
             success
         }
@@ -554,7 +818,9 @@ internal class DeviceManager(
         if (level in 0..100) {
             batteryLevelState.value = level
             preferences.edit().putInt(KEY_LAST_BATTERY, level).apply()
+            _vitals.value = _vitals.value.copy(batteryPercent = level)
             logger.debug(TAG, "${tt()} Battery level $level%")
+            clearBatteryTimeout()
         }
     }
 
@@ -598,6 +864,9 @@ internal class DeviceManager(
         private const val KEY_RECONNECT_FAILURES = "reconnect_failures"
         private const val KEY_LAST_BATTERY = "last_battery_level"
         private const val RECONNECT_TIMEOUT_MS = 15_000L
+        private const val QUERY_TIMEOUT_MS = 5_000L
+        private const val QUERY_MAX_RETRIES = 3
+        private const val VITALS_POLL_MS = 30_000L
         private val BATTERY_SERVICE_UUID: UUID = UUID.fromString("0000180F-0000-1000-8000-00805f9b34fb")
         private val BATTERY_LEVEL_CHARACTERISTIC_UUID: UUID =
             UUID.fromString("00002A19-0000-1000-8000-00805f9b34fb")

@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
+import java.util.Locale
 
 @Composable
 fun TelemetryObserver(
@@ -41,11 +42,12 @@ fun TelemetryObserver(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 items(events.takeLast(200)) { event ->
-                    val color = when (event.category) {
-                        G1TelemetryEvent.Category.APP -> Color(0xFF2196F3)
-                        G1TelemetryEvent.Category.SERVICE -> Color(0xFF4CAF50)
-                        G1TelemetryEvent.Category.DEVICE -> Color(0xFFFFC107)
-                        G1TelemetryEvent.Category.SYSTEM -> Color(0xFFF44336)
+                    val color = when (event.source.uppercase(Locale.US)) {
+                        "APP" -> Color(0xFF2196F3)
+                        "SERVICE" -> Color(0xFF4CAF50)
+                        "DEVICE" -> Color(0xFFFFC107)
+                        "SYSTEM" -> Color(0xFFF44336)
+                        else -> MaterialTheme.colorScheme.onSurface
                     }
                     Text(
                         text = event.toString(),
