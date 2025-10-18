@@ -19,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -39,6 +40,14 @@ internal class DeviceManager(
     private val scope: CoroutineScope,
 ) {
     private val logger by lazy { MoncchichiLogger(context) }
+    private val _telemetryFlow = MutableStateFlow<List<String>>(emptyList())
+    val telemetry: StateFlow<List<String>> = _telemetryFlow.asStateFlow()
+
+    private fun logTelemetry(tag: String, msg: String) {
+        val entry = "[$tag] $msg"
+        _telemetryFlow.value = (_telemetryFlow.value + entry).takeLast(200)
+        logger.i(tag, msg)
+    }
     private val preferences: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     enum class ConnectionState {
@@ -137,20 +146,35 @@ internal class DeviceManager(
                 setConnectionState(ConnectionState.ERROR)
                 return
             }
-            val uartService = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
-            if (uartService == null) {
-                logger.w(TAG, "${tt()} UART service not available on device")
-                setConnectionState(ConnectionState.ERROR)
-                return
-            }
-            initializeCharacteristics(gatt, uartService)
+            initializeCharacteristics(gatt)
         }
 
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
-            val payload = characteristic.value?.copyOf() ?: return
+            val value = characteristic.value ?: return
+            val payload = value.copyOf()
+            val uuid = characteristic.uuid.toString()
+            val hex = value.joinToString(" ") { "%02X".format(it) }
+
+            when {
+                value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_BATTERY -> {
+                    val battery = value.getOrNull(1)?.toInt() ?: -1
+                    logTelemetry("DEVICE", "Battery update: ${battery}%")
+                    if (battery in 0..100) {
+                        updateBatteryLevel(battery)
+                    }
+                }
+                value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_FIRMWARE -> {
+                    val fw = value.drop(1).toByteArray().decodeToString().trim()
+                    logTelemetry("DEVICE", "Firmware: v$fw")
+                }
+                else -> {
+                    logTelemetry("DEVICE", "Notification from $uuid → [$hex]")
+                }
+            }
+
             if (characteristic.uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
                 writableIncoming.tryEmit(payload)
                 awaitingAck.set(false)
@@ -209,40 +233,59 @@ internal class DeviceManager(
     }
 
     @SuppressLint("MissingPermission")
-    private fun initializeCharacteristics(gatt: BluetoothGatt, service: BluetoothGattService) {
+    private fun initializeCharacteristics(gatt: BluetoothGatt) {
+        val service: BluetoothGattService? = gatt.getService(BluetoothConstants.UART_SERVICE_UUID)
+        if (service == null) {
+            logTelemetry("SERVICE", "UART service missing")
+            updateState(gatt.device, G1ConnectionState.RECONNECTING)
+            setConnectionState(ConnectionState.ERROR)
+            return
+        }
+
         writeCharacteristic = service.getCharacteristic(BluetoothConstants.UART_WRITE_CHARACTERISTIC_UUID)
-        readCharacteristic = service.getCharacteristic(BluetoothConstants.UART_READ_CHARACTERISTIC_UUID)
-        if (writeCharacteristic == null || readCharacteristic == null) {
-            logger.w(TAG, "${tt()} Required UART characteristics not found")
+        val notifyCharacteristic = service.getCharacteristic(BluetoothConstants.UART_READ_CHARACTERISTIC_UUID)
+        readCharacteristic = notifyCharacteristic
+
+        if (writeCharacteristic == null || notifyCharacteristic == null) {
+            logTelemetry("SERVICE", "UART characteristics missing")
+            updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
         }
-        val notified = enableNotifications(gatt, readCharacteristic)
-        if (!notified) {
-            logger.w(TAG, "${tt()} Unable to enable notifications")
+
+        val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
+        if (!enabled) {
+            logTelemetry("SERVICE", "Failed to enable notifications")
+            updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
         }
+
+        val cccd = notifyCharacteristic.getDescriptor(BluetoothConstants.CCCD_UUID)
+        if (cccd != null) {
+            cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            val success = gatt.writeDescriptor(cccd)
+            if (!success) {
+                logTelemetry("SERVICE", "Failed to write CCCD descriptor")
+                updateState(gatt.device, G1ConnectionState.RECONNECTING)
+                setConnectionState(ConnectionState.ERROR)
+                return
+            } else {
+                logTelemetry("SERVICE", "CCCD descriptor written successfully")
+            }
+        } else {
+            logTelemetry("SERVICE", "Missing CCCD descriptor on notify characteristic")
+            updateState(gatt.device, G1ConnectionState.RECONNECTING)
+            setConnectionState(ConnectionState.ERROR)
+            return
+        }
+
+        logTelemetry("SERVICE", "Notifications enabled for UART_READ_CHARACTERISTIC")
         bluetoothGatt = gatt
+        setConnectionState(ConnectionState.CONNECTED)
+        updateState(gatt.device, G1ConnectionState.CONNECTED)
         startHeartbeat()
         maybeReadBatteryLevel(gatt)
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun enableNotifications(
-        gatt: BluetoothGatt,
-        readChar: BluetoothGattCharacteristic?,
-    ): Boolean {
-        val characteristic = readChar ?: return false
-
-        val ok = gatt.setCharacteristicNotification(characteristic, true)
-        if (!ok) return false
-
-        val cccd = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-            ?: return false
-
-        cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-        return gatt.writeDescriptor(cccd)
     }
 
     @SuppressLint("MissingPermission")
