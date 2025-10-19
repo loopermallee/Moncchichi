@@ -18,7 +18,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.loopermallee.moncchichi.R
+import io.texne.g1.basis.service.R
 import com.loopermallee.moncchichi.bluetooth.BluetoothManager
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.nabinbhandari.android.permissions.PermissionHandler
@@ -455,7 +455,7 @@ class G1Service : Service() {
         val notification: Notification = Notification.Builder(this, channelId)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(getString(R.string.notification_description))
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
