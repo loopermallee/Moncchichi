@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.ble.ConsoleDiagnostics
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +27,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 class G1DisplayService : Service() {
@@ -191,14 +194,23 @@ class G1DisplayService : Service() {
         }
     }
 
+    fun getTelemetryFlow(): StateFlow<List<G1TelemetryEvent>> = deviceManager.telemetryFlow
+
+    fun getConsoleDiagnosticsFlow(): StateFlow<ConsoleDiagnostics> = deviceManager.consoleDiagnostics
+
     inner class G1Binder : Binder() {
 
         val stateFlow: StateFlow<G1ConnectionState> = readableStateFlow
         val batteryFlow: StateFlow<Int?> = deviceManager.batteryLevel
         val vitalsFlow: StateFlow<DeviceVitals> = deviceManager.vitals
+        val diagnosticsFlow: StateFlow<ConsoleDiagnostics> = deviceManager.consoleDiagnostics
 
         fun connect(address: String) {
             this@G1DisplayService.connect(address)
+        }
+
+        fun disconnect() {
+            serviceScope.launch { deviceManager.disconnect() }
         }
 
         fun heartbeat() {
@@ -212,6 +224,8 @@ class G1DisplayService : Service() {
         fun queryFirmware() {
             serviceScope.launch { deviceManager.queryFirmware() }
         }
+
+        suspend fun exportSessionLog(): File? = deviceManager.exportSessionLog()
 
         fun checkBinderHeartbeat(): Boolean {
             val isConnected = deviceManager.isConnected()

@@ -7,10 +7,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -18,12 +20,18 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -43,6 +51,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.loopermallee.moncchichi.core.ble.ConsoleDiagnostics
+import com.loopermallee.moncchichi.core.ble.DeviceBadge
+import com.loopermallee.moncchichi.core.ble.DeviceMode
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.bluetooth.G1Inbound
 import com.loopermallee.moncchichi.service.G1DisplayService
@@ -64,6 +75,9 @@ fun G1DataConsoleScreen(
     val telemetryFlow = service?.getTelemetryFlow()
     val telemetryState = telemetryFlow?.collectAsState(initial = emptyList<G1TelemetryEvent>())
     val telemetry = telemetryState?.value ?: emptyList()
+    val diagnosticsFlow = service?.getConsoleDiagnosticsFlow()
+    val diagnosticsState = diagnosticsFlow?.collectAsState(initial = ConsoleDiagnostics())
+    val diagnostics = diagnosticsState?.value ?: ConsoleDiagnostics()
     val listState = rememberLazyListState()
     LaunchedEffect(telemetry.size) {
         if (telemetry.isNotEmpty()) {
@@ -75,37 +89,71 @@ fun G1DataConsoleScreen(
     val deviceName = device?.name ?: "None"
     val mac = device?.address ?: "N/A"
     val scrollState = rememberScrollState()
+    var highContrast by remember { mutableStateOf(false) }
+    val backgroundColor = if (highContrast) Color(0xFF000000) else MaterialTheme.colorScheme.background
+    val primaryTextColor = if (highContrast) Color(0xFFFFFFFF) else MaterialTheme.colorScheme.onBackground
+    val secondaryTextColor = if (highContrast) Color(0xFFA7F3D0) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
 
     Column(
         modifier = modifier
             .fillMaxSize()
+            .background(backgroundColor)
             .verticalScroll(scrollState)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "🔧 G1 Data Console",
-            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-            textAlign = TextAlign.Center
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "🔧 G1 Data Console",
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                color = primaryTextColor,
+            )
+            IconButton(onClick = { binderProvider()?.disconnect() }) {
+                Icon(
+                    imageVector = Icons.Filled.LinkOff,
+                    contentDescription = "Manual disconnect",
+                    tint = if (highContrast) Color(0xFFFF5252) else MaterialTheme.colorScheme.primary
+                )
+            }
+        }
 
         Text(
             text = "Connected Device: $deviceName",
             style = MaterialTheme.typography.bodyMedium,
+            color = primaryTextColor,
             modifier = Modifier.fillMaxWidth()
         )
         Text(
             text = "MAC: $mac",
             style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
+            color = secondaryTextColor,
             modifier = Modifier.fillMaxWidth()
         )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "High Contrast Mode",
+                color = secondaryTextColor,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Switch(checked = highContrast, onCheckedChange = { highContrast = it })
+        }
 
         DeviceConsoleBody(
             binderProvider = binderProvider,
             telemetry = telemetry,
             listState = listState,
+            diagnostics = diagnostics,
+            highContrast = highContrast,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -126,6 +174,8 @@ fun DeviceConsoleBody(
     binderProvider: () -> G1DisplayService.LocalBinder?,
     telemetry: List<G1TelemetryEvent>,
     listState: LazyListState,
+    diagnostics: ConsoleDiagnostics,
+    highContrast: Boolean,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -150,6 +200,11 @@ fun DeviceConsoleBody(
         else -> "Power on your glasses and ensure Bluetooth permissions are granted."
     }
     val isConnected = connectionState == G1ConnectionState.CONNECTED
+
+    val primaryTextColor = if (highContrast) Color(0xFFFFFFFF) else MaterialTheme.colorScheme.onSurface
+    val secondaryTextColor = if (highContrast) Color(0xFFA7F3D0) else MaterialTheme.colorScheme.onSurfaceVariant
+    val cardColor = if (highContrast) Color(0xFF101010) else Color(0xFF1C1C1C)
+    val buttonColor = if (highContrast) Color(0xFF4CAF50) else bannerColor
 
     val batteryPulse = remember { mutableStateOf(false) }
     val firmwarePulse = remember { mutableStateOf(false) }
@@ -262,15 +317,15 @@ fun DeviceConsoleBody(
                 .background(bannerColor, RoundedCornerShape(8.dp))
                 .padding(12.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Status: ${connectionState.name}",
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyLarge
-                )
-                Text(
-                    text = connectionDescription,
-                    color = Color.White.copy(alpha = 0.9f),
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Status: ${connectionState.name}",
+                color = Color.White,
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = connectionDescription,
+                color = Color.White.copy(alpha = 0.9f),
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -280,14 +335,42 @@ fun DeviceConsoleBody(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            StatusCard(title = "Battery", value = battery, modifier = Modifier.weight(1f))
-            StatusCard(title = "Firmware", value = firmware, modifier = Modifier.weight(1f))
+            StatusCard(
+                title = "Battery",
+                value = battery,
+                highContrast = highContrast,
+                modifier = Modifier.weight(1f)
+            )
+            StatusCard(
+                title = "Firmware",
+                value = firmware,
+                highContrast = highContrast,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Text(
+            text = "Mode: ${formatModeLine(diagnostics.mode)}",
+            color = secondaryTextColor,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        if (diagnostics.badges.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                diagnostics.badges.forEach { badge ->
+                    BadgeChip(label = badge.displayLabel(), highContrast = highContrast)
+                }
+            }
         }
 
         if (!isConnected) {
             Text(
                 text = "No active connection. Turn on your G1 glasses and tap Connect from the hub screen.",
-                color = Color(0xFFB0BEC5),
+                color = secondaryTextColor,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -313,7 +396,7 @@ fun DeviceConsoleBody(
                 modifier = Modifier
                     .weight(1f)
                     .alpha(batteryAlpha),
-                colors = ButtonDefaults.buttonColors(containerColor = bannerColor)
+                colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
             ) {
                 Text("Get Battery")
             }
@@ -333,7 +416,7 @@ fun DeviceConsoleBody(
                 modifier = Modifier
                     .weight(1f)
                     .alpha(firmwareAlpha),
-                colors = ButtonDefaults.buttonColors(containerColor = bannerColor)
+                colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
             ) {
                 Text("Get Firmware")
             }
@@ -370,15 +453,35 @@ fun DeviceConsoleBody(
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
                 .alpha(sendAlpha),
-            colors = ButtonDefaults.buttonColors(containerColor = bannerColor)
+            colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
         ) {
             Text("Send to Glasses")
         }
 
+        Button(
+            onClick = {
+                scope.launch {
+                    val result = binderProvider()?.exportSessionLog()
+                    statusMessage = result?.let { "Session log saved: ${it.name}" }
+                        ?: "Session log export failed"
+                }
+            },
+            enabled = telemetry.isNotEmpty(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
+        ) {
+            Icon(imageVector = Icons.Filled.FileDownload, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Export Session Log")
+        }
+
         statusMessage?.let { message ->
+            val statusColor = if (message.contains("saved")) secondaryTextColor else Color(0xFFFF8A80)
             Text(
                 text = message,
-                color = Color(0xFFFF8A80),
+                color = statusColor,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
@@ -389,13 +492,13 @@ fun DeviceConsoleBody(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("📜 Live Log", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text("📜 Live Log", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = primaryTextColor)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 200.dp, max = 360.dp),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A))
+                colors = CardDefaults.cardColors(containerColor = cardColor)
             ) {
                 if (telemetry.isEmpty()) {
                     Box(
@@ -406,7 +509,7 @@ fun DeviceConsoleBody(
                     ) {
                         Text(
                             text = "Activity will appear once data starts flowing.",
-                            color = Color(0xFF9E9E9E),
+                            color = secondaryTextColor,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -420,11 +523,11 @@ fun DeviceConsoleBody(
                     ) {
                         items(telemetry) { event ->
                             val color = when (event.source.uppercase(Locale.US)) {
-                                "APP" -> Color.Cyan
-                                "DEVICE" -> Color(0xFFB388FF)
+                                "APP" -> if (highContrast) Color(0xFF00E5FF) else Color.Cyan
+                                "DEVICE" -> if (highContrast) Color(0xFFBB86FC) else Color(0xFFB388FF)
                                 "SERVICE" -> Color(0xFFFFB300)
-                                "SYSTEM" -> Color.Gray
-                                else -> MaterialTheme.colorScheme.onSurface
+                                "SYSTEM" -> if (highContrast) Color(0xFFFF5252) else Color.Gray
+                                else -> primaryTextColor
                             }
                             Text(
                                 text = event.toString(),
@@ -440,11 +543,14 @@ fun DeviceConsoleBody(
 }
 
 @Composable
-private fun StatusCard(title: String, value: String, modifier: Modifier = Modifier) {
+private fun StatusCard(title: String, value: String, highContrast: Boolean, modifier: Modifier = Modifier) {
+    val cardColor = if (highContrast) Color(0xFF101010) else Color(0xFF1C1C1C)
+    val titleColor = if (highContrast) Color.White else Color.White
+    val valueColor = if (highContrast) Color(0xFFA7F3D0) else Color(0xFFB0BEC5)
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1C))
+        colors = CardDefaults.cardColors(containerColor = cardColor)
     ) {
         Column(
             modifier = Modifier
@@ -452,8 +558,40 @@ private fun StatusCard(title: String, value: String, modifier: Modifier = Modifi
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(title, fontWeight = FontWeight.SemiBold, color = Color.White)
-            Text(value, color = Color(0xFFB0BEC5))
+            Text(title, fontWeight = FontWeight.SemiBold, color = titleColor)
+            Text(value, color = valueColor)
         }
+    }
+}
+
+private fun formatModeLine(mode: DeviceMode): String {
+    val options = listOf(
+        DeviceMode.TEXT to "🟢 Text",
+        DeviceMode.IMAGE to "🟣 Image",
+        DeviceMode.IDLE to "⚪ Idle",
+        DeviceMode.DASHBOARD to "🟠 Dashboard",
+    )
+    return options.joinToString(" | ") { (candidate, label) ->
+        if (candidate == mode) "[$label]" else label
+    }
+}
+
+private fun DeviceBadge.displayLabel(): String = when (this) {
+    DeviceBadge.CHARGING -> "🔋 Charging"
+    DeviceBadge.FULL -> "🔋 Full"
+    DeviceBadge.WEARING -> "🟢 Wearing"
+    DeviceBadge.CRADLE -> "⚫ Cradle"
+}
+
+@Composable
+private fun BadgeChip(label: String, highContrast: Boolean) {
+    val background = if (highContrast) Color(0xFF1F2933) else Color(0x332196F3)
+    val textColor = if (highContrast) Color(0xFFA7F3D0) else Color(0xFF2196F3)
+    Box(
+        modifier = Modifier
+            .background(background, RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Text(text = label, color = textColor, style = MaterialTheme.typography.bodySmall)
     }
 }
