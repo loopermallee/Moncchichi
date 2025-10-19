@@ -18,10 +18,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -79,6 +83,7 @@ fun G1DataConsoleScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .background(Color(0xFF000000))
             .verticalScroll(scrollState)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -87,18 +92,20 @@ fun G1DataConsoleScreen(
         Text(
             text = "🔧 G1 Data Console",
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            color = Color.White
         )
 
         Text(
             text = "Connected Device: $deviceName",
             style = MaterialTheme.typography.bodyMedium,
+            color = Color.White,
             modifier = Modifier.fillMaxWidth()
         )
         Text(
             text = "MAC: $mac",
             style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
+            color = Color(0xFFB0BEC5),
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -256,6 +263,32 @@ fun DeviceConsoleBody(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            IconButton(
+                onClick = {
+                    binder?.disconnect()
+                    binder?.recordTelemetry(
+                        G1TelemetryEvent(
+                            source = "APP",
+                            tag = "[ACTION]",
+                            message = "🔌 Manual disconnect triggered"
+                        )
+                    )
+                    statusMessage = "Manual disconnect requested"
+                },
+                enabled = binder != null,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PowerSettingsNew,
+                    contentDescription = "Disconnect",
+                    tint = Color(0xFFFF5252)
+                )
+            }
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -419,12 +452,17 @@ fun DeviceConsoleBody(
                         state = listState
                     ) {
                         items(telemetry) { event ->
-                            val color = when (event.source.uppercase(Locale.US)) {
-                                "APP" -> Color.Cyan
-                                "DEVICE" -> Color(0xFFB388FF)
-                                "SERVICE" -> Color(0xFFFFB300)
-                                "SYSTEM" -> Color.Gray
-                                else -> MaterialTheme.colorScheme.onSurface
+                            val baseColor = when (event.source.uppercase(Locale.US)) {
+                                "APP" -> Color(0xFF00E5FF)
+                                "DEVICE" -> Color(0xFFBB86FC)
+                                "SERVICE" -> Color(0xFF4CAF50)
+                                "SYSTEM" -> Color(0xFFB0BEC5)
+                                else -> Color.White
+                            }
+                            val color = if ("error" in event.tag.lowercase(Locale.US)) {
+                                Color(0xFFFF5252)
+                            } else {
+                                baseColor
                             }
                             Text(
                                 text = event.toString(),

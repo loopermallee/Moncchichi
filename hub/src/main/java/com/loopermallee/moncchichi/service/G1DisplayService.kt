@@ -378,6 +378,10 @@ class G1DisplayService : Service() {
 
         fun sendTextPage(text: String): Boolean = this@G1DisplayService.sendTextPage(text)
 
+        fun recordTelemetry(event: G1TelemetryEvent) {
+            deviceManager.recordTelemetry(event)
+        }
+
         fun inbound() = this@G1DisplayService.inboundFlow()
 
         fun vitals(): StateFlow<G1ReplyParser.DeviceVitals> = this@G1DisplayService.getVitalsFlow()
