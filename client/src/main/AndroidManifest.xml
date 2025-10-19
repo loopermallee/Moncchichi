@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <queries>
-        <package android:name="io.texne.g1.hub" />
+        <package android:name="com.loopermallee.moncchichi" />
     </queries>
     <uses-permission android:name="io.texne.g1.basis.permission.CONNECT_TO_SERVICE"/>
 </manifest>

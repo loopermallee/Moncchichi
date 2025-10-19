@@ -1,11 +1,11 @@
-package io.texne.g1.hub.ui
+package com.loopermallee.moncchichi.hub.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
-import io.texne.g1.hub.model.Repository
+import com.loopermallee.moncchichi.hub.model.Repository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow

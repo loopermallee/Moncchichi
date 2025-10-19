@@ -52,7 +52,7 @@ class Repository @Inject constructor(
     init {
         writableState.value = State(
             hubInstalled = try {
-                applicationContext.packageManager.getPackageInfo("io.texne.g1.hub", 0)
+                applicationContext.packageManager.getPackageInfo("com.loopermallee.moncchichi", 0)
                 true
             } catch (e: PackageManager.NameNotFoundException) {
                 false

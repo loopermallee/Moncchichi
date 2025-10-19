@@ -1,3 +1,5 @@
+package com.loopermallee.moncchichi.hub.ui.scanner
+
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,7 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.texne.g1.basis.client.G1ServiceCommon
-import io.texne.g1.hub.R
+import com.loopermallee.moncchichi.hub.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

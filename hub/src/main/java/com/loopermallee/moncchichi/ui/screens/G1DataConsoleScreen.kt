@@ -244,14 +244,6 @@ fun DeviceConsoleBody(
                             batteryPulse.value = false
                         }
                     }
-                    vitals.firmware?.takeIf { it.isNotBlank() }?.let { version ->
-                        firmware = version
-                        firmwarePulse.value = true
-                        launch {
-                            delay(400)
-                            firmwarePulse.value = false
-                        }
-                    }
                 }
             }
         }
