@@ -10,15 +10,16 @@ kotlin {
 }
 
 android {
-    namespace = "io.texne.g1.hub"
+    namespace = "com.loopermallee.moncchichi.hub"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.texne.g1.hub"
-        minSdk = 24
+        applicationId = "com.loopermallee.moncchichi"
+        minSdk = 23
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     kapt {
         correctErrorTypes = true
@@ -31,7 +32,7 @@ android {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
+        kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
     }
 
     buildTypes {
@@ -53,6 +54,12 @@ android {
 }
 
 dependencies {
+    implementation(project(":core"))
+    implementation(project(":service"))
+    implementation(project(":client"))
+    implementation(project(":aidl"))
+    implementation(project(":subtitles"))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
@@ -64,12 +71,11 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.icons.extended)
     implementation("androidx.compose.ui:ui-text")
-    implementation(libs.coroutines.android)
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+    implementation(libs.coroutines.android)
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
-    implementation(project(":client"))
-    implementation(project(":core"))
+    debugImplementation("androidx.compose.ui:ui-tooling")
 
     kapt(libs.hilt.android.compiler)
 }
