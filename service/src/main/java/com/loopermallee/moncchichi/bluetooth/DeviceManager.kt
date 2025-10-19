@@ -86,6 +86,8 @@ internal class DeviceManager(
     private val logger by lazy { MoncchichiLogger(context) }
     private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
     val telemetry: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
+    val telemetryFlow: StateFlow<List<G1TelemetryEvent>>
+        get() = telemetry
     private val _consoleDiagnostics = MutableStateFlow(ConsoleDiagnostics())
     val consoleDiagnostics: StateFlow<ConsoleDiagnostics> = _consoleDiagnostics.asStateFlow()
     private val _vitals = MutableStateFlow(DeviceVitals())
