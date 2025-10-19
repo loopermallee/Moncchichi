@@ -21,6 +21,9 @@ android {
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+
+    // Explicitly declare that this base module does not host dynamic features
+    dynamicFeatures = mutableSetOf()
     kapt {
         correctErrorTypes = true
     }
