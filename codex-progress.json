@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-19 00:58 SGT",
+  "last_update": "2025-10-19 12:13 SGT",
   "last_delta": 2,
   "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 86,
+  "last_pr_number": 91,
   "history": [
+    {
+      "when": "2025-10-19 12:13 SGT",
+      "pr": 91,
+      "title": "fix: add G1TelemetryEvent and finalize BLE diagnostic v2C.2",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-19 00:58 SGT",
       "pr": 86,
