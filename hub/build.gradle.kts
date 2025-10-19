@@ -22,13 +22,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // ✅ Fixed: prevent Gradle from treating this as a base dynamic-feature app
-    //   Build error: "not configured to use dynamic features"
-    //   Simply clear the property so it stays empty (no dynamic modules used)
-    dynamicFeatures.clear()
-
-    // If future feature modules are added, use:
-    // dynamicFeatures.addAll(listOf(":feature_yourmodule"))
     kapt {
         correctErrorTypes = true
     }
@@ -66,7 +59,6 @@ dependencies {
     implementation(project(":service"))
     implementation(project(":client"))
     implementation(project(":aidl"))
-    implementation(project(":subtitles"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
