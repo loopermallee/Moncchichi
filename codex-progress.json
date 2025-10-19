@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-19 12:13 SGT",
+  "last_update": "2025-10-19 16:04 SGT",
   "last_delta": 2,
   "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 91,
+  "last_pr_number": 92,
   "history": [
+    {
+      "when": "2025-10-19 16:04 SGT",
+      "pr": 92,
+      "title": "Add parser for G1 notify frames and log management controls",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-19 12:13 SGT",
       "pr": 91,
