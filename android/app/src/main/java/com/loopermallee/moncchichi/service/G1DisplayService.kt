@@ -1,4 +1,4 @@
-package io.texne.g1.basis.service
+package com.loopermallee.moncchichi.service
 
 import android.app.Service
 import android.content.Intent

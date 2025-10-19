@@ -8,7 +8,7 @@ kotlin {
 }
 
 android {
-    namespace = "io.texne.g1.basis.service"
+    namespace = "com.loopermallee.moncchichi.service"
     compileSdk = 35
 
     defaultConfig {

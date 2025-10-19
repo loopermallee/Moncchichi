@@ -28,7 +28,7 @@
             </intent-filter>
         </activity>
         <service
-            android:name="io.texne.g1.basis.service.G1DisplayService"
+            android:name="com.loopermallee.moncchichi.service.G1DisplayService"
             android:exported="true"
             android:enabled="true" />
     </application>
