@@ -20,4 +20,14 @@
     <string name="status_disconnected">Disconnected</string>
     <string name="status_unknown">Status unknown</string>
     <string name="status_bind_timeout_retry">Service bind timeout – retrying…</string>
+
+    <!-- ✅ Main service notification title -->
+    <string name="service_name">Moncchichi BLE Service</string>
+
+    <!-- Optional: notification description for background service -->
+    <string name="service_description">Maintaining stable BLE connection with G1 glasses</string>
+
+    <!-- Optional: fallback text for BLE connection -->
+    <string name="ble_status_disconnected">Device disconnected</string>
+    <string name="ble_status_connected">Device connected</string>
 </resources>
