@@ -1,4 +1,4 @@
-package io.texne.g1.hub
+package com.loopermallee.moncchichi.hub
 
 import android.content.ComponentName
 import android.content.Context

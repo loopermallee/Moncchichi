@@ -18,7 +18,7 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
         fun open(context: Context): G1ServiceClient? {
             val client = G1ServiceClient(context)
             val intent = Intent("io.texne.g1.basis.service.protocol.IG1ServiceClient")
-            intent.setClassName("io.texne.g1.hub", "io.texne.g1.basis.service.G1Service")
+            intent.setClassName("com.loopermallee.moncchichi", "io.texne.g1.basis.service.G1Service")
             if (context.bindService(
                     intent,
                     client.serviceConnection,
@@ -32,7 +32,7 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
 
         fun openHub(context: Context) {
             context.startActivity(Intent(Intent.ACTION_MAIN).also {
-                it.setClassName("io.texne.g1.hub", "io.texne.g1.hub.MainActivity")
+                it.setClassName("com.loopermallee.moncchichi", "com.loopermallee.moncchichi.hub.MainActivity")
             })
         }
     }

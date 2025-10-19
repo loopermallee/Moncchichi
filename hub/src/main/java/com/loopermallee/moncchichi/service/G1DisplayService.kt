@@ -23,9 +23,9 @@ import com.loopermallee.moncchichi.bluetooth.DeviceIoFacade
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.bluetooth.G1Inbound
-import com.loopermallee.moncchichi.ble.G1ReplyParser
+import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
-import io.texne.g1.hub.R
+import com.loopermallee.moncchichi.hub.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -380,6 +380,10 @@ class G1DisplayService : Service() {
 
         fun recordTelemetry(event: G1TelemetryEvent) {
             deviceManager.recordTelemetry(event)
+        }
+
+        fun clearTelemetry() {
+            deviceManager.clearTelemetry()
         }
 
         fun inbound() = this@G1DisplayService.inboundFlow()

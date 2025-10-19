@@ -1,4 +1,4 @@
-package io.texne.g1.hub.ui.glasses
+package com.loopermallee.moncchichi.hub.ui.glasses
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -38,14 +38,14 @@ import androidx.compose.ui.unit.dp
 import io.texne.g1.basis.client.G1ServiceCommon
 import io.texne.g1.basis.client.G1ServiceCommon.GlassesStatus
 import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
-import io.texne.g1.hub.ui.theme.Bof4Coral
-import io.texne.g1.hub.ui.theme.Bof4Midnight
-import io.texne.g1.hub.ui.theme.Bof4Mist
-import io.texne.g1.hub.ui.theme.Bof4Sand
-import io.texne.g1.hub.ui.theme.Bof4Sky
-import io.texne.g1.hub.ui.theme.Bof4Steel
-import io.texne.g1.hub.ui.theme.Bof4Verdant
-import io.texne.g1.hub.ui.theme.Bof4Warning
+import com.loopermallee.moncchichi.hub.ui.theme.Bof4Coral
+import com.loopermallee.moncchichi.hub.ui.theme.Bof4Midnight
+import com.loopermallee.moncchichi.hub.ui.theme.Bof4Mist
+import com.loopermallee.moncchichi.hub.ui.theme.Bof4Sand
+import com.loopermallee.moncchichi.hub.ui.theme.Bof4Sky
+import com.loopermallee.moncchichi.hub.ui.theme.Bof4Steel
+import com.loopermallee.moncchichi.hub.ui.theme.Bof4Verdant
+import com.loopermallee.moncchichi.hub.ui.theme.Bof4Warning
 import java.util.Locale
 
 private val ConnectedColor = Bof4Verdant

@@ -1,4 +1,4 @@
-package io.texne.g1.hub.model
+package com.loopermallee.moncchichi.hub.model
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
