@@ -353,6 +353,11 @@ class DeviceManager(
         logger.i("[Telemetry]", event.toString())
     }
 
+    fun recordTelemetry(event: G1TelemetryEvent) {
+        _telemetryFlow.value = (_telemetryFlow.value + event).takeLast(500)
+        logger.i("[Telemetry]", event.toString())
+    }
+
     private fun updateState(newState: G1ConnectionState) {
         if (_stateFlow.value == newState) return
         logger.i(DEVICE_MANAGER_TAG, "${tt()} State ${_stateFlow.value} -> $newState")

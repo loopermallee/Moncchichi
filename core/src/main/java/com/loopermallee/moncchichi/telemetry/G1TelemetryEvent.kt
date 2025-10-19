@@ -5,21 +5,18 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Single line of structured telemetry the UI and logs can observe.
+ * Structured telemetry event for Moncchichi diagnostics.
+ * Used by BLE service and UI to timestamp events.
  */
 data class G1TelemetryEvent(
-    /** Wall-clock timestamp in milliseconds so consumers can sort across sources. */
-    val ts: Long = System.currentTimeMillis(),
-    /** Origin of the event (e.g., APP, SERVICE, DEVICE, SYSTEM). */
     val source: String,
-    /** Short category or tag for the event such as "[BLE]" or "[NOTIFY]". */
     val tag: String,
-    /** Human friendly description of the event. */
     val message: String,
+    val timestamp: Long = System.currentTimeMillis(),
 ) {
     override fun toString(): String {
-        val formatter = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
-        val time = formatter.format(Date(ts))
-        return "[$time][$source]$tag $message"
+        val formatter = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+        val formattedTime = formatter.format(Date(timestamp))
+        return "[$formattedTime][$source][$tag] $message"
     }
 }
