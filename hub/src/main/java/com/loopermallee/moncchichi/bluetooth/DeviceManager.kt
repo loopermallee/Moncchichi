@@ -9,6 +9,9 @@ import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
 import com.loopermallee.moncchichi.ble.G1ReplyParser
+import com.loopermallee.moncchichi.core.ble.ConsoleDiagnostics
+import com.loopermallee.moncchichi.core.ble.DeviceBadge
+import com.loopermallee.moncchichi.core.ble.DeviceMode
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,8 +35,14 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.min
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private const val DEVICE_MANAGER_TAG = "[DeviceManager]"
 private const val RECONNECT_TAG = "[Reconnect]"
@@ -57,6 +66,7 @@ class DeviceManager(
             val hex = payload.toHexString()
             logTelemetry("DEVICE", "[NOTIFY]", "Notify (${payload.size} bytes) → $hex")
             notificationEvents.tryEmit(payload)
+            updateModeAndBadges(payload)
             G1ReplyParser.parse(payload, ::bleLog)
         } catch (error: Throwable) {
             logger.e(
@@ -69,6 +79,13 @@ class DeviceManager(
     private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
     val telemetryFlow: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
     val vitals: StateFlow<G1ReplyParser.DeviceVitals> = G1ReplyParser.vitalsFlow.asStateFlow()
+    private val _consoleDiagnostics = MutableStateFlow(ConsoleDiagnostics())
+    val consoleDiagnostics: StateFlow<ConsoleDiagnostics> = _consoleDiagnostics.asStateFlow()
+
+    private var lastMode: DeviceMode = DeviceMode.UNKNOWN
+    private val activeBadges = mutableSetOf<DeviceBadge>()
+    private var negotiatedMtu: Int = 23
+    private var highPriority: Boolean = false
 
     private val transactionQueueLazy = lazy { G1TransactionQueue(scope, logger) }
     private val transactionQueue: G1TransactionQueue
@@ -126,8 +143,12 @@ class DeviceManager(
         bleClient?.close()
         bleClient = null
         _rssi.value = null
+        logTelemetry("APP", "[MANUAL]", "🔌 Manual disconnect triggered by user")
         updateState(G1ConnectionState.DISCONNECTED)
         G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
+        lastMode = DeviceMode.UNKNOWN
+        activeBadges.clear()
+        updateDiagnostics()
     }
 
     @SuppressLint("MissingPermission")
@@ -353,6 +374,86 @@ class DeviceManager(
         logger.i("[Telemetry]", event.toString())
     }
 
+    private fun updateDiagnostics() {
+        _consoleDiagnostics.value = ConsoleDiagnostics(
+            mode = lastMode,
+            badges = activeBadges.toSet(),
+            mtu = negotiatedMtu,
+            highPriority = highPriority,
+        )
+    }
+
+    private fun updateModeAndBadges(payload: ByteArray) {
+        if (payload.isEmpty()) return
+        val header = payload[0].toInt() and 0xFF
+        val mode = when (header) {
+            0x25 -> DeviceMode.IDLE
+            0x4E -> DeviceMode.TEXT
+            0x15, 0x16, 0x20 -> DeviceMode.IMAGE
+            0xF5 -> DeviceMode.DASHBOARD
+            else -> DeviceMode.UNKNOWN
+        }
+        if (mode != DeviceMode.UNKNOWN && mode != lastMode) {
+            lastMode = mode
+            logTelemetry("DEVICE", "[MODE]", "Mode updated → ${mode.symbol()}")
+            updateDiagnostics()
+        }
+
+        if (header == 0x06 || header == 0xF5) {
+            val state = payload.getOrNull(1)?.toInt()?.and(0xFF) ?: return
+            val badge = when (state) {
+                0x0E -> DeviceBadge.CHARGING
+                0x0F -> DeviceBadge.FULL
+                0x06 -> DeviceBadge.WEARING
+                0x09 -> DeviceBadge.CRADLE
+                else -> null
+            }
+            if (badge != null) {
+                applyBadge(badge)
+            }
+        }
+    }
+
+    private fun applyBadge(badge: DeviceBadge) {
+        var updated = false
+        val category = badge.category()
+        val iterator = activeBadges.iterator()
+        while (iterator.hasNext()) {
+            val existing = iterator.next()
+            if (existing.category() == category && existing != badge) {
+                iterator.remove()
+                updated = true
+            }
+        }
+        if (activeBadges.add(badge)) {
+            updated = true
+        }
+        if (updated) {
+            logTelemetry("DEVICE", "[STATUS]", "${badge.symbol()}")
+            updateDiagnostics()
+        }
+    }
+
+    private fun DeviceMode.symbol(): String = when (this) {
+        DeviceMode.IDLE -> "⚪ Idle"
+        DeviceMode.TEXT -> "🟢 Text"
+        DeviceMode.IMAGE -> "🟣 Image"
+        DeviceMode.DASHBOARD -> "🟠 Dashboard"
+        DeviceMode.UNKNOWN -> "❔ Unknown"
+    }
+
+    private fun DeviceBadge.symbol(): String = when (this) {
+        DeviceBadge.CHARGING -> "🔋 Charging"
+        DeviceBadge.FULL -> "🔋 Full"
+        DeviceBadge.WEARING -> "🟢 Wearing"
+        DeviceBadge.CRADLE -> "⚫ Cradle"
+    }
+
+    private fun DeviceBadge.category(): String = when (this) {
+        DeviceBadge.CHARGING, DeviceBadge.FULL -> "battery"
+        DeviceBadge.WEARING, DeviceBadge.CRADLE -> "placement"
+    }
+
     private fun updateState(newState: G1ConnectionState) {
         if (_stateFlow.value == newState) return
         logger.i(DEVICE_MANAGER_TAG, "${tt()} State ${_stateFlow.value} -> $newState")
@@ -367,4 +468,39 @@ class DeviceManager(
     }
 
     private fun tt() = "[${Thread.currentThread().name}]"
+
+    suspend fun exportSessionLog(): File? = withContext(Dispatchers.IO) {
+        val directory = File(context.getExternalFilesDir(null), "Moncchichi/Logs")
+        if (!directory.exists() && !directory.mkdirs()) {
+            logTelemetry("APP", "[EXPORT]", "Unable to create ${directory.absolutePath}")
+            return@withContext null
+        }
+        val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+        val timestamp = formatter.format(Date())
+        val file = File(directory, "hub_session_$timestamp.txt")
+        val header = buildString {
+            appendLine("# Moncchichi Hub Session Log")
+            appendLine("timestamp=${System.currentTimeMillis()}")
+            appendLine("mtu=$negotiatedMtu")
+            appendLine("connection_priority=${if (highPriority) "HIGH" else "BALANCED"}")
+            appendLine("mode=${lastMode}")
+            appendLine("badges=${activeBadges.joinToString(",") { it.name.lowercase(Locale.US) }}")
+            appendLine()
+        }
+        runCatching {
+            FileOutputStream(file).use { stream ->
+                stream.write(header.toByteArray())
+                _telemetryFlow.value.forEach { event ->
+                    stream.write(event.toString().toByteArray())
+                    stream.write('\n'.code)
+                }
+            }
+        }.onFailure { error ->
+            logger.e(DEVICE_MANAGER_TAG, "${tt()} Failed to export log", error)
+            logTelemetry("APP", "[EXPORT]", "Session log export failed: ${error.message}")
+            return@withContext null
+        }
+        logTelemetry("APP", "[EXPORT]", "Session log saved → ${file.absolutePath}")
+        file
+    }
 }

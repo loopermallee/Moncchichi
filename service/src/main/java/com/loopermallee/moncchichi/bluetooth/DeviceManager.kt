@@ -13,11 +13,15 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.ble.ConsoleDiagnostics
+import com.loopermallee.moncchichi.core.ble.DeviceBadge
+import com.loopermallee.moncchichi.core.ble.DeviceMode
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
 import com.loopermallee.moncchichi.core.ble.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -32,7 +36,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.EnumMap
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.atomic.AtomicBoolean
@@ -41,6 +51,33 @@ import kotlin.text.Charsets
 import kotlin.concurrent.withLock
 
 private const val TAG = "DeviceManager"
+private const val MTU_TARGET = 498
+private const val MTU_MINIMUM_FOR_NOTIFICATIONS = 256
+private const val MAX_CCCD_RETRIES = 3
+private const val CCCD_RETRY_DELAY_MS = 500L
+private const val RECONNECT_BASE_DELAY_SECONDS = 2L
+private const val RECONNECT_MAX_DELAY_SECONDS = 8L
+
+private enum class DeviceArm {
+    LEFT,
+    RIGHT,
+    UNKNOWN,
+}
+
+private fun BluetoothDevice.detectArm(): DeviceArm {
+    val name = name?.lowercase(Locale.US) ?: return DeviceArm.UNKNOWN
+    return when {
+        "left" in name -> DeviceArm.LEFT
+        "right" in name -> DeviceArm.RIGHT
+        else -> DeviceArm.UNKNOWN
+    }
+}
+
+private fun DeviceArm.prefix(): String = when (this) {
+    DeviceArm.LEFT -> "L>"
+    DeviceArm.RIGHT -> "R>"
+    DeviceArm.UNKNOWN -> "?>"
+}
 
 internal class DeviceManager(
     private val context: Context,
@@ -49,11 +86,26 @@ internal class DeviceManager(
     private val logger by lazy { MoncchichiLogger(context) }
     private val _telemetryFlow = MutableStateFlow<List<G1TelemetryEvent>>(emptyList())
     val telemetry: StateFlow<List<G1TelemetryEvent>> = _telemetryFlow.asStateFlow()
+    val telemetryFlow: StateFlow<List<G1TelemetryEvent>>
+        get() = telemetry
+    private val _consoleDiagnostics = MutableStateFlow(ConsoleDiagnostics())
+    val consoleDiagnostics: StateFlow<ConsoleDiagnostics> = _consoleDiagnostics.asStateFlow()
     private val _vitals = MutableStateFlow(DeviceVitals())
     val vitals: StateFlow<DeviceVitals> = _vitals.asStateFlow()
 
-    private fun logTelemetry(source: String, tag: String, message: String) {
-        val event = G1TelemetryEvent(source = source, tag = tag, message = message)
+    private fun logTelemetry(
+        source: String,
+        tag: String,
+        message: String,
+        arm: DeviceArm? = null,
+    ) {
+        val prefix = arm?.takeIf { it != DeviceArm.UNKNOWN }?.prefix()
+        val decorated = if (prefix != null) {
+            "$prefix $message"
+        } else {
+            message
+        }
+        val event = G1TelemetryEvent(source = source, tag = tag, message = decorated)
         _telemetryFlow.value = (_telemetryFlow.value + event).takeLast(200)
         logger.i(source, event.toString())
     }
@@ -84,6 +136,16 @@ internal class DeviceManager(
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
     private var readCharacteristic: BluetoothGattCharacteristic? = null
     private var batteryCharacteristic: BluetoothGattCharacteristic? = null
+    private var pendingNotificationGatt: BluetoothGatt? = null
+    private var pendingNotificationDescriptor: BluetoothGattDescriptor? = null
+    private var pendingCccdArming = false
+    private var cccdRetryCount = 0
+    private val cccdArmed = AtomicBoolean(false)
+    private var negotiatedMtu = 23
+    private var negotiatedHighPriority = false
+    private var currentArm: DeviceArm = DeviceArm.UNKNOWN
+    private val activeBadges = mutableSetOf<DeviceBadge>()
+    private var lastMode: DeviceMode = DeviceMode.UNKNOWN
 
     private var periodicVitalsJob: Job? = null
     private val queryStateLock = ReentrantLock()
@@ -125,6 +187,34 @@ internal class DeviceManager(
                     currentDeviceAddress = gatt.device.address
                     cacheLastConnected(gatt.device.address)
                     clearReconnectFailures()
+                    negotiatedHighPriority = gatt.requestConnectionPriority(
+                        BluetoothGatt.CONNECTION_PRIORITY_HIGH
+                    )
+                    logTelemetry(
+                        "SERVICE",
+                        "[LINK]",
+                        "Connection priority request → ${if (negotiatedHighPriority) "HIGH" else "FAILED"}",
+                        gatt.device.detectArm()
+                    )
+                    updateDiagnostics()
+                    val mtuRequested = gatt.requestMtu(MTU_TARGET)
+                    if (!mtuRequested) {
+                        logTelemetry(
+                            "SERVICE",
+                            "[MTU]",
+                            "MTU request to $MTU_TARGET bytes rejected",
+                            gatt.device.detectArm()
+                        )
+                    } else {
+                        negotiatedMtu = 23
+                        updateDiagnostics()
+                    }
+                    logTelemetry(
+                        "SERVICE",
+                        "[RECONNECT]",
+                        "Connected",
+                        gatt.device.detectArm()
+                    )
                     gatt.discoverServices()
                 }
                 BluetoothProfile.STATE_CONNECTING -> {
@@ -171,6 +261,34 @@ internal class DeviceManager(
             initializeCharacteristics(gatt)
         }
 
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                negotiatedMtu = mtu
+                val emoji = when {
+                    mtu >= 400 -> "🟩"
+                    mtu in 200 until 400 -> "🟨"
+                    else -> "🟥"
+                }
+                logTelemetry(
+                    "SERVICE",
+                    "[MTU]",
+                    "$emoji Negotiated MTU=$mtu",
+                    gatt.device.detectArm()
+                )
+                updateDiagnostics()
+                if (pendingCccdArming && mtu >= MTU_MINIMUM_FOR_NOTIFICATIONS) {
+                    maybeArmNotifications(gatt)
+                }
+            } else {
+                logTelemetry(
+                    "SERVICE",
+                    "[MTU]",
+                    "Failed to negotiate MTU (status=$status)",
+                    gatt.device.detectArm()
+                )
+            }
+        }
+
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
@@ -180,8 +298,10 @@ internal class DeviceManager(
             val uuid = characteristic.uuid
             val uuidString = uuid.toString()
             val hex = value.joinToString(" ") { "%02X".format(it) }
+            val arm = gatt.device.detectArm()
 
-            logTelemetry("DEVICE", "[NOTIFY]", "Notification from $uuidString → [$hex]")
+            logTelemetry("DEVICE", "[NOTIFY]", "Notification from $uuidString → [$hex]", arm)
+            updateModeAndBadges(payload, arm)
 
             if (uuid == BluetoothConstants.UART_READ_CHARACTERISTIC_UUID) {
                 val text = payload.toString(Charsets.UTF_8)
@@ -198,18 +318,18 @@ internal class DeviceManager(
                     }
                     parsed.batteryPercent?.let { level ->
                         completePendingQuery(QueryToken.BATTERY)
-                        logTelemetry("DEVICE", "[BATTERY]", "Battery = ${level}%")
+                        logTelemetry("DEVICE", "[BATTERY]", "Battery = ${level}%", arm)
                         updateBatteryLevel(level)
                     }
                     parsed.firmwareVersion?.let { fw ->
                         completePendingQuery(QueryToken.FIRMWARE)
-                        logTelemetry("DEVICE", "[FIRMWARE]", "Firmware = $fw")
+                        logTelemetry("DEVICE", "[FIRMWARE]", "Firmware = $fw", arm)
                     }
                 } else {
                     when {
                         value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_BATTERY -> {
                             val battery = value.getOrNull(1)?.toInt() ?: -1
-                            logTelemetry("DEVICE", "[BATTERY]", "Battery update: ${battery}%")
+                            logTelemetry("DEVICE", "[BATTERY]", "Battery update: ${battery}%", arm)
                             if (battery in 0..100) {
                                 completePendingQuery(QueryToken.BATTERY)
                                 updateBatteryLevel(battery)
@@ -217,7 +337,7 @@ internal class DeviceManager(
                         }
                         value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_FIRMWARE -> {
                             val fw = value.drop(1).toByteArray().decodeToString().trim()
-                            logTelemetry("DEVICE", "[FIRMWARE]", "Firmware: v$fw")
+                            logTelemetry("DEVICE", "[FIRMWARE]", "Firmware: v$fw", arm)
                             if (fw.isNotEmpty()) {
                                 completePendingQuery(QueryToken.FIRMWARE)
                                 _vitals.value = _vitals.value.copy(firmwareVersion = fw)
@@ -236,6 +356,39 @@ internal class DeviceManager(
                 characteristic.uuid,
                 payload,
             )
+        }
+
+        override fun onDescriptorWrite(
+            gatt: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int,
+        ) {
+            if (descriptor.uuid != BluetoothConstants.CCCD_UUID) {
+                return
+            }
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                cccdArmed.set(true)
+                pendingCccdArming = false
+                pendingNotificationDescriptor = null
+                pendingNotificationGatt = null
+                updateDiagnostics()
+                val deviceName = gatt.device.name ?: gatt.device.address
+                logTelemetry(
+                    "SERVICE",
+                    "[NOTIFY]",
+                    "✅ CCCD armed for $deviceName",
+                    gatt.device.detectArm()
+                )
+                onNotificationsArmed(gatt)
+            } else {
+                logTelemetry(
+                    "SERVICE",
+                    "[NOTIFY]",
+                    "CCCD write failed with status=$status",
+                    gatt.device.detectArm()
+                )
+                scheduleDescriptorRetry(gatt)
+            }
         }
 
         override fun onCharacteristicRead(
@@ -264,6 +417,10 @@ internal class DeviceManager(
         setConnectionState(ConnectionState.CONNECTING)
         currentDeviceAddress = device.address
         manualDisconnect.set(false)
+        currentArm = device.detectArm()
+        activeBadges.clear()
+        lastMode = DeviceMode.UNKNOWN
+        updateDiagnostics()
         bluetoothGatt = device.connectGatt(context, false, gattCallback)
     }
 
@@ -306,44 +463,101 @@ internal class DeviceManager(
 
         val enabled = gatt.setCharacteristicNotification(notifyCharacteristic, true)
         if (!enabled) {
-            logTelemetry("SERVICE", "[NOTIFY]", "Failed to enable notifications")
+            logTelemetry("SERVICE", "[NOTIFY]", "Failed to enable notifications", gatt.device.detectArm())
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
         }
 
         val cccd = notifyCharacteristic.getDescriptor(BluetoothConstants.CCCD_UUID)
-        if (cccd != null) {
-            cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            val success = gatt.writeDescriptor(cccd)
-            if (!success) {
-                logTelemetry("SERVICE", "[NOTIFY]", "Failed to write CCCD descriptor")
-                updateState(gatt.device, G1ConnectionState.RECONNECTING)
-                setConnectionState(ConnectionState.ERROR)
-                return
-            } else {
-                logTelemetry("SERVICE", "[NOTIFY]", "CCCD descriptor written successfully")
-            }
-        } else {
-            logTelemetry("SERVICE", "[NOTIFY]", "Missing CCCD descriptor on notify characteristic")
+        if (cccd == null) {
+            logTelemetry(
+                "SERVICE",
+                "[NOTIFY]",
+                "Missing CCCD descriptor on notify characteristic",
+                gatt.device.detectArm()
+            )
             updateState(gatt.device, G1ConnectionState.RECONNECTING)
             setConnectionState(ConnectionState.ERROR)
             return
         }
 
-        logTelemetry("SERVICE", "[NOTIFY]", "Notifications enabled for UART_READ_CHARACTERISTIC")
-        bluetoothGatt = gatt
-        setConnectionState(ConnectionState.CONNECTED)
-        updateState(gatt.device, G1ConnectionState.CONNECTED)
-        startHeartbeat()
-        startPeriodicVitals()
-        scope.launch {
-            logTelemetry("APP", "[VITALS]", "Auto querying vitals post-connect")
-            queryBattery()
-            delay(200)
-            queryFirmware()
+        pendingNotificationGatt = gatt
+        pendingNotificationDescriptor = cccd
+        pendingCccdArming = true
+        cccdRetryCount = 0
+        cccdArmed.set(false)
+        updateDiagnostics()
+
+        if (negotiatedMtu >= MTU_MINIMUM_FOR_NOTIFICATIONS) {
+            maybeArmNotifications(gatt)
+        } else {
+            logTelemetry(
+                "SERVICE",
+                "[MTU]",
+                "Waiting for MTU ≥ $MTU_MINIMUM_FOR_NOTIFICATIONS before arming CCCD",
+                gatt.device.detectArm()
+            )
         }
-        maybeReadBatteryLevel(gatt)
+    }
+
+    private fun maybeArmNotifications(gatt: BluetoothGatt) {
+        if (!pendingCccdArming) return
+        if (negotiatedMtu < MTU_MINIMUM_FOR_NOTIFICATIONS) return
+        val descriptor = pendingNotificationDescriptor ?: return
+        if (cccdRetryCount >= MAX_CCCD_RETRIES) {
+            logTelemetry(
+                "SERVICE",
+                "[NOTIFY]",
+                "Giving up on CCCD arming after $MAX_CCCD_RETRIES attempts",
+                gatt.device.detectArm()
+            )
+            pendingCccdArming = false
+            updateState(gatt.device, G1ConnectionState.RECONNECTING)
+            setConnectionState(ConnectionState.ERROR)
+            return
+        }
+        val attemptNumber = cccdRetryCount + 1
+        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        val queued = gatt.writeDescriptor(descriptor)
+        if (queued) {
+            cccdRetryCount = attemptNumber
+            logTelemetry(
+                "SERVICE",
+                "[NOTIFY]",
+                "Writing CCCD attempt #$attemptNumber",
+                gatt.device.detectArm()
+            )
+        } else {
+            cccdRetryCount = attemptNumber
+            logTelemetry(
+                "SERVICE",
+                "[NOTIFY]",
+                "CCCD write attempt #$attemptNumber rejected by stack",
+                gatt.device.detectArm()
+            )
+            scheduleDescriptorRetry(gatt)
+        }
+    }
+
+    private fun scheduleDescriptorRetry(gatt: BluetoothGatt) {
+        if (cccdRetryCount >= MAX_CCCD_RETRIES) {
+            logTelemetry(
+                "SERVICE",
+                "[NOTIFY]",
+                "CCCD retry limit reached",
+                gatt.device.detectArm()
+            )
+            pendingCccdArming = false
+            updateState(gatt.device, G1ConnectionState.RECONNECTING)
+            setConnectionState(ConnectionState.ERROR)
+            return
+        }
+        scope.launch {
+            delay(CCCD_RETRY_DELAY_MS)
+            val pendingGatt = pendingNotificationGatt ?: gatt
+            maybeArmNotifications(pendingGatt)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -357,6 +571,28 @@ internal class DeviceManager(
         } else {
             logger.debug(TAG, "${tt()} Battery service not exposed by device")
         }
+    }
+
+    private fun onNotificationsArmed(gatt: BluetoothGatt) {
+        logTelemetry(
+            "SERVICE",
+            "[NOTIFY]",
+            "Notifications enabled for UART_READ_CHARACTERISTIC",
+            gatt.device.detectArm()
+        )
+        bluetoothGatt = gatt
+        setConnectionState(ConnectionState.CONNECTED)
+        updateState(gatt.device, G1ConnectionState.CONNECTED)
+        startHeartbeat()
+        startPeriodicVitals()
+        scope.launch {
+            logTelemetry("APP", "[VITALS]", "Auto querying vitals post-connect")
+            queryBattery()
+            delay(200)
+            queryFirmware()
+        }
+        maybeReadBatteryLevel(gatt)
+        updateDiagnostics()
     }
 
     private fun startHeartbeat() {
@@ -392,6 +628,90 @@ internal class DeviceManager(
         awaitingAck.set(false)
     }
 
+    private fun updateDiagnostics() {
+        val leftArmed = cccdArmed.get() && currentArm == DeviceArm.LEFT
+        val rightArmed = cccdArmed.get() && currentArm == DeviceArm.RIGHT
+        _consoleDiagnostics.value = ConsoleDiagnostics(
+            mode = lastMode,
+            badges = activeBadges.toSet(),
+            mtu = negotiatedMtu,
+            highPriority = negotiatedHighPriority,
+            leftCccdArmed = leftArmed,
+            rightCccdArmed = rightArmed,
+        )
+    }
+
+    private fun updateModeAndBadges(payload: ByteArray, arm: DeviceArm) {
+        if (payload.isEmpty()) return
+        val header = payload[0].toInt() and 0xFF
+        val mode = when (header) {
+            0x25 -> DeviceMode.IDLE
+            0x4E -> DeviceMode.TEXT
+            0x15, 0x16, 0x20 -> DeviceMode.IMAGE
+            0xF5 -> DeviceMode.DASHBOARD
+            else -> DeviceMode.UNKNOWN
+        }
+        if (mode != DeviceMode.UNKNOWN && mode != lastMode) {
+            lastMode = mode
+            logTelemetry("DEVICE", "[MODE]", "Mode updated → ${mode.symbol()}", arm)
+            updateDiagnostics()
+        }
+
+        if (header == 0x06 || header == 0xF5) {
+            val state = payload.getOrNull(1)?.toInt()?.and(0xFF) ?: return
+            val badge = when (state) {
+                0x0E -> DeviceBadge.CHARGING
+                0x0F -> DeviceBadge.FULL
+                0x06 -> DeviceBadge.WEARING
+                0x09 -> DeviceBadge.CRADLE
+                else -> null
+            }
+            if (badge != null) {
+                applyBadge(badge, arm)
+            }
+        }
+    }
+
+    private fun applyBadge(badge: DeviceBadge, arm: DeviceArm) {
+        var updated = false
+        val category = badge.category()
+        val iterator = activeBadges.iterator()
+        while (iterator.hasNext()) {
+            val existing = iterator.next()
+            if (existing.category() == category && existing != badge) {
+                iterator.remove()
+                updated = true
+            }
+        }
+        if (activeBadges.add(badge)) {
+            updated = true
+        }
+        if (updated) {
+            logTelemetry("DEVICE", "[STATUS]", "${badge.symbol()}", arm)
+            updateDiagnostics()
+        }
+    }
+
+    private fun DeviceMode.symbol(): String = when (this) {
+        DeviceMode.IDLE -> "⚪ Idle"
+        DeviceMode.TEXT -> "🟢 Text"
+        DeviceMode.IMAGE -> "🟣 Image"
+        DeviceMode.DASHBOARD -> "🟠 Dashboard"
+        DeviceMode.UNKNOWN -> "❔ Unknown"
+    }
+
+    private fun DeviceBadge.symbol(): String = when (this) {
+        DeviceBadge.CHARGING -> "🔋 Charging"
+        DeviceBadge.FULL -> "🔋 Full"
+        DeviceBadge.WEARING -> "🟢 Wearing"
+        DeviceBadge.CRADLE -> "⚫ Cradle"
+    }
+
+    private fun DeviceBadge.category(): String = when (this) {
+        DeviceBadge.CHARGING, DeviceBadge.FULL -> "battery"
+        DeviceBadge.WEARING, DeviceBadge.CRADLE -> "placement"
+    }
+
     private fun handleHeartbeatTimeout() {
         missedHeartbeatCount += 1
         logger.heartbeat(TAG, "${tt()} Missed heartbeat #$missedHeartbeatCount — scheduling soft reconnect")
@@ -409,6 +729,7 @@ internal class DeviceManager(
         resetPendingQuery()
         setConnectionState(ConnectionState.DISCONNECTING)
         manualDisconnect.set(true)
+        logTelemetry("APP", "[MANUAL]", "🔌 Manual disconnect triggered by user")
         reconnectJob?.cancel()
         reconnecting.set(false)
         val address = currentDeviceAddress
@@ -418,6 +739,11 @@ internal class DeviceManager(
         setConnectionState(ConnectionState.DISCONNECTED)
         address?.let { deviceStates[it] = G1ConnectionState.DISCONNECTED }
         logger.i(TAG, "${tt()} disconnect requested")
+        cccdArmed.set(false)
+        pendingCccdArming = false
+        pendingNotificationDescriptor = null
+        pendingNotificationGatt = null
+        updateDiagnostics()
     }
 
     private fun clearConnection() {
@@ -426,6 +752,15 @@ internal class DeviceManager(
         readCharacteristic = null
         batteryCharacteristic = null
         currentDeviceAddress = null
+        negotiatedMtu = 23
+        negotiatedHighPriority = false
+        activeBadges.clear()
+        lastMode = DeviceMode.UNKNOWN
+        cccdArmed.set(false)
+        pendingNotificationGatt = null
+        pendingNotificationDescriptor = null
+        pendingCccdArming = false
+        updateDiagnostics()
     }
 
     private fun startPeriodicVitals() {
@@ -669,9 +1004,17 @@ internal class DeviceManager(
                     logger.backoff(TAG, "Manual disconnect detected; stopping reconnect loop")
                     break
                 }
-                val delaySeconds = min(1L shl (reconnectAttempt + 1), 60L)
+                val delaySeconds = min(
+                    RECONNECT_BASE_DELAY_SECONDS * (1L shl reconnectAttempt),
+                    RECONNECT_MAX_DELAY_SECONDS
+                )
                 reconnectAttempt += 1
                 logger.backoff(TAG, "Reconnecting attempt #$reconnectAttempt in ${delaySeconds}s")
+                logTelemetry(
+                    "SERVICE",
+                    "[RECONNECT]",
+                    "Reconnecting in ${delaySeconds}s…"
+                )
                 delay(delaySeconds * 1000)
                 if (!adapter.isEnabled || manualDisconnect.get()) {
                     break
@@ -795,6 +1138,47 @@ internal class DeviceManager(
 
     fun triggerNotification(serviceUuid: UUID, charUuid: UUID, value: ByteArray) {
         notifyCallback?.invoke(serviceUuid, charUuid, value.copyOf())
+    }
+
+    suspend fun exportSessionLog(): File? = withContext(Dispatchers.IO) {
+        val diagnostics = _consoleDiagnostics.value
+        val directory = File(context.getExternalFilesDir(null), "Moncchichi/Logs")
+        if (!directory.exists() && !directory.mkdirs()) {
+            logTelemetry("APP", "[EXPORT]", "Unable to create ${directory.absolutePath}")
+            return@withContext null
+        }
+        val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+        val timestamp = formatter.format(Date())
+        val file = File(directory, "session_$timestamp.txt")
+        val header = buildString {
+            appendLine("# Moncchichi G1 Session Log")
+            appendLine("timestamp=${System.currentTimeMillis()}")
+            appendLine("mtu=${diagnostics.mtu}")
+            appendLine("connection_priority=${if (diagnostics.highPriority) "HIGH" else "BALANCED"}")
+            appendLine("cccd_left=${diagnostics.leftCccdArmed}")
+            appendLine("cccd_right=${diagnostics.rightCccdArmed}")
+            appendLine("mode=${diagnostics.mode}")
+            appendLine(
+                "badges=${diagnostics.badges.joinToString(",") { it.name.lowercase(Locale.US) }}"
+            )
+            appendLine("heartbeat_interval=${BluetoothConstants.HEARTBEAT_INTERVAL_SECONDS}")
+            appendLine()
+        }
+        runCatching {
+            FileOutputStream(file).use { stream ->
+                stream.write(header.toByteArray())
+                _telemetryFlow.value.forEach { event ->
+                    stream.write(event.toString().toByteArray())
+                    stream.write('\n'.code)
+                }
+            }
+        }.onFailure { error ->
+            logger.e(TAG, "${tt()} Failed to export session log", error)
+            logTelemetry("APP", "[EXPORT]", "Session log export failed: ${error.message}")
+            return@withContext null
+        }
+        logTelemetry("APP", "[EXPORT]", "Session log saved → ${file.absolutePath}")
+        file
     }
 
     private companion object {
