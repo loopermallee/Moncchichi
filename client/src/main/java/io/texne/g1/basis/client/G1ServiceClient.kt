@@ -12,14 +12,22 @@ import io.texne.g1.basis.service.protocol.ObserveStateCallback
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
-class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1ServiceClient>(context) {
+class G1ServiceClient private constructor(context: Context) :
+    G1ServiceCommon<IG1ServiceClient>(context) {
 
     companion object {
         fun open(context: Context): G1ServiceClient? {
             val client = G1ServiceClient(context)
             val intent = Intent("io.texne.g1.basis.service.protocol.IG1ServiceClient")
-            intent.setClassName("com.loopermallee.moncchichi", "io.texne.g1.basis.service.G1Service")
-            if (context.bindService(
+
+            // ✅ Fixed target: bind to Moncchichi’s internal display service
+            intent.setClassName(
+                "com.loopermallee.moncchichi",
+                "com.loopermallee.moncchichi.service.G1DisplayService"
+            )
+
+            if (
+                context.bindService(
                     intent,
                     client.serviceConnection,
                     Context.BIND_AUTO_CREATE
@@ -32,7 +40,10 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
 
         fun openHub(context: Context) {
             context.startActivity(Intent(Intent.ACTION_MAIN).also {
-                it.setClassName("com.loopermallee.moncchichi", "com.loopermallee.moncchichi.hub.MainActivity")
+                it.setClassName(
+                    "com.loopermallee.moncchichi",
+                    "com.loopermallee.moncchichi.hub.MainActivity"
+                )
             })
         }
     }
@@ -85,11 +96,11 @@ class G1ServiceClient private constructor(context: Context): G1ServiceCommon<IG1
                 }
             })
         }
+
         override fun onServiceDisconnected(name: ComponentName?) {
             service = null
         }
     }
-
 
     override suspend fun displayTextPage(id: String, page: List<String>) =
         suspendCoroutine<Boolean> { continuation ->
