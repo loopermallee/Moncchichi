@@ -22,9 +22,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Explicitly declare that this base module does not host dynamic features
+    // ✅ Fixed: prevent Gradle from treating this as a base dynamic-feature app
+    //   Build error: "not configured to use dynamic features"
+    //   Simply clear the property so it stays empty (no dynamic modules used)
     dynamicFeatures.clear()
-    dynamicFeatures.addAll(emptyList())
+
+    // If future feature modules are added, use:
+    // dynamicFeatures.addAll(listOf(":feature_yourmodule"))
     kapt {
         correctErrorTypes = true
     }
