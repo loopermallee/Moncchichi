@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-19 16:04 SGT",
-  "last_delta": 2,
-  "last_keywords": "fix",
+  "last_update": "2025-10-19 18:55 SGT",
+  "last_delta": 4,
+  "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 92,
+  "last_pr_number": 93,
   "history": [
+    {
+      "when": "2025-10-19 18:55 SGT",
+      "pr": 93,
+      "title": "Update G1DisplayService manifest entry",
+      "delta": 4,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-19 16:04 SGT",
       "pr": 92,
