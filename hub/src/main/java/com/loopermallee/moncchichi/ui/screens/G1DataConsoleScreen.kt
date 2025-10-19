@@ -19,6 +19,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -43,6 +45,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -232,7 +236,7 @@ fun DeviceConsoleBody(
         if (vitalsFlow != null) {
             vitalsJob = scope.launch {
                 vitalsFlow.collectLatest { vitals ->
-                    vitals.battery?.let { level ->
+                    vitals.batteryPercent?.let { level ->
                         battery = "$level%"
                         batteryPulse.value = true
                         launch {
@@ -285,6 +289,45 @@ fun DeviceConsoleBody(
                     imageVector = Icons.Filled.PowerSettingsNew,
                     contentDescription = "Disconnect",
                     tint = Color(0xFFFF5252)
+                )
+            }
+
+            val clipboardManager = LocalClipboardManager.current
+            val logText = remember(telemetry) { telemetry.joinToString("\n") { it.toString() } }
+
+            IconButton(
+                onClick = {
+                    clipboardManager.setText(AnnotatedString(logText))
+                    binder?.recordTelemetry(
+                        G1TelemetryEvent(
+                            source = "APP",
+                            tag = "[LOG]",
+                            message = "📋 Log copied (${telemetry.size} entries)"
+                        )
+                    )
+                },
+                enabled = telemetry.isNotEmpty()
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ContentCopy,
+                    contentDescription = "Copy log",
+                    tint = Color(0xFF00E5FF)
+                )
+            }
+
+            IconButton(
+                onClick = {
+                    binder?.clearTelemetry()
+                    binder?.recordTelemetry(
+                        G1TelemetryEvent("APP", "[LOG]", "🗑️ Log cleared")
+                    )
+                },
+                enabled = telemetry.isNotEmpty()
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Clear log",
+                    tint = Color(0xFFFFB74D)
                 )
             }
         }

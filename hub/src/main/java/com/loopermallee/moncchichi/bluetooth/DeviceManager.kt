@@ -8,7 +8,7 @@ import android.bluetooth.le.ScanResult
 import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
-import com.loopermallee.moncchichi.ble.G1ReplyParser
+import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +57,7 @@ class DeviceManager(
             val hex = payload.toHexString()
             logTelemetry("DEVICE", "[NOTIFY]", "Notify (${payload.size} bytes) → $hex")
             notificationEvents.tryEmit(payload)
-            G1ReplyParser.parse(payload, ::bleLog)
+            onNotify(payload)
         } catch (error: Throwable) {
             logger.e(
                 DEVICE_MANAGER_TAG,
@@ -127,7 +127,7 @@ class DeviceManager(
         bleClient = null
         _rssi.value = null
         updateState(G1ConnectionState.DISCONNECTED)
-        G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
+        G1ReplyParser.resetVitals()
     }
 
     @SuppressLint("MissingPermission")
@@ -271,7 +271,7 @@ class DeviceManager(
             if (!success) {
                 logger.w(DEVICE_MANAGER_TAG, "${tt()} connectDevice timeout or failure")
                 updateState(G1ConnectionState.DISCONNECTED)
-                G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
+                G1ReplyParser.resetVitals()
             }
             success
         }
@@ -317,7 +317,7 @@ class DeviceManager(
                         updateState(G1ConnectionState.DISCONNECTED)
                     }
                     _rssi.value = null
-                    G1ReplyParser.vitalsFlow.value = G1ReplyParser.DeviceVitals()
+                    G1ReplyParser.resetVitals()
                 }
             }
         }.launchIn(scope)
@@ -356,6 +356,47 @@ class DeviceManager(
     fun recordTelemetry(event: G1TelemetryEvent) {
         _telemetryFlow.value = (_telemetryFlow.value + event).takeLast(500)
         logger.i("[Telemetry]", event.toString())
+    }
+
+    fun clearTelemetry() {
+        _telemetryFlow.value = emptyList()
+    }
+
+    private fun onNotify(frame: ByteArray) {
+        when (val parsed = G1ReplyParser.parseNotify(frame)) {
+            is G1ReplyParser.Parsed.Vitals -> {
+                val v = parsed.vitals
+                val parts = buildList {
+                    v.batteryPercent?.let { add("🔋 ${it}%") }
+                    if (v.wearing == true) add("🟢 Wearing")
+                    if (v.inCradle == true) add("🧲 Cradle")
+                    if (v.charging == true) add("⚡ Charging")
+                }.joinToString(" ")
+                if (parts.isNotBlank()) {
+                    recordTelemetry(G1TelemetryEvent("DEVICE", "[STATUS]", parts))
+                }
+            }
+            is G1ReplyParser.Parsed.Mode -> {
+                recordTelemetry(G1TelemetryEvent("DEVICE", "[MODE]", parsed.name))
+            }
+            is G1ReplyParser.Parsed.Unknown -> {
+                val hex = parsed.frame.joinToString("") { byte -> "%02X".format(byte) }
+                recordTelemetry(
+                    G1TelemetryEvent(
+                        "DEVICE",
+                        "[UNKNOWN]",
+                        "op=${parsed.op} data=$hex"
+                    )
+                )
+            }
+            null -> recordTelemetry(
+                G1TelemetryEvent(
+                    "SYSTEM",
+                    "[PARSE]",
+                    "Ignored frame (${frame.size} bytes)"
+                )
+            )
+        }
     }
 
     private fun updateState(newState: G1ConnectionState) {
