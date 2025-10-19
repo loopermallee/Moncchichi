@@ -1,13 +1,13 @@
 package com.loopermallee.moncchichi.telemetry
 
 /**
- * Represents a telemetry log event between the app and the G1 smart glasses.
- * Used for logging, diagnostics, and export in G1DisplayService and the Live Log UI.
+ * Represents a telemetry log entry between the app, BLE service, and G1 device.
+ * Used for the Live Log feature and diagnostic export.
  */
 data class G1TelemetryEvent(
     val source: String,          // "APP", "SERVICE", or "DEVICE"
-    val tag: String,             // "[BLE]", "[NOTIFY]", "[ERROR]" etc.
-    val message: String,         // Human-readable content of the event
+    val tag: String,             // e.g. "[BLE]", "[NOTIFY]", "[ERROR]"
+    val message: String,         // Human-readable message
     val timestamp: Long = System.currentTimeMillis()
 ) {
     override fun toString(): String {
