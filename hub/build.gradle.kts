@@ -23,7 +23,8 @@ android {
     }
 
     // Explicitly declare that this base module does not host dynamic features
-    dynamicFeatures.set(emptySet())
+    dynamicFeatures.clear()
+    dynamicFeatures.addAll(emptyList())
     kapt {
         correctErrorTypes = true
     }
