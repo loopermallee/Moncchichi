@@ -118,8 +118,13 @@ class G1DisplayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        deviceManager.disconnect()
-        serviceScope.cancel()
+        runCatching {
+            deviceManager.disconnect() // Gadgetbridge-style safe dispose
+        }.onFailure { error ->
+            logger.w(TAG, "${tt()} Error during BLE disconnect: ${error.message}", error)
+        }
+
+        serviceScope.cancel() // stop any coroutines still running
         logger.i(TAG, "${tt()} Service destroyed and BLE disconnected")
     }
 
