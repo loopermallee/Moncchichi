@@ -94,6 +94,7 @@ internal class DeviceManager(
     private val awaitingAck = AtomicBoolean(false)
     private val manualDisconnect = AtomicBoolean(false)
     private val reconnecting = AtomicBoolean(false)
+    private val hasConnectedSuccessfully = AtomicBoolean(false)
     private var missedHeartbeatCount = 0
     private var lastAckTimestamp: Long = 0L
     private var currentDeviceAddress: String? = null
@@ -120,6 +121,7 @@ internal class DeviceManager(
                     reconnectJob?.cancel()
                     reconnecting.set(false)
                     missedHeartbeatCount = 0
+                    hasConnectedSuccessfully.set(true)
                     setConnectionState(ConnectionState.CONNECTED)
                     updateState(gatt.device, G1ConnectionState.CONNECTED)
                     currentDeviceAddress = gatt.device.address
@@ -143,17 +145,22 @@ internal class DeviceManager(
                     clearConnection()
                     setConnectionState(ConnectionState.DISCONNECTED)
                     val wasManual = manualDisconnect.getAndSet(false)
-                    val targetState = if (wasManual) {
-                        G1ConnectionState.DISCONNECTED
-                    } else {
-                        reconnecting.set(true)
-                        G1ConnectionState.RECONNECTING
+                    val shouldAttemptReconnect = !wasManual && hasConnectedSuccessfully.get()
+                    val targetState = when {
+                        wasManual -> G1ConnectionState.DISCONNECTED
+                        shouldAttemptReconnect -> {
+                            reconnecting.set(true)
+                            G1ConnectionState.RECONNECTING
+                        }
+                        else -> G1ConnectionState.DISCONNECTED
                     }
                     updateState(gatt.device, targetState)
-                    if (!wasManual && isBluetoothEnabled()) {
+                    if (shouldAttemptReconnect && isBluetoothEnabled()) {
                         scope.launch {
                             tryReconnect(context.applicationContext)
                         }
+                    } else if (!shouldAttemptReconnect) {
+                        reconnecting.set(false)
                     }
                 }
                 else -> {
@@ -258,6 +265,9 @@ internal class DeviceManager(
         ) {
             logger.debug(TAG, "${tt()} connect: already connected or connecting")
             return
+        }
+        if (lastDeviceAddress != device.address) {
+            hasConnectedSuccessfully.set(false)
         }
         addDevice(device)
         updateState(device, G1ConnectionState.CONNECTING)
@@ -646,6 +656,11 @@ internal class DeviceManager(
     suspend fun tryReconnect(context: Context): Boolean {
         reconnectJob?.cancel()
         reconnectAttempt = 0
+        if (!hasConnectedSuccessfully.get()) {
+            logger.debug(TAG, "${tt()} Skipping reconnect; no successful connection yet")
+            reconnecting.set(false)
+            return false
+        }
         reconnecting.set(true)
         val adapter = BluetoothAdapter.getDefaultAdapter()
         if (adapter == null) {
@@ -838,6 +853,7 @@ internal class DeviceManager(
     private fun clearCachedAddress() {
         preferences.edit().remove(KEY_LAST_CONNECTED_MAC).apply()
         lastDeviceAddress = null
+        hasConnectedSuccessfully.set(false)
     }
 
     private fun isBluetoothEnabled(): Boolean =

@@ -17,9 +17,10 @@
     <application>
         <service
             android:name=".bluetooth.G1DisplayService"
-            android:exported="false"
+            android:enabled="true"
+            android:exported="true"
             android:foregroundServiceType="connectedDevice"
-            android:enabled="true" />
+            android:stopWithTask="false" />
 
         <service
             android:name="io.texne.g1.basis.service.G1Service"
