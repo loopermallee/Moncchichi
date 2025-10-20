@@ -22,12 +22,10 @@ android {
         debug {
             // ⚡ Fast debug builds without shrinking
             isMinifyEnabled = false
-            isShrinkResources = false
         }
         release {
-            // 🧩 Keep release artifacts optimized
+            // 🧩 Keep release artifacts optimized via R8 (resource shrinker unsupported for libraries)
             isMinifyEnabled = true
-            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
