@@ -32,8 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class G1DisplayService : Service() {
 
     private val logger by lazy { MoncchichiLogger(this) }
-    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val deviceManager by lazy { DeviceManager(this) }
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val deviceManager by lazy { DeviceManager(this, serviceScope) }
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private val connectionStateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     private val readableStateFlow = connectionStateFlow.asStateFlow()
@@ -118,11 +118,9 @@ class G1DisplayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        heartbeatJob?.cancel()
+        deviceManager.close()
         serviceScope.cancel()
-        heartbeatStarted.set(false)
-        deviceManager.shutdown()
-        logger.i(TAG, "${tt()} Service destroyed and DeviceManager shutdown")
+        logger.i(TAG, "${tt()} Service destroyed and DeviceManager closed")
     }
 
     /**
