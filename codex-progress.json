@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-20 16:50 SGT",
-  "last_delta": 0,
-  "last_keywords": "neutral",
+  "last_update": "2025-10-20 17:09 SGT",
+  "last_delta": 2,
+  "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 105,
+  "last_pr_number": 106,
   "history": [
+    {
+      "when": "2025-10-20 17:09 SGT",
+      "pr": 106,
+      "title": "Implement failsafe crash recovery flow",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-20 16:50 SGT",
       "pr": 105,
