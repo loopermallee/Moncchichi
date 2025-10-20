@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-20 10:11 SGT",
+  "last_update": "2025-10-20 10:47 SGT",
   "last_delta": 2,
   "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 97,
+  "last_pr_number": 98,
   "history": [
+    {
+      "when": "2025-10-20 10:47 SGT",
+      "pr": 98,
+      "title": "Add connect/disconnect toggle to hub BLE service",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-20 10:11 SGT",
       "pr": 97,
