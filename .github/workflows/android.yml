@@ -13,6 +13,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GRADLE_OPTS: "-Xmx4g -Dorg.gradle.jvmargs='-Xmx4g -XX:+UseParallelGC'"
     defaults:
       run:
         shell: bash
