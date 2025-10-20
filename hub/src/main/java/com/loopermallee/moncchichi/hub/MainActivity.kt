@@ -7,6 +7,7 @@ import android.content.ServiceConnection
 import android.graphics.Color
 import android.os.Bundle
 import android.os.IBinder
+import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -26,11 +27,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 class MainActivity : AppCompatActivity() {
     private val logger by lazy { MoncchichiLogger(this) }
     private lateinit var status: TextView
+    private lateinit var toggleButton: Button
     private var hud: ServiceDebugHUD? = null
     private var service: G1DisplayService? = null
     private var isBound = false
     private var connectionStateJob: Job? = null
     private var serviceBound = CompletableDeferred<Unit>()
+    private var serviceIntent: Intent? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -38,11 +41,13 @@ class MainActivity : AppCompatActivity() {
             service = localBinder.getService()
             if (service == null) return
             isBound = true
+            ServiceRepository.setBinding()
             logger.debug("Activity", "${tt()} Service bound successfully")
             if (!serviceBound.isCompleted) {
                 serviceBound.complete(Unit)
             }
             hud?.show("Service bound", Color.GREEN, autoHide = false)
+            updateToggleButton(ServiceState.BINDING)
             observeConnectionState()
         }
 
@@ -57,6 +62,7 @@ class MainActivity : AppCompatActivity() {
                 status.text = getString(R.string.status_disconnected)
             }
             serviceBound = CompletableDeferred()
+            updateToggleButton(ServiceState.DISCONNECTED)
         }
     }
 
@@ -64,8 +70,23 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         status = findViewById(R.id.status)
+        toggleButton = findViewById(R.id.connection_toggle)
+        serviceIntent = Intent(this, G1DisplayService::class.java)
 
-        status.setText(R.string.boot_wait)
+        status.setText(R.string.status_disconnected)
+        ServiceRepository.setDisconnected()
+        updateToggleButton(ServiceRepository.state.value)
+
+        toggleButton.setOnClickListener {
+            when (ServiceRepository.state.value) {
+                ServiceState.BINDING, ServiceState.CONNECTED -> disconnectFromService()
+                else -> connectToService()
+            }
+        }
+
+        lifecycleScope.launch {
+            ServiceRepository.state.collectLatest { updateToggleButton(it) }
+        }
     }
 
     override fun onStart() {
@@ -73,18 +94,55 @@ class MainActivity : AppCompatActivity() {
         if (hud == null) {
             hud = ServiceDebugHUD(this)
         }
-        hud?.show("Starting service...", Color.YELLOW, autoHide = false)
-
         if (isBound && service != null) {
             hud?.update("Service already bound", Color.GREEN, autoHide = false)
             return
         }
 
+        serviceIntent?.let { intent ->
+            attemptBind(intent, 0, userInitiated = false)
+        }
+    }
+
+    private fun connectToService() {
+        if (isBound && service != null) {
+            hud?.update("Service already bound", Color.GREEN, autoHide = false)
+            return
+        }
+        val intent = serviceIntent ?: Intent(this, G1DisplayService::class.java).also {
+            serviceIntent = it
+        }
+        hud?.show("Starting service...", Color.YELLOW, autoHide = false)
         ServiceRepository.setBinding()
         status.setText(R.string.boot_service_binding)
-        val serviceIntent = Intent(this, G1DisplayService::class.java)
-        ContextCompat.startForegroundService(this, serviceIntent)
-        attemptBind(serviceIntent)
+        ContextCompat.startForegroundService(this, intent)
+        attemptBind(intent, Context.BIND_AUTO_CREATE, userInitiated = true)
+    }
+
+    private fun disconnectFromService() {
+        hud?.update("Stopping service...", Color.YELLOW, autoHide = false)
+        connectionStateJob?.cancel()
+        connectionStateJob = null
+        if (isBound) {
+            runCatching { unbindService(connection) }
+            isBound = false
+        }
+        service = null
+        serviceBound = CompletableDeferred()
+        serviceIntent?.let { intent -> stopService(intent) }
+        ServiceRepository.setDisconnected()
+        status.setText(R.string.status_disconnected)
+        hud?.update("Service stopped", Color.RED, autoHide = false)
+        updateToggleButton(ServiceState.DISCONNECTED)
+    }
+
+    private fun updateToggleButton(state: ServiceState) {
+        if (!::toggleButton.isInitialized) {
+            return
+        }
+        val active = state == ServiceState.BINDING || state == ServiceState.CONNECTED
+        val textRes = if (active) R.string.action_disconnect else R.string.action_connect
+        toggleButton.text = getString(textRes)
     }
 
     override fun onStop() {
@@ -105,11 +163,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun attemptBind(serviceIntent: Intent) {
+    private fun attemptBind(serviceIntent: Intent, bindFlags: Int, userInitiated: Boolean) {
+        if (isBound) {
+            if (userInitiated) {
+                hud?.update("Service already bound", Color.GREEN, autoHide = false)
+            }
+            return
+        }
         serviceBound = CompletableDeferred()
         lifecycleScope.launch {
             val bindResult = withTimeoutOrNull(5_000L) {
-                if (!bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE)) {
+                if (!bindService(serviceIntent, connection, bindFlags)) {
                     return@withTimeoutOrNull false
                 }
                 serviceBound.await()
@@ -117,20 +181,45 @@ class MainActivity : AppCompatActivity() {
             }
             when (bindResult) {
                 true -> {
-                    logger.debug("Activity", "${tt()} Service bind established")
+                    logger.debug(
+                        "Activity",
+                        "${tt()} Service bind established (flags=$bindFlags)"
+                    )
+                    if (userInitiated) {
+                        hud?.update("Service bound", Color.GREEN, autoHide = false)
+                    }
                 }
                 false -> {
-                    logger.w("Activity", "${tt()} bindService returned false")
-                    ServiceRepository.setError()
-                    status.setText(R.string.boot_service_timeout)
-                    hud?.update("Bind failed", Color.RED)
+                    logger.w(
+                        "Activity",
+                        "${tt()} bindService returned false (flags=$bindFlags)"
+                    )
+                    if (userInitiated) {
+                        ServiceRepository.setError()
+                        status.setText(R.string.boot_service_timeout)
+                        hud?.update("Bind failed", Color.RED)
+                    } else {
+                        ServiceRepository.setDisconnected()
+                        status.setText(R.string.status_disconnected)
+                        hud?.update("Service idle", Color.DKGRAY, autoHide = false)
+                        updateToggleButton(ServiceState.DISCONNECTED)
+                    }
                 }
                 null -> {
-                    logger.w("Activity", "${tt()} Service bind timeout")
-                    ServiceRepository.setBinding()
-                    status.text = getString(R.string.status_bind_timeout_retry)
-                    hud?.update("Bind timeout", Color.RED)
-                    tryBindAgain()
+                    logger.w(
+                        "Activity",
+                        "${tt()} Service bind timeout (flags=$bindFlags)"
+                    )
+                    if (userInitiated) {
+                        ServiceRepository.setBinding()
+                        status.text = getString(R.string.status_bind_timeout_retry)
+                        hud?.update("Bind timeout", Color.RED)
+                        tryBindAgain()
+                    } else {
+                        ServiceRepository.setError()
+                        status.setText(R.string.boot_service_timeout)
+                        hud?.update("Bind timeout", Color.RED)
+                    }
                 }
             }
         }
@@ -139,9 +228,11 @@ class MainActivity : AppCompatActivity() {
     private fun tryBindAgain() {
         lifecycleScope.launch {
             delay(2_000)
-            val intent = Intent(this@MainActivity, G1DisplayService::class.java)
+            val intent = serviceIntent ?: Intent(this@MainActivity, G1DisplayService::class.java).also {
+                serviceIntent = it
+            }
             ContextCompat.startForegroundService(this@MainActivity, intent)
-            attemptBind(intent)
+            attemptBind(intent, Context.BIND_AUTO_CREATE, userInitiated = true)
         }
     }
 
