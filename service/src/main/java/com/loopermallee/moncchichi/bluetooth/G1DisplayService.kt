@@ -118,9 +118,9 @@ class G1DisplayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        deviceManager.close()
+        deviceManager.disconnect()
         serviceScope.cancel()
-        logger.i(TAG, "${tt()} Service destroyed and DeviceManager closed")
+        logger.i(TAG, "${tt()} Service destroyed and BLE disconnected")
     }
 
     /**
