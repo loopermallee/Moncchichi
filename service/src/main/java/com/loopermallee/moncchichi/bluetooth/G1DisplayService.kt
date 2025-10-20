@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class G1DisplayService : Service() {
 
     private val logger by lazy { MoncchichiLogger(this) }
-    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceManager by lazy { DeviceManager(this, serviceScope) }
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private val connectionStateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
@@ -116,10 +117,10 @@ class G1DisplayService : Service() {
     }
 
     override fun onDestroy() {
-        heartbeatJob?.cancel()
-        serviceScope.cancel()
-        heartbeatStarted.set(false)
         super.onDestroy()
+        deviceManager.disconnect()
+        serviceScope.cancel()
+        logger.i(TAG, "${tt()} Service destroyed and BLE disconnected")
     }
 
     /**
