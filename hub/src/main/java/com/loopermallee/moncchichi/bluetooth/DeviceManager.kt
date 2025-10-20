@@ -85,6 +85,9 @@ class DeviceManager(
     private var scanCallback: ScanCallback? = null
     private var reconnectJob: Job? = null
 
+    // ✅ Tracks whether a real connection has ever succeeded
+    private var wasConnectedBefore = false
+
     init {
         logger.i(
             DEVICE_MANAGER_TAG,
@@ -257,6 +260,8 @@ class DeviceManager(
     private suspend fun connectDevice(device: BluetoothDevice): Boolean {
         return connectionMutex.withLock {
             updateState(G1ConnectionState.CONNECTING)
+            logTelemetry("BLE", "[CONNECT]", "Attempting to connect to ${device.address}")
+
             trackedDevice = device
             logTelemetry("SERVICE", "[CONNECT]", "Connecting to ${device.address}")
             val client = G1BleUartClient(context, device, ::bleLog, scope)
@@ -272,6 +277,7 @@ class DeviceManager(
                 logger.w(DEVICE_MANAGER_TAG, "${tt()} connectDevice timeout or failure")
                 updateState(G1ConnectionState.DISCONNECTED)
                 G1ReplyParser.resetVitals()
+                logTelemetry("BLE", "[CONNECT]", "Connect attempt failed or timed out")
             }
             success
         }
@@ -305,15 +311,23 @@ class DeviceManager(
         clientStateJob = client.connectionState.onEach { state ->
             when (state) {
                 G1BleUartClient.ConnectionState.CONNECTED -> {
+                    wasConnectedBefore = true
                     updateState(G1ConnectionState.CONNECTED)
+                    val address = trackedDevice?.address ?: "unknown"
+                    logTelemetry("BLE", "[STATE]", "Connected to $address")
                 }
                 G1BleUartClient.ConnectionState.CONNECTING -> {
                     updateState(G1ConnectionState.CONNECTING)
                 }
                 G1BleUartClient.ConnectionState.DISCONNECTED -> {
-                    if (this@DeviceManager.state.value == G1ConnectionState.CONNECTED) {
+                    // ✅ Only trigger reconnect if connection was established before
+                    if (wasConnectedBefore) {
+                        val address = trackedDevice?.address ?: "unknown"
+                        logTelemetry("BLE", "[STATE]", "Lost connection to $address, attempting reconnect")
                         updateState(G1ConnectionState.RECONNECTING)
+                        tryReconnect()
                     } else {
+                        logTelemetry("BLE", "[STATE]", "Initial connect failed, staying DISCONNECTED")
                         updateState(G1ConnectionState.DISCONNECTED)
                     }
                     _rssi.value = null
