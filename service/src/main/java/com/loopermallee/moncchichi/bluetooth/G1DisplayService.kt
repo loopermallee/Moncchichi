@@ -97,6 +97,11 @@ class G1DisplayService : Service() {
         }
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        logger.debug(TAG, "${tt()} onStartCommand(flags=$flags, startId=$startId)")
+        return START_STICKY
+    }
+
     override fun onBind(intent: Intent?): IBinder {
         logger.debug(TAG, "${tt()} onBind(${intent?.action})")
         if (heartbeatStarted.compareAndSet(false, true)) {

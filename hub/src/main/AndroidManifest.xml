@@ -40,10 +40,11 @@
             android:label="G1 Data Console" />
 
         <service
-            android:name="io.texne.g1.basis.service.G1DisplayService"
+            android:name="com.loopermallee.moncchichi.service.G1DisplayService"
             android:enabled="true"
             android:exported="true"
-            android:foregroundServiceType="connectedDevice">
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false">
             <intent-filter>
                 <action android:name="io.texne.g1.basis.service.protocol.IG1ServiceClient" />
             </intent-filter>
