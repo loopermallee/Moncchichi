@@ -31,6 +31,9 @@
             </intent-filter>
         </activity>
         <activity
+            android:name="com.loopermallee.moncchichi.FailsafeMainActivity"
+            android:exported="true" />
+        <activity
             android:name="com.loopermallee.moncchichi.PermissionsActivity"
             android:exported="false" />
 
