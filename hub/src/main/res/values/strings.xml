@@ -20,4 +20,6 @@
     <string name="status_disconnected">Disconnected</string>
     <string name="status_unknown">Status unknown</string>
     <string name="status_bind_timeout_retry">Service bind timeout – retrying…</string>
+    <string name="action_connect">Connect to glasses</string>
+    <string name="action_disconnect">Disconnect</string>
 </resources>
