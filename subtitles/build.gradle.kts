@@ -30,8 +30,15 @@ android {
     }
 
     buildTypes {
-        release {
+        debug {
+            // ⚡ Fast debug builds for rapid CI/local iteration
             isMinifyEnabled = false
+            isShrinkResources = false
+        }
+        release {
+            // 🧩 Production-ready build stays optimized
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
