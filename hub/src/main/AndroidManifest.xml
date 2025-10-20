@@ -32,7 +32,9 @@
         </activity>
         <activity
             android:name="com.loopermallee.moncchichi.FailsafeMainActivity"
-            android:exported="true" />
+            android:exported="true"
+            android:label="Failsafe Mode"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
         <activity
             android:name="com.loopermallee.moncchichi.PermissionsActivity"
             android:exported="false" />
