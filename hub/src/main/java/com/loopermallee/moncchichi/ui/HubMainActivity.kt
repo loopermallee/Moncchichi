@@ -6,7 +6,6 @@ import android.view.Gravity
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
-import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.databinding.ActivityHubMainBinding
 
@@ -30,24 +29,27 @@ class HubMainActivity : AppCompatActivity() {
             return
         }
 
-        val bottomNav: BottomNavigationView = binding.bottomNavigation
-        bottomNav.setOnItemSelectedListener { item ->
-            when (item.itemId) {
-                R.id.nav_hub -> switchFragment(HubFragment())
-                R.id.nav_console -> switchFragment(G1DataConsoleFragment())
-                R.id.nav_permissions -> switchFragment(PermissionsFragment())
+        binding.bottomNavigation.setOnItemSelectedListener { item ->
+            val fragment = when (item.itemId) {
+                R.id.nav_hub -> HubDashboardFragment()
+                R.id.nav_console -> ConsoleFragment()
+                R.id.nav_permissions -> PermissionsFragment()
+                else -> null
             }
-            true
+            fragment?.let {
+                loadFragment(it)
+                true
+            } ?: false
         }
 
         if (savedInstanceState == null) {
-            bottomNav.selectedItemId = R.id.nav_hub
+            binding.bottomNavigation.selectedItemId = R.id.nav_hub
         }
     }
 
-    private fun switchFragment(fragment: Fragment) {
+    private fun loadFragment(fragment: Fragment) {
         supportFragmentManager.beginTransaction()
-            .replace(R.id.fragment_container, fragment)
+            .replace(R.id.fragmentContainer, fragment)
             .commit()
     }
 }
