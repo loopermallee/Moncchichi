@@ -33,7 +33,7 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
-        viewBinding = true
+        viewBinding = true // Generate binding classes for XML-backed screens
     }
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
