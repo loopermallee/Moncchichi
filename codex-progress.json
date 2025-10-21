@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-21 16:01 SGT",
+  "last_update": "2025-10-21 19:58 SGT",
   "last_delta": 2,
   "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 117,
+  "last_pr_number": 119,
   "history": [
+    {
+      "when": "2025-10-21 19:58 SGT",
+      "pr": 119,
+      "title": "Refactor hub to use unified tools and assistant state",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-21 16:01 SGT",
       "pr": 117,
