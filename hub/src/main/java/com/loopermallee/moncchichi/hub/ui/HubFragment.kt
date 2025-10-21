@@ -8,10 +8,29 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.loopermallee.moncchichi.hub.R
+import com.loopermallee.moncchichi.hub.di.AppLocator
+import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
+import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
+import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 class HubFragment : Fragment() {
-    private val vm: SharedBleViewModel by activityViewModels()
+    private val vm: HubViewModel by activityViewModels {
+        HubVmFactory(
+            AppLocator.router,
+            AppLocator.ble,
+            AppLocator.speech,
+            AppLocator.llm,
+            AppLocator.display,
+            AppLocator.memory,
+            AppLocator.perms
+        )
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -28,18 +47,30 @@ class HubFragment : Fragment() {
         val btnDisconnect = view.findViewById<Button>(R.id.btn_disconnect)
         val btnPing = view.findViewById<Button>(R.id.btn_ping)
 
-        vm.isConnected.observe(viewLifecycleOwner) { connected ->
-            status.text = if (connected) "Connected" else "Not connected"
-            btnPair.isEnabled = !connected
-            btnDisconnect.isEnabled = connected
-            btnPing.isEnabled = connected
+        btnPair.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch { vm.post(AppEvent.StartScan) }
         }
-        vm.deviceName.observe(viewLifecycleOwner) { n ->
-            name.text = "Device: $n"
+        btnDisconnect.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch { vm.post(AppEvent.Disconnect) }
+        }
+        btnPing.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch { vm.post(AppEvent.SendBleCommand("PING")) }
         }
 
-        btnPair.setOnClickListener { vm.startScanAndConnect() }
-        btnDisconnect.setOnClickListener { vm.disconnect() }
-        btnPing.setOnClickListener { vm.sendDemoPing() }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                vm.state.collectLatest { st ->
+                    val connected = st.device.isConnected
+                    status.text = if (connected) "Connected" else "Not connected"
+                    val deviceName = st.device.name ?: st.device.id ?: "(none)"
+                    val rssi = st.device.rssi?.let { " RSSI ${it}dBm" } ?: ""
+                    val battery = st.device.battery?.let { " | Battery ${it}%" } ?: ""
+                    name.text = "Device: $deviceName$rssi$battery"
+                    btnPair.isEnabled = !connected
+                    btnDisconnect.isEnabled = connected
+                    btnPing.isEnabled = connected
+                }
+            }
+        }
     }
 }
