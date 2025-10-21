@@ -3,5 +3,5 @@
     <queries>
         <package android:name="com.loopermallee.moncchichi" />
     </queries>
-    <uses-permission android:name="io.texne.g1.basis.permission.CONNECT_TO_SERVICE"/>
+    <uses-permission android:name="com.loopermallee.moncchichi.permission.CONNECT_TO_SERVICE"/>
 </manifest>

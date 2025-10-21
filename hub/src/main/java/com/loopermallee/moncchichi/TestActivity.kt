@@ -74,8 +74,8 @@ import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.ui.screens.G1DataConsoleScreen
 import com.loopermallee.moncchichi.ui.shared.LocalServiceConnection
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
-import io.texne.g1.basis.client.G1ServiceClient
-import io.texne.g1.basis.client.G1ServiceCommon
+import com.loopermallee.moncchichi.client.G1ServiceClient
+import com.loopermallee.moncchichi.client.G1ServiceCommon
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect

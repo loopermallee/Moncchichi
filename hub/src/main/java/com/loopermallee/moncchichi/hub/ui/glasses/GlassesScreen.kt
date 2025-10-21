@@ -35,9 +35,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.texne.g1.basis.client.G1ServiceCommon
-import io.texne.g1.basis.client.G1ServiceCommon.GlassesStatus
-import io.texne.g1.basis.client.G1ServiceCommon.ServiceStatus
+import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.client.G1ServiceCommon.GlassesStatus
+import com.loopermallee.moncchichi.client.G1ServiceCommon.ServiceStatus
 import com.loopermallee.moncchichi.hub.ui.theme.Bof4Coral
 import com.loopermallee.moncchichi.hub.ui.theme.Bof4Midnight
 import com.loopermallee.moncchichi.hub.ui.theme.Bof4Mist

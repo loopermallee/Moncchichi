@@ -13,11 +13,11 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:name=".SubtitlesApplication"
+        android:name=".subtitles.SubtitlesApplication"
         android:theme="@style/Theme.Subtitles"
         tools:targetApi="31">
         <activity
-            android:name=".MainActivity"
+            android:name=".subtitles.MainActivity"
             android:exported="true"
             android:theme="@style/Theme.Subtitles">
             <intent-filter>

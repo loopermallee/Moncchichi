@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "io.texne.g1.subtitles"
+    namespace = "com.loopermallee.moncchichi"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.texne.g1.subtitles"
+        applicationId = "com.loopermallee.moncchichi.subtitles"
         minSdk = 24
         targetSdk = 35
         versionCode = 1

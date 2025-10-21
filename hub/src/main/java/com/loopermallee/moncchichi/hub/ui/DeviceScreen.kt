@@ -21,7 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import io.texne.g1.basis.client.G1ServiceCommon
+import com.loopermallee.moncchichi.client.G1ServiceCommon
 import com.loopermallee.moncchichi.hub.ui.glasses.GlassesScreen
 import com.loopermallee.moncchichi.hub.ui.glasses.displayName
 import kotlinx.coroutines.flow.collectLatest
