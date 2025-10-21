@@ -12,8 +12,31 @@ import com.loopermallee.moncchichi.service.protocol.ObserveStateCallback
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
-class G1ServiceClient private constructor(context: Context) :
+class G1ServiceClient constructor(context: Context) :
     G1ServiceCommon<IG1ServiceClient>(context) {
+
+    interface Listener {
+        fun onConnected(name: String?) {}
+        fun onDisconnected() {}
+        fun onMessage(bytes: ByteArray) {}
+        fun onError(err: String) {}
+    }
+
+    private var listener: Listener? = null
+
+    fun setListener(
+        onConnected: (String?) -> Unit = {},
+        onDisconnected: () -> Unit = {},
+        onMessage: (ByteArray) -> Unit = {},
+        onError: (String) -> Unit = {},
+    ) {
+        listener = object : Listener {
+            override fun onConnected(name: String?) = onConnected(name)
+            override fun onDisconnected() = onDisconnected()
+            override fun onMessage(bytes: ByteArray) = onMessage(bytes)
+            override fun onError(err: String) = onError(err)
+        }
+    }
 
     companion object {
         fun open(context: Context): G1ServiceClient? {
@@ -42,7 +65,7 @@ class G1ServiceClient private constructor(context: Context) :
             context.startActivity(Intent(Intent.ACTION_MAIN).also {
                 it.setClassName(
                     "com.loopermallee.moncchichi",
-                    "com.loopermallee.moncchichi.hub.MainActivity"
+                    "com.loopermallee.moncchichi.hub.ui.HubMainActivity"
                 )
             })
         }
@@ -122,5 +145,24 @@ class G1ServiceClient private constructor(context: Context) :
                     continuation.resume(success)
                 }
             })
+    }
+
+    fun startScanAndConnect(
+        onDeviceFound: (name: String?, addr: String) -> Unit = { _, _ -> },
+        onFail: (String) -> Unit = {},
+    ) {
+        // TODO: replace with your real scan/connect flow
+        // Call listener?.onConnected(deviceName) when connected
+        // Call listener?.onError(msg) on errors
+        onFail("Scan not implemented")
+    }
+
+    fun write(data: ByteArray) {
+        // TODO: forward to your UART write
+    }
+
+    fun disconnect() {
+        // TODO: forward to your disconnect logic
+        listener?.onDisconnected()
     }
 }

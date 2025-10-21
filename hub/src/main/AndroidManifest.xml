@@ -1,7 +1,11 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<?xml version="1.0" encoding="utf-8"?>
+<manifest package="com.loopermallee.moncchichi.hub"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+
     <uses-feature
         android:name="android.hardware.bluetooth_le"
         android:required="true" />
+
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -14,13 +18,14 @@
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
-    <!-- ✅ Add missing fine location for proper scanning and connection -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:name="com.loopermallee.moncchichi.MoncchichiApp"
-        android:label="Soul Tether"
+        android:allowBackup="true"
+        android:label="Moncchichi"
+        android:supportsRtl="true"
         android:theme="@style/Theme.Moncchichi">
         <activity
             android:name="com.loopermallee.moncchichi.TestActivity"
@@ -33,16 +38,13 @@
         <activity
             android:name="com.loopermallee.moncchichi.PermissionsActivity"
             android:exported="false" />
-
         <activity
             android:name="com.loopermallee.moncchichi.ui.G1DataConsoleActivity"
             android:exported="false"
             android:label="G1 Data Console" />
-
         <activity
-            android:name="com.loopermallee.moncchichi.ui.HubMainActivity"
-            android:exported="true"
-            android:label="Soul Tether">
+            android:name=".ui.HubMainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
