@@ -34,17 +34,16 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.viewinterop.AndroidView
 import com.loopermallee.moncchichi.client.G1ServiceCommon
 import com.loopermallee.moncchichi.R
 
 @Composable
 fun SubtitlesScreen(
-    openHub: () -> Unit
+    viewModel: SubtitlesViewModel,
+    openHub: () -> Unit,
 ) {
 
-    val viewModel = hiltViewModel<SubtitlesViewModel>()
     val state = viewModel.state.collectAsState().value
     val connectedGlasses = state.glasses
     val displayService = viewModel.displayService

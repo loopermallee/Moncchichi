@@ -1,11 +1,11 @@
 package com.loopermallee.moncchichi.subtitles.model
 
 import android.content.Context
-import android.util.Log
 import android.content.pm.PackageManager
-import dagger.hilt.android.qualifiers.ApplicationContext
+import android.util.Log
 import com.loopermallee.moncchichi.client.G1ServiceClient
 import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -14,13 +14,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class Repository @Inject constructor(
-    @ApplicationContext private val applicationContext: Context,
+class Repository(
+    private val applicationContext: Context,
     private val recognizer: Recognizer
 ) {
     class DisplayService internal constructor(

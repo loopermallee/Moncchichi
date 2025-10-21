@@ -1,9 +1,7 @@
 package com.loopermallee.moncchichi.subtitles.ui
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import com.loopermallee.moncchichi.client.G1ServiceCommon
 import com.loopermallee.moncchichi.subtitles.model.Repository
 import kotlinx.coroutines.Job
@@ -11,12 +9,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
-@HiltViewModel
-class SubtitlesViewModel @Inject constructor(
+class SubtitlesViewModel(
     private val repository: Repository
-): ViewModel() {
+) : ViewModel() {
 
     val displayService = repository.displayService
 

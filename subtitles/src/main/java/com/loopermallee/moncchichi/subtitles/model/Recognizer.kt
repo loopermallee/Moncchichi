@@ -7,18 +7,14 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class Recognizer @Inject constructor(@ApplicationContext private val context: Context) {
+class Recognizer(private val context: Context) {
     private val listener = object: RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             Log.d("Recognizer", "onReadyForSpeech(${params})")
