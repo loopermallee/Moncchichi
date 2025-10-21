@@ -2,7 +2,7 @@ package com.loopermallee.moncchichi
 
 import android.app.Application
 import android.util.Log
-import com.loopermallee.moncchichi.hub.BuildConfig
+import com.loopermallee.moncchichi.BuildConfig
 
 class MoncchichiApp : Application() {
     override fun onCreate() {

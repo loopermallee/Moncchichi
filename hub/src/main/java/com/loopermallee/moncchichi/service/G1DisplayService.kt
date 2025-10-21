@@ -26,7 +26,7 @@ import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.bluetooth.G1Inbound
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
-import com.loopermallee.moncchichi.hub.R
+import com.loopermallee.moncchichi.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
