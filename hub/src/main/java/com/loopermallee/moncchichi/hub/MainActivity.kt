@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.MoncchichiCrashReporter
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.ui.ServiceDebugHUD
@@ -66,26 +67,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var firstStart = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        status = findViewById(R.id.status)
-        toggleButton = findViewById(R.id.connection_toggle)
-        serviceIntent = Intent(this, G1DisplayService::class.java)
+        runCatching {
+            setContentView(R.layout.activity_main)
+            status = findViewById(R.id.status)
+            toggleButton = findViewById(R.id.connection_toggle)
+            serviceIntent = Intent(this, G1DisplayService::class.java)
 
-        status.setText(R.string.status_disconnected)
-        ServiceRepository.setDisconnected()
-        updateToggleButton(ServiceRepository.state.value)
+            status.setText(R.string.status_disconnected)
+            ServiceRepository.setDisconnected()
+            updateToggleButton(ServiceRepository.state.value)
 
-        toggleButton.setOnClickListener {
-            when (ServiceRepository.state.value) {
-                ServiceState.BINDING, ServiceState.CONNECTED -> disconnectFromService()
-                else -> connectToService()
+            toggleButton.setOnClickListener {
+                when (ServiceRepository.state.value) {
+                    ServiceState.BINDING, ServiceState.CONNECTED -> disconnectFromService()
+                    else -> connectToService()
+                }
             }
-        }
 
-        lifecycleScope.launch {
-            ServiceRepository.state.collectLatest { updateToggleButton(it) }
+            lifecycleScope.launch {
+                ServiceRepository.state.collectLatest { updateToggleButton(it) }
+            }
+        }.onFailure { error ->
+            logger.e("Activity", "${tt()} onCreate failed", error)
+            MoncchichiCrashReporter.reportNonFatal("MainActivity#onCreate", error)
+            finish()
         }
     }
 
@@ -99,8 +108,19 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        serviceIntent?.let { intent ->
-            attemptBind(intent, 0, userInitiated = false)
+        serviceIntent = serviceIntent ?: Intent(this, G1DisplayService::class.java)
+        val intent = serviceIntent ?: return
+        lifecycleScope.launch {
+            if (firstStart) {
+                firstStart = false
+                delay(750L)
+            }
+            runCatching {
+                attemptBind(intent, 0, userInitiated = false)
+            }.onFailure { error ->
+                logger.e("Activity", "${tt()} Deferred bind scheduling failed", error)
+                MoncchichiCrashReporter.reportNonFatal("MainActivity#onStart", error)
+            }
         }
     }
 
