@@ -18,6 +18,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.MoncchichiCrashReporter
 import com.loopermallee.moncchichi.TestActivity
 import com.loopermallee.moncchichi.bluetooth.DeviceIoFacade
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
@@ -76,50 +77,57 @@ class G1DisplayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        bluetoothEnabled.value = bluetoothAdapter?.isEnabled == true
-        if (bluetoothAdapter == null) {
-            logger.w(SERVICE_TAG, "${tt()} Bluetooth adapter unavailable")
-        }
-        createNotificationChannel()
-        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
-        val initial = buildForegroundNotification("Soul Tether starting…")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                initial,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, initial)
-        }
-
-        registerPowerAwareReconnect()
-        _connectionState.value = deviceManager.state.value
-        deviceManager.startScanNearbyDevices()
-        ioFacade.start()
-        serviceScope.launch {
-            getLastDeviceAddress()?.let { last ->
-                logger.i(SERVICE_TAG, "${tt()} Attempting auto-connect to $last")
-                deviceManager.connect(last)
+        MoncchichiCrashReporter.registerCleanupHook("G1DisplayService") { serviceScope.cancel() }
+        runCatching {
+            bluetoothEnabled.value = bluetoothAdapter?.isEnabled == true
+            if (bluetoothAdapter == null) {
+                logger.w(SERVICE_TAG, "${tt()} Bluetooth adapter unavailable")
             }
-        }
+            createNotificationChannel()
+            registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+            val initial = buildForegroundNotification("Soul Tether starting…")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    initial,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, initial)
+            }
 
-        serviceScope.launch {
-            logger.i(SERVICE_TAG, "${tt()} onCreate: launching heartbeat + reconnect loops")
-            launch { observeStateChanges() }
-            launch { heartbeatLoop() }
-            launch { reconnectLoop() }
-        }
-
-        serviceScope.launch {
-            while (isActive) {
-                delay(30000L)
-                if (!bluetoothEnabled.value) continue
-                if (deviceManager.state.value != G1ConnectionState.CONNECTED) {
-                    logger.w(SERVICE_TAG, "${tt()} Connection lost — triggering resilientReconnect()")
-                    deviceManager.resilientReconnect()
+            registerPowerAwareReconnect()
+            _connectionState.value = deviceManager.state.value
+            deviceManager.startScanNearbyDevices()
+            ioFacade.start()
+            serviceScope.launch {
+                getLastDeviceAddress()?.let { last ->
+                    logger.i(SERVICE_TAG, "${tt()} Attempting auto-connect to $last")
+                    deviceManager.connect(last)
                 }
             }
+
+            serviceScope.launch {
+                logger.i(SERVICE_TAG, "${tt()} onCreate: launching heartbeat + reconnect loops")
+                launch { observeStateChanges() }
+                launch { heartbeatLoop() }
+                launch { reconnectLoop() }
+            }
+
+            serviceScope.launch {
+                while (isActive) {
+                    delay(30000L)
+                    if (!bluetoothEnabled.value) continue
+                    if (deviceManager.state.value != G1ConnectionState.CONNECTED) {
+                        logger.w(SERVICE_TAG, "${tt()} Connection lost — triggering resilientReconnect()")
+                        deviceManager.resilientReconnect()
+                    }
+                }
+            }
+        }.onFailure { error ->
+            logger.e(SERVICE_TAG, "${tt()} Service onCreate failed", error)
+            MoncchichiCrashReporter.reportNonFatal("G1DisplayService#onCreate", error)
+            stopSelf()
         }
     }
 
@@ -190,6 +198,7 @@ class G1DisplayService : Service() {
     }
 
     override fun onDestroy() {
+        MoncchichiCrashReporter.unregisterCleanupHook("G1DisplayService")
         runCatching { unregisterReceiver(bluetoothStateReceiver) }
         powerReceiver?.let { receiver ->
             runCatching { unregisterReceiver(receiver) }

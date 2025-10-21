@@ -20,6 +20,8 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        val crashToken = (System.getenv("GITHUB_TOKEN") ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "GITHUB_TOKEN", "\"$crashToken\"")
     }
 
     kapt {

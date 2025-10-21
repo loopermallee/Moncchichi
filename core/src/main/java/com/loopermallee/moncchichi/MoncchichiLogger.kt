@@ -22,15 +22,10 @@ class MoncchichiLogger private constructor(
     context: Context,
 ) {
     private val appContext = context.applicationContext
-    private val dateFormat by lazy { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US) }
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fileMutex = Mutex()
     private val logDir by lazy { prepareLogsDir() }
-    @Volatile
-    private var cachedLogFile: File? = null
-    @Volatile
-    private var cachedDay: String? = null
-    private val dayFormat by lazy { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+    private val timestampFormat by lazy { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US) }
 
     fun d(tag: String, message: String) = log(tag, message, Log.DEBUG)
     fun debug(tag: String, message: String) = d(tag, message)
@@ -55,7 +50,7 @@ class MoncchichiLogger private constructor(
         )
         logStream.tryEmit(event)
         val entry = buildString {
-            append(dateFormat.format(Date()))
+            append(currentTimestamp())
             append(' ')
             append(tag)
             append(' ')
@@ -66,6 +61,7 @@ class MoncchichiLogger private constructor(
             }
             append('\n')
         }
+        recordInMemory(entry)
         ioScope.launch {
             fileMutex.withLock {
                 val file = resolveLogFile() ?: return@withLock
@@ -94,46 +90,68 @@ class MoncchichiLogger private constructor(
 
     private fun resolveLogFile(): File? {
         val directory = logDir ?: return null
-        val today = dayFormat.format(Date())
-        val cached = cachedDay
-        if (cached == today) {
-            val file = cachedLogFile
-            if (file != null && file.exists()) {
-                return file
-            }
-        }
-        cleanupOldLogs(directory)
-        val file = File(directory, "moncchichi_$today.log")
+        val file = File(directory, LOG_FILE_NAME)
         if (!file.exists()) {
             runCatching { file.createNewFile() }.onFailure {
                 Log.d(DEFAULT_TAG, "Unable to create log file: ${it.message}")
                 return null
             }
         }
-        cachedDay = today
-        cachedLogFile = file
         return file
-    }
-
-    private fun cleanupOldLogs(directory: File) {
-        val files = directory.listFiles { _, name -> name.startsWith("moncchichi_") && name.endsWith(".log") }
-            ?.sortedByDescending { it.name }
-            ?: return
-        files.drop(LOG_FILE_RETENTION).forEach { old ->
-            runCatching { old.delete() }
-        }
     }
 
     private fun writeToFile(target: File, entry: String) {
         if (!target.exists()) {
             target.createNewFile()
         }
-        if (target.length() > MAX_FILE_BYTES) {
-            val backup = File(target.parentFile, "moncchichi_${System.currentTimeMillis()}.bak")
-            target.copyTo(backup, overwrite = true)
-            target.writeText("")
+        val directory = target.parentFile ?: return
+        val entryBytes = entry.toByteArray(Charsets.UTF_8)
+        if (target.length() + entryBytes.size > MAX_FILE_BYTES) {
+            rotateLogs(directory, target)
         }
-        target.appendText(entry)
+        target.appendBytes(entryBytes)
+        trimLogDirectory(directory)
+    }
+
+    private fun rotateLogs(directory: File, activeFile: File) {
+        for (index in MAX_ROLLED_FILES downTo 1) {
+            val from = File(directory, if (index == 1) LOG_FILE_NAME else "$LOG_FILE_NAME.${index - 1}")
+            if (!from.exists()) continue
+            val to = File(directory, "$LOG_FILE_NAME.$index")
+            if (to.exists()) {
+                runCatching { to.delete() }
+            }
+            runCatching { from.renameTo(to) }
+        }
+        runCatching { activeFile.createNewFile() }
+    }
+
+    private fun trimLogDirectory(directory: File) {
+        val files = directory.listFiles { _, name -> name.startsWith(LOG_FILE_NAME) } ?: return
+        var totalBytes = files.sumOf { it.length() }
+        if (totalBytes <= MAX_DIRECTORY_BYTES) return
+        val rotated = files
+            .filter { it.name != LOG_FILE_NAME }
+            .sortedByDescending { nameSuffixIndex(it.name) }
+        for (file in rotated) {
+            if (totalBytes <= MAX_DIRECTORY_BYTES) break
+            val size = file.length()
+            if (file.delete()) {
+                totalBytes -= size
+            }
+        }
+    }
+
+    private fun recordInMemory(entry: String) {
+        val byteCount = entry.toByteArray(Charsets.UTF_8).size
+        synchronized(memoryLock) {
+            memoryBuffer.addLast(BufferEntry(entry, byteCount))
+            memoryBufferSize += byteCount
+            while (memoryBufferSize > MAX_IN_MEMORY_BYTES && memoryBuffer.isNotEmpty()) {
+                val removed = memoryBuffer.removeFirst()
+                memoryBufferSize -= removed.byteCount
+            }
+        }
     }
 
     private fun logWithCategory(
@@ -148,8 +166,11 @@ class MoncchichiLogger private constructor(
 
     companion object {
         private const val DEFAULT_TAG = "Moncchichi"
-        private const val MAX_FILE_BYTES = 1_000_000L
-        private const val LOG_FILE_RETENTION = 3
+        private const val LOG_FILE_NAME = "moncchichi.log"
+        private const val MAX_FILE_BYTES = 2_500_000L
+        private const val MAX_ROLLED_FILES = 1
+        private const val MAX_DIRECTORY_BYTES = 5_000_000L
+        private const val MAX_IN_MEMORY_BYTES = 128 * 1024
 
         private val logStream = MutableSharedFlow<LogEvent>(
             replay = 50,
@@ -157,10 +178,41 @@ class MoncchichiLogger private constructor(
             onBufferOverflow = BufferOverflow.DROP_OLDEST
         )
 
+        private val memoryBuffer = ArrayDeque<BufferEntry>()
+        private val memoryLock = Any()
+        private var memoryBufferSize = 0
+        private data class BufferEntry(val text: String, val byteCount: Int)
+
         operator fun invoke(context: Context): MoncchichiLogger = MoncchichiLogger(context)
 
         fun logEvents(): SharedFlow<LogEvent> = logStream.asSharedFlow()
+
+        fun recentLogTail(maxBytes: Int = MAX_IN_MEMORY_BYTES): String {
+            val snapshot: List<BufferEntry>
+            synchronized(memoryLock) {
+                if (memoryBuffer.isEmpty()) {
+                    return ""
+                }
+                snapshot = memoryBuffer.toList()
+            }
+            val collected = ArrayDeque<String>()
+            var collectedBytes = 0
+            for (entry in snapshot.asReversed()) {
+                if (collectedBytes + entry.byteCount > maxBytes) {
+                    continue
+                }
+                collectedBytes += entry.byteCount
+                collected.addFirst(entry.text)
+            }
+            return buildString {
+                collected.forEach { append(it) }
+            }
+        }
+
+        private fun nameSuffixIndex(name: String): Int = name.substringAfterLast('.', missingDelimiterValue = "-1").toIntOrNull() ?: -1
     }
+
+    private fun currentTimestamp(): String = synchronized(timestampFormat) { timestampFormat.format(Date()) }
 
     data class LogEvent(
         val timestamp: Long,
