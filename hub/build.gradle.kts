@@ -33,7 +33,8 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
-        viewBinding = true // Generate binding classes for XML-backed screens
+        // 🧩 Enable ViewBinding to fix "Unresolved reference: databinding"
+        viewBinding = true
         dataBinding = false
     }
     composeOptions {
