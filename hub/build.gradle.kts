@@ -10,7 +10,7 @@ kotlin {
 }
 
 android {
-    namespace = "com.loopermallee.moncchichi.hub"
+    namespace = "com.loopermallee.moncchichi"
     compileSdk = 35
 
     defaultConfig {
@@ -33,6 +33,7 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+        viewBinding = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()

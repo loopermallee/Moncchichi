@@ -24,12 +24,7 @@
         android:theme="@android:style/Theme.DeviceDefault">
         <activity
             android:name="com.loopermallee.moncchichi.TestActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="true" />
         <activity
             android:name="com.loopermallee.moncchichi.FailsafeMainActivity"
             android:exported="true"
@@ -43,6 +38,16 @@
             android:name="com.loopermallee.moncchichi.ui.G1DataConsoleActivity"
             android:exported="false"
             android:label="G1 Data Console" />
+
+        <activity
+            android:name="com.loopermallee.moncchichi.ui.HubMainActivity"
+            android:exported="true"
+            android:label="Soul Tether">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <service
             android:name="com.loopermallee.moncchichi.service.G1DisplayService"
