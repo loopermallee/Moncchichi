@@ -87,6 +87,9 @@ dependencies {
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
     debugImplementation("androidx.compose.ui:ui-tooling")
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
 
     kapt(libs.hilt.android.compiler)
+    kapt("androidx.room:room-compiler:2.6.1")
 }

@@ -1,17 +1,16 @@
 package com.loopermallee.moncchichi.hub.ui
 
 import android.os.Bundle
-import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.loopermallee.moncchichi.hub.R
+import com.loopermallee.moncchichi.hub.di.AppLocator
+import com.loopermallee.moncchichi.hub.ui.assistant.AssistantFragment
 
 class HubMainActivity : AppCompatActivity() {
-
-    private val vm: SharedBleViewModel by viewModels()
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLocator.init(applicationContext)
         setContentView(R.layout.activity_hub_main)
 
         if (savedInstanceState == null) {
@@ -26,6 +25,7 @@ class HubMainActivity : AppCompatActivity() {
                 R.id.tab_hub -> HubFragment()
                 R.id.tab_console -> ConsoleFragment()
                 R.id.tab_permissions -> PermissionsFragment()
+                R.id.tab_assistant -> AssistantFragment()
                 else -> HubFragment()
             }
             supportFragmentManager.beginTransaction()
