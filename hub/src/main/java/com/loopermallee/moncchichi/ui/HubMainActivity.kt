@@ -1,6 +1,9 @@
 package com.loopermallee.moncchichi.ui
 
 import android.os.Bundle
+import android.util.Log
+import android.view.Gravity
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import com.google.android.material.bottomnavigation.BottomNavigationView
@@ -13,8 +16,19 @@ class HubMainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityHubMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        try {
+            binding = ActivityHubMainBinding.inflate(layoutInflater)
+            setContentView(binding.root)
+        } catch (e: Exception) {
+            Log.e("Moncchichi", "UI failed to inflate, loading fallback", e)
+            setContentView(
+                TextView(this).apply {
+                    text = getString(R.string.hub_inflation_error)
+                    gravity = Gravity.CENTER
+                }
+            )
+            return
+        }
 
         val bottomNav: BottomNavigationView = binding.bottomNavigation
         bottomNav.setOnItemSelectedListener { item ->

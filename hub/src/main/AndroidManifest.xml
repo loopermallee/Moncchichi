@@ -21,7 +21,7 @@
     <application
         android:name="com.loopermallee.moncchichi.MoncchichiApp"
         android:label="Soul Tether"
-        android:theme="@android:style/Theme.DeviceDefault">
+        android:theme="@style/Theme.Moncchichi">
         <activity
             android:name="com.loopermallee.moncchichi.TestActivity"
             android:exported="true" />
