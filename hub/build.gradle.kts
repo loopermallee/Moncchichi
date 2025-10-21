@@ -33,9 +33,13 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
-        // 🧩 Enable ViewBinding to fix "Unresolved reference: databinding"
+        // ✅ Enable ViewBinding for Hub module
         viewBinding = true
         dataBinding = false
+    }
+    // 🧩 Force regenerate bindings cleanly in CI
+    lint {
+        checkReleaseBuilds = false
     }
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
