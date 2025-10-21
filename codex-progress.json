@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-21 19:58 SGT",
-  "last_delta": 2,
-  "last_keywords": "fix",
+  "last_update": "2025-10-21 20:52 SGT",
+  "last_delta": 0,
+  "last_keywords": "neutral",
   "last_goal": null,
-  "last_pr_number": 119,
+  "last_pr_number": 120,
   "history": [
+    {
+      "when": "2025-10-21 20:52 SGT",
+      "pr": 120,
+      "title": "docs: update README with latest hub roadmap",
+      "delta": 0,
+      "keywords": "neutral",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-21 19:58 SGT",
       "pr": 119,
