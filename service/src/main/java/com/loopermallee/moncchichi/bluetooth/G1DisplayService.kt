@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.app.Notification
 import android.app.NotificationChannel
@@ -7,6 +8,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
@@ -15,6 +17,7 @@ import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
+import io.texne.g1.basis.service.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,16 +47,10 @@ class G1DisplayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        ensureNotificationChannel()
-        val notification = buildStatusNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        logger.i(TAG, "${tt()} Service onCreate() started.")
+        val foregroundStarted = ensureForegroundNotificationSafe()
+        if (!foregroundStarted) {
+            logger.w(TAG, "${tt()} Foreground start deferred; waiting for runtime permissions.")
         }
         startHeartbeatMonitoring()
         heartbeatStarted.set(true)
@@ -140,26 +137,58 @@ class G1DisplayService : Service() {
         }
     }
 
-    private fun ensureNotificationChannel() {
+    private fun ensureForegroundNotificationSafe(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) {
+            logger.w(TAG, "${tt()} Bluetooth permission not granted. Delaying foreground start.")
+            return false
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "G1 Connection",
+                getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW,
-            )
+            ).apply {
+                description = getString(R.string.notification_channel_description)
+            }
             manager?.createNotificationChannel(channel)
         }
-    }
 
-    private fun buildStatusNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle("Moncchichi")
-            .setContentText("Connecting to Even G1…")
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .build()
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle(getString(R.string.notification_title))
+                .setContentText(getString(R.string.notification_description))
+                .setSmallIcon(R.drawable.ic_notification)
+                .setOngoing(true)
+                .build()
+        } else {
+            NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(getString(R.string.notification_title))
+                .setContentText(getString(R.string.notification_description))
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .build()
+        }
+
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            logger.d(TAG, "${tt()} Foreground service started successfully.")
+            true
+        }.onFailure { error ->
+            logger.e(TAG, "${tt()} Failed to start foreground service: ${error.message}", error)
+        }.getOrDefault(false)
     }
 
     private fun startHeartbeatMonitoring() {
