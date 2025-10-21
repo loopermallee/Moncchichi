@@ -40,9 +40,17 @@
             android:exported="false" />
 
         <activity
+            android:name="com.loopermallee.moncchichi.ui.PermissionsActivity"
+            android:exported="false" />
+
+        <activity
             android:name="com.loopermallee.moncchichi.ui.G1DataConsoleActivity"
             android:exported="false"
             android:label="G1 Data Console" />
+
+        <activity
+            android:name="com.loopermallee.moncchichi.ui.HubMainActivity"
+            android:exported="false" />
 
         <service
             android:name="com.loopermallee.moncchichi.service.G1DisplayService"
