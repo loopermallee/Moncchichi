@@ -54,6 +54,11 @@ android {
 }
 
 dependencies {
+    // Internal modules
+    implementation(project(":core"))
+    implementation(project(":client"))
+    implementation(project(":service"))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.compose)
@@ -63,9 +68,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.material)
     implementation(libs.androidx.material3)
-    implementation(libs.basis.client)
     implementation(libs.coroutines.android)
-    implementation(project(":core"))
     implementation(libs.nabinbhandari.permissions)
     implementation(libs.androidx.icons.extended)
 
