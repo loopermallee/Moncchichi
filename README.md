@@ -1,161 +1,129 @@
-# 🧠 Moncchichi BLE Hub
-Total Progress: 🟩 ~100 % complete 🔺 (auto-updated 2025-10-21 19:58 SGT)
+🧩 Moncchichi BLE Hub
 
-### Overview
-Moncchichi is a modular Android app designed to maintain a stable, low-latency Bluetooth Low Energy (BLE) connection with the **Even Realities G1 smart glasses**.  
-It provides a fault-tolerant connection layer that now supports **G1 data console communication**, with upcoming plans for **ChatGPT assistant**, **teleprompter overlays**, **diagnostic telemetry**, and **smart transport HUDs** via the **ArriveLah** integration.
+Total Progress: 🟩 ~90 % complete 🔺 (auto-updated 2025-10-21 20:12 SGT)
 
-> 🎯 **Current priority:** Core BLE stability, diagnostics, and real-time data exchange reliability.
+⸻
 
----
+Overview
 
-## ⚙️ Architecture Overview
+Moncchichi Hub is a modular Android control center for the Even Realities G1 smart glasses.
+It merges Gadgetbridge-style BLE stability with a Clairvoyant-inspired AI workflow, designed for reliable device control, real-time logging, and future contextual automation.
 
-| Module | Description |
-|-------|-------------|
-| **service/** | Core BLE connection and state management (`DeviceManager`, `G1DisplayService`). |
-| **hub/** | UI layer, pairing dashboard, indicators, device table, Permissions Center, and G1 Data Console. |
-| **core/** | Shared utilities (logger, enums, helpers). |
-| **client/** | External communication bridge (assistant / remote control). |
-| **aidl/** | IPC layer for inter-module communication. |
-| **subtitles/** | Reserved for teleprompter & caption streaming. |
+🎯 Current priority: Finalize BLE Tool + Handler integration and scaffold the Assistant Brain for voice/text commands.
 
----
+⸻
 
-## 📊 Auto Progress Tracker
+⚙️ Architecture Overview
 
-| Category | Last Updated | Status | % Complete | Trend |
-|---|---|---|---:|:---:|
-| Build System | 2025-10-17 | ✅ Stable (Gradle 8.10; Kotlin 2.x ready) | **100%** | ➖ |
-| BLE Core (Service) | 2025-10-17 | 🟢 Stable and functional (bidirectional data flow; `connect(address)` live-tested) | **95%** | 🔺 +10% |
-| Diagnostics & Recovery | 2025-10-17 | ⚙️ Advanced (contextual troubleshooting checklist + real-time logs) | **70%** | 🔺 +15% |
-| UX / Structural Polish | 2025-10-17 | 🟢 Upgraded (dynamic state UI, scrollable table, Permissions Center, Data Console UI) | **80%** | 🔺 +8% |
-| Assistant & Teleprompter | 2025-10-17 | 💤 Deferred (architecture placeholder only) | **10%** | ➖ |
-| Smart Mobility Layer | 2025-10-17 | 🟦 Planned (ArriveLah bus arrival integration) | **0%** | ➖ |
+Module  Description
+service/  Core BLE connection & state management (DeviceManager, G1DisplayService).
+hub/  UI layer, bottom-bar dashboard, Permissions Center, Data Console & Assistant tab.
+core/  Shared utilities (logger, constants, enums, helpers).
+client/  Bridge for inter-module communication (G1ServiceClient).
+aidl/  IPC layer for foreground service binding.
+subtitles/  Reserved for teleprompter and caption streaming.
 
-**Total Progress:** 🟩 **~82 % complete**
+⸻
 
-> Notes:
-> - Added **G1 Data Console screen** (real BLE command send/receive with device feedback).  
-> - Improved **troubleshooting checklist** with real-time Bluetooth on/off and connection context.  
-> - Introduced **dynamic pairing console** (live MAC + device name).  
-> - Started design groundwork for **ArriveLah integration** (bus arrival HUD).  
+📊 Auto Progress Tracker
 
----
+Category  Last Updated  Status  % Complete  Trend
+Build System  2025-10-21  ✅ Stable (Gradle 8.10 / Kotlin 2.x ready / Room added)  100 %  ➖
+BLE Core (Service)  2025-10-21  🟢 Stable (BleToolImpl stub confirmed; DeviceManager integration next)  95 %  ➖
+Hub Router & Handlers  2025-10-21  🟢 Operational (IntentRouter, 6 handlers implemented)  100 %  🔺 +20 %
+Assistant Brain  2025-10-21  🧠 Scaffolded (LLM stub + UI tab + memory store)  40 %  🔺 +30 %
+Diagnostics & Persistence  2025-10-21  🟢 Room DB logging + live console feed verified  85 %  🔺 +20 %
+UX / Permissions  2025-10-21  🟢 Unified bottom-bar nav + Permissions Center refined  95 %  🔺 +10 %
+Smart Mobility (ArriveLah)  2025-10-21  🟦 Planned (API reference loaded, integration deferred)  0 %  ➖
 
-## 🧩 Development Roadmap (Stability-first)
+Total Progress: 🟩 ~90 % complete
 
-### Phase 2A — Core Stabilization *(Current)*
-**Goal:** No deadlocks, quick recovery, predictable lifecycle.
+Highlights:
+• Introduced BLE Tool & Handlers layer between UI and service.
+• Added AppLocator dependency initializer for tool injection.
+• Implemented Room database for console & assistant memory.
+• New Assistant tab (voice/text command stub).
+• Console & Hub tabs now share real-time state via HubViewModel.
 
-- ✅ Expose `connect(address)` in `G1DisplayService` (manual selection flows).
-- ✅ Compose-state driven pairing dashboard (connection state, Bluetooth on/off, battery, device table).
-- ✅ Scrollable device table (shows **name + MAC**; tap to connect).
-- ✅ Dynamic connection states: **CONNECTING → CONNECTED → DISCONNECTED → RECONNECTING**.
-- ✅ Bidirectional BLE data exchange verified via Data Console.
-- 🟡 Reconnect heuristics with bounded exponential backoff (tune intervals & limits).
-- 🟡 Foreground service audit: verify service restarts after process reclaim.
-- 🔜 GATT timeouts & safe cancellation wrappers for long ops.
+⸻
 
-**Exit criteria:** 30-minute soak with 0 fatal drops and <3s average reconnect.
+🧩 Development Roadmap (Stability → Intelligence)
 
----
+Phase 2 — Hybrid BLE Tool + Handler Integration ✅ (Current Baseline)
 
-### Phase 2B — Diagnostics & Recovery Tools
-**Goal:** See problems as they happen and self-heal.
+Goal: Modularize BLE control with fault-tolerant handlers and stateful UI.
+•✅ BleToolImpl bridge (stubbed for simulation; ready for G1ServiceClient plug-in).
+•✅ Added AppLocator for global tool registration.
+•✅ Integrated Room DB for persistent logs (MemoryRepository).
+•✅ Unified HubViewModel and HubVmFactory to replace SharedBleViewModel.
+•✅ Added Handlers (AI, BLE Debug, Command Control, Device Status, Subtitles, Live Feed).
+•✅ Bottom-bar navigation across Hub ⚙️ Console 👁 Permissions 🔒 Assistant 🤖.
+•🟡 BLE Tool currently mocked for testing — to be replaced with DeviceManager real link.
 
-- ✅ Live pairing log in UI (handshake steps, failures, last error).
-- ✅ Contextual troubleshooting checklist (Bluetooth on/off ✔, scanning… ⏳, device found ✔/✖, services discovered ⏳/✔, notifications enabled ⏳/✔).
-- 🟡 Persist last 200 log lines (ring buffer) and surface in UI.
-- 🔜 “Tap-to-Inspect” overlay to show recent BLE events without leaving screen.
-- 🔜 Optional verbose mode: CCCD writes, MTU, PHY, characteristic errors.
+Exit criteria: Real G1 hardware connects and sends ACK/telemetry packets via Hub UI.
 
-**Exit criteria:** A user can identify where a failure occurred in ≤10s without adb logs.
+⸻
 
----
+Phase 3 — Assistant Brain (Clairvoyant Workflow) 🚧
 
-### Phase 3 — UX & Permissions Polish
-**Goal:** Frictionless first run and clear controls.
+Goal: Bridge BLE and AI commands through a unified IntentRouter.
+•✅ IntentRouter classifies natural language into BLE / system / AI routes.
+•✅ AssistantFragment added with input field + speech stub.
+•✅ LlmToolImpl placeholder (LLM integration to follow).
+•✅ Persist chat and console history via Room DB.
+•🔜 Add real LLM endpoint (OpenAI / Groq / local bridge).
+•🔜 Integrate Speech to Text and TTS for hands-free interaction.
+•🔜 Implement contextual task memory & per-command log summaries.
 
-- ✅ **Permissions Center** screen (read-only status list + **Grant All** trigger; updates if user revokes later).
-- ✅ Bottom-bar shortcut to open Permissions Center from pairing screen.
-- ✅ Bluetooth state indicator chip that updates in real time.
-- ✅ Battery badge with color: **green ≥ 50%**, **yellow 20–49%**, **red < 20%**.
-- 🔜 First-run onboarding: short 3-step guide (enable BT → grant permissions → connect).
-- 🔜 Micro-animations (subtle fade for checklist rows, progress pulses during handshake).
+Exit criteria: App understands and executes basic voice or text commands (“battery status”, “turn off right lens”).
 
-**Exit criteria:** New users can pair and understand state without trial & error.
+⸻
 
----
+Phase 4 — BLE Core Fusion with G1 Service 🔜
 
-### Phase 4 — Release Engineering
-**Goal:** Repeatable builds and app stability score.
+Goal: Replace BLE stub with live DeviceManager integration.
+•Refactor BleToolImpl to pipe into G1ServiceClient.
+•Add BLE callbacks for TX/RX events into console stream.
+•Expose device battery and lens state to Hub tab status.
+•Introduce SharedBleViewModel migration test plan.
 
-- ✅ CI build green on hub/core/service modules.
-- 🔜 Strict lint + baseline; treat warnings as errors (module by module).
-- 🔜 Crash & ANR monitoring (open-source friendly; file-based breadcrumbs).
-- 🔜 Compatibility matrix (Android 10–14; Bluetooth stacks variance notes).
+Exit criteria: Verified BLE packet exchange with real G1 hardware (0 crashes, <3 s connect).
 
-**Exit criteria:** Reproducible release build with changelog and stability report.
+⸻
 
----
+Phase 5 — Feature Expansion (2026 Planning)
 
-### Phase 5 — Feature Expansion (Deferred)
-**Goal:** Add value once the BLE transport layer is fully stable.
+Category  Feature  Status
+Teleprompter / Captions  Revive subtitles/ module with HUD overlay  Planned
+Assistant LLM Bridge  Groq/OpenAI model integration  Pending
+ArriveLah Transport HUD  Bus arrival API integration  Deferred
+InkAir Support  Cross-app AI input bridge  Future
+Device Telemetry Graph  Live temperature/battery trend UI  Design phase
 
-| Category | Planned Features | Source / Reference | Notes |
-|-----------|------------------|--------------------|-------|
-| Teleprompter / Captions | Reinstate `subtitles/` rendering path | Even SDK + Gadgetbridge text overlay | Requires stable GATT streaming |
-| Assistant Bridge | ChatGPT integration via bounded timeout | Moncchichi client module | Gated by BLE stability |
-| CommandQueue | Orderly write/read operations | Gadgetbridge core BLE engine | Prevents characteristic collision |
-| Device Bonding & Pair Cache | Persist bond info for instant reconnect | Gadgetbridge `DeviceSupport` | Critical for seamless UX |
-| Battery & Charging State | Report both glasses + case battery levels | Gadgetbridge `BatteryInfo` | Color-coded icons (green ≥50%, yellow 20–49%, red <20%) |
-| Device Info Display | Serial #, hardware revision, firmware | Gadgetbridge `DeviceInfo` | Optional “Copy / QR Export” |
-| Weather Sync | Fetch & push local weather data | Gadgetbridge `WeatherService` | Needs location + network permission |
-| Notifications | Mirror phone notifications | Gadgetbridge `NotificationCenter` | Optional per-app filter |
-| Settings Sync | Centralize device preferences | Gadgetbridge `SettingsSupport` | Integrates into Permissions/Settings hub |
-| Silent Mode | Turn off HUD display remotely | Gadgetbridge display control | Quick-toggle button in dashboard |
-| Screen Position / Height | Adjust HUD placement | Gadgetbridge `ScreenConfig` | Saved per device profile |
-| Depth Effect | Simulated HUD depth offset | Gadgetbridge UI extensions | Optional visual mode |
-| Head Tilt Activation Angle | Configure gesture sensitivity | Gadgetbridge `SensorControl` | Calibration with live feedback |
-| Auto Brightness | Ambient light-driven adjustment | Gadgetbridge `LightSensorService` | Requires firmware support |
-| Manual Brightness Level | Adjustable brightness slider | Gadgetbridge `DisplayControl` | Range 0–100% |
-| Wear Detection | Detect on/off-face status | Gadgetbridge `WearDetection` | Auto sleep/wake for battery saving |
-| 12h / 24h Time Mode | Clock format switch | Gadgetbridge `TimeFormat` | Mirrors system locale |
-| Minimal Dashboard on Connect | Hide non-critical widgets when paired | Gadgetbridge `DashboardMode` | Optional toggle for cleaner UI |
+⸻
 
-🟦 **Progress:** ~10 % (research and architecture planning)  
-🕓 **Next step:** Design a modular *Capability Profile* layer referencing Gadgetbridge’s open-source implementations while keeping Moncchichi’s UX consistent.
+Phase 6 — Smart Mobility Layer (ArriveLah Integration)
 
-**Exit criteria:** Features gated by a stable BLE layer (no regressions).
+Goal: Show bus arrivals on G1 HUD with voice queries.
 
----
+Feature  Source  Status
+Bus Arrival API  cheeaun/arrivelah  Planned
+Favorites Sync  Local Room storage  Design phase
+Voice Query  Assistant Brain hook  Planned
 
-### Phase 6 — Smart Mobility Layer *(Planned)*
-**Goal:** Integrate public-transport data and display bus arrivals via Even G1.
+⸻
 
-| Category | Planned Features | Source / Reference | Notes |
-|-----------|------------------|--------------------|-------|
-| Bus Arrival Integration | Fetch real-time bus arrivals | [cheeaun/arrivelah](https://github.com/loopermallee/cheeaun-arrivelah) | GPS-aware; uses LTA DataMall |
-| Favorite Services | Save & display selected buses | Moncchichi DataStore | Mirrors HUD overlay |
-| Location Sync | Detect nearest stop automatically | Fused Location Provider | Battery-aware polling |
-| HUD Display | Push arrivals to Even G1 | G1 Data Console Protocol | Text overlay on right lens |
-| Voice Query | “When’s my next bus?” | ChatGPT Assistant Bridge | Spoken or textual feedback |
+🚧 Issue History
 
-🟦 **Progress:** ~0 % (architecture planning)  
-🕓 **Next step:** Prototype `BusArrivalService` using your hosted ArriveLah API.
+Auto-maintained by Codex on each merge.
+•2025-10-21 20:12 SGT — PR #122: Hybrid BLE Tool + Assistant Brain foundation merged · Δ +8 % · tag feature
+•2025-10-17 SGT — PR #118: Diagnostic Console and Permissions Center complete · Δ +10 % · tag ui
 
----
+⸻
 
-## 🚧 Issue History
-_Auto-maintained by Codex on each merge._
-- 2025-10-21 19:58 SGT — PR #119: **Refactor hub to use unified tools and assistant state** · delta `+2%` · tag `fix`
-## 🧠 Notes for Codex Memory
-
-- **Stability first**: reconnection heuristics with bounded backoff; no UI thread blocking.  
-- Track and display **MAC addresses** in device list; tap-to-connect via `G1DisplayService.connect(address)`.  
-- Keep **assistant/teleprompter** decoupled from BLE service until stability proven.  
-- **Dynamic UI** only: real-time Bluetooth on/off, connection phase, battery badge, scrollable device table.  
-- **Troubleshooting checklist** refreshes each connect attempt; shows per-step status.  
-- Log state transitions and last error cause; persist a small rolling buffer for on-device inspection.  
-- **ArriveLah integration** planned as Phase 6 under Smart Mobility Layer (bus arrivals + HUD overlay).  
+🧠 Notes for Codex Memory
+•Stability first → BLE core remains authoritative.
+•AppLocator manages tool initialization (avoids context leaks).
+•All Fragments use HubViewModel for state sync and coroutine safety.
+•Room DB provides offline history for console and assistant.
+•Voice + text interaction to follow once LLM
