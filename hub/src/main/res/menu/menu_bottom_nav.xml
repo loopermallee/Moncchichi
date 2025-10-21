@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:id="@+id/nav_hub"
+        android:id="@+id/tab_hub"
         android:title="Hub"
-        android:icon="@android:drawable/ic_menu_manage" />
+        android:icon="@android:drawable/ic_menu_manage"/>
     <item
-        android:id="@+id/nav_console"
+        android:id="@+id/tab_console"
         android:title="Console"
-        android:icon="@android:drawable/ic_menu_view" />
+        android:icon="@android:drawable/ic_menu_view"/>
     <item
-        android:id="@+id/nav_permissions"
+        android:id="@+id/tab_permissions"
         android:title="Permissions"
-        android:icon="@android:drawable/ic_menu_info_details" />
+        android:icon="@android:drawable/ic_menu_info_details"/>
 </menu>
