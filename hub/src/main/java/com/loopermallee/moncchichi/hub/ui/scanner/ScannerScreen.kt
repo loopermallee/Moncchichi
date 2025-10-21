@@ -29,7 +29,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.texne.g1.basis.client.G1ServiceCommon
+import com.loopermallee.moncchichi.client.G1ServiceCommon
 import com.loopermallee.moncchichi.hub.R
 
 @OptIn(ExperimentalMaterial3Api::class)

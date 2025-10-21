@@ -3,7 +3,9 @@ package com.loopermallee.moncchichi
 import android.app.Application
 import android.util.Log
 import com.loopermallee.moncchichi.hub.BuildConfig
+import dagger.hilt.android.HiltAndroidApp
 
+@HiltAndroidApp
 class MoncchichiApp : Application() {
     override fun onCreate() {
         super.onCreate()

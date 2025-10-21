@@ -8,7 +8,7 @@ kotlin {
 }
 
 android {
-    namespace = "io.texne.g1.basis.service"
+    namespace = "com.loopermallee.moncchichi"
     compileSdk = 35
 
     defaultConfig {
@@ -23,7 +23,7 @@ android {
     }
 
     buildFeatures {
-        buildConfig = true
+        buildConfig = false        // ✅ avoid duplicate BuildConfig when sharing the app namespace
         androidResources = true   // ✅ allows generation of R class for service
     }
 

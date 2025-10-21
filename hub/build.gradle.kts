@@ -14,7 +14,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.loopermallee.moncchichi"
+        applicationId = "com.loopermallee.moncchichi.hub"
         minSdk = 23
         targetSdk = 35
         versionCode = 1
@@ -33,6 +33,7 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+        viewBinding = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()

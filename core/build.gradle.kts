@@ -8,7 +8,7 @@ kotlin {
 }
 
 android {
-    namespace = "io.texne.g1.basis.core"
+    namespace = "com.loopermallee.moncchichi"
     compileSdk = 35
 
     defaultConfig {
@@ -16,6 +16,10 @@ android {
 
         testInstrumentationRunner = "android.support.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
+    }
+
+    buildFeatures {
+        buildConfig = false
     }
 
     buildTypes {
