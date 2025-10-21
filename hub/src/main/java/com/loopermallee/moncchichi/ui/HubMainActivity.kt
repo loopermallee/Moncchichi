@@ -5,7 +5,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.loopermallee.moncchichi.hub.R
-import com.loopermallee.moncchichi.databinding.ActivityHubMainBinding
+import com.loopermallee.moncchichi.hub.databinding.ActivityHubMainBinding
 
 class HubMainActivity : AppCompatActivity() {
 
