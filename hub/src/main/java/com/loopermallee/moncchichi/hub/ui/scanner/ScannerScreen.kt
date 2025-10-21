@@ -30,7 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.loopermallee.moncchichi.client.G1ServiceCommon
-import com.loopermallee.moncchichi.R
+import com.loopermallee.moncchichi.hub.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

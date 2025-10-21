@@ -10,11 +10,11 @@ kotlin {
 }
 
 android {
-    namespace = "com.loopermallee.moncchichi"
+    namespace = "com.loopermallee.moncchichi.hub"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.loopermallee.moncchichi"
+        applicationId = "com.loopermallee.moncchichi.hub"
         minSdk = 23
         targetSdk = 35
         versionCode = 1
