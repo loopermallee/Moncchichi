@@ -6,6 +6,7 @@ import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.ui.assistant.AssistantFragment
+import com.loopermallee.moncchichi.hub.ui.settings.SettingsFragment
 
 class HubMainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -26,6 +27,7 @@ class HubMainActivity : AppCompatActivity() {
                 R.id.tab_console -> ConsoleFragment()
                 R.id.tab_permissions -> PermissionsFragment()
                 R.id.tab_assistant -> AssistantFragment()
+                R.id.tab_settings -> SettingsFragment()
                 else -> HubFragment()
             }
             supportFragmentManager.beginTransaction()

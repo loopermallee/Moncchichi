@@ -7,6 +7,7 @@ enum class Route {
     SUBTITLES,
     AI_ASSISTANT,
     BLE_DEBUG,
+    TRANSIT,
     UNKNOWN
 }
 
@@ -40,6 +41,10 @@ class IntentRouter {
 
         if (listOf("subtitle", "transcribe", "caption", "speech to text").any { t.contains(it) }) {
             return Route.SUBTITLES
+        }
+
+        if (listOf("bus", "train", "arrival", "arrive", "station", "mrt", "transit").any { t.contains(it) }) {
+            return Route.TRANSIT
         }
 
         if (t.startsWith("ble ") || t.startsWith("g1 ")) {

@@ -86,6 +86,7 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
+    implementation("androidx.preference:preference-ktx:1.2.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")

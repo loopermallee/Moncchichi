@@ -9,6 +9,9 @@ sealed interface AppEvent {
 
     data class UserSaid(val transcript: String) : AppEvent
     data class AssistantAsk(val text: String) : AppEvent
+    data object AssistantStartListening : AppEvent
+    data object AssistantStopListening : AppEvent
+    data class AssistantVoiceToggle(val enabled: Boolean) : AppEvent
 
     data object RequestRequiredPermissions : AppEvent
 }
