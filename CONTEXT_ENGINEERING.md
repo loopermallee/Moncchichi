@@ -1,161 +1,98 @@
 # 🧠 Moncchichi Hub — Context Engineering Document
-
-> **Purpose:**  
-> This file is the single source of truth shared between **ChatGPT** (project brain) and **Codex** (engineer).  
-> It defines project context, current phase, milestones, known issues, and AI-generated solutions.  
-> Both agents update this file continuously to maintain alignment.
+*(Shared operational memory between Codex, ChatGPT, and the user)*  
 
 ---
 
-## 📍 Project Context
+## ⚙️ ACTIVE DEVELOPMENT CONTEXT
+**CURRENT_PHASE:** Phase 3.8 — Clairvoyant Workflow  
+**PHASE_OBJECTIVE:** Merge BLE telemetry + Assistant layers, refine contextual replies, and simplify UI for stability.  
 
-Moncchichi Hub is the Android companion and AI interface for **Even Realities G1 Smart Glasses**.  
-It connects hardware telemetry (battery, firmware, lens data) and conversational AI assistance (OpenAI GPT-4o-mini) into a unified, privacy-centric experience.
-
-**Architecture Layers**
-1. **Hub Layer** — BLE connection to G1 glasses, telemetry, device status.
-2. **Assistant Layer** — GPT-powered reasoning, offline fallback, contextual replies.
-3. **Service Layer** — Persistent BLE + assistant keepalive background process.
-
-**Core Design Goals**
-- Reliable BLE connection and recovery
-- Offline fallback with cached replies
-- Local-only preferences (no analytics)
-- Minimal UI matching Even Realities aesthetic
-- Simple extensibility for future modules (HUD, Voice, Cloud Sync)
-
----
-
-## 🎯 Current Phase (Phase 3.8 — Clairvoyant Workflow)
-
-**Objective**  
-Unify BLE and LLM layers, refine assistant-device communication, simplify UI, and ensure stable offline fallback.
-
-**Key Deliverables**
-- Merge BLE telemetry pipeline with Assistant state banner  
-- Integrate GPT-4o-mini as fixed model  
-- Validate `ApiKeyValidator.kt` for `sk-proj-...` keys  
-- Implement status-synced UI banner  
-- Ensure assistant contextualizes device state  
-- Maintain 100% local preference storage  
-
-**Exit Criteria**
-- BLE → Assistant → HUD data flow verified end-to-end  
-- Offline fallback stable  
-- No app crashes after idle reconnect  
+**PRIORITY_MILESTONES**
+| # | Milestone | Status | Notes |
+|---|------------|--------|-------|
+| 1 | Integrate BLE telemetry with assistant layer | 🟡 In progress | Requires verification |
+| 2 | Enable contextual replies referencing device state | 🟡 In progress | |
+| 3 | Maintain stable offline fallback | ✅ Stable | Tested last build |
+| 4 | Simplify settings layout (API key + temp slider only) | ✅ Complete | |
+| 5 | Validate API key handling (sk-proj format) | 🟡 Pending review | |
+| 6 | Verify assistant-device status banner rendering | 🟡 In progress | |
+| 7 | Review BLE reconnect behaviour under idle conditions | ⏳ Todo | |
+| 8 | Filter unrelated system/BLE logs from assistant chat UI | 🟡 In progress | Added 10-24-2025 |
 
 ---
 
-## 🧩 Active Milestones
-
-| # | Milestone | Owner | Status | Notes |
-|---|------------|--------|--------|-------|
-| 1 | GPT-4o-mini hard-locked | Codex | ✅ | Integrated |
-| 2 | Unified Assistant + Device banner | Codex | ✅ | Verified |
-| 3 | API key validation for `sk-proj-*` | Codex | ✅ | Done |
-| 4 | Offline fallback stable | Codex | ✅ | Stable |
-| 5 | Simplified Settings screen | Codex | ✅ | Completed |
-| 6 | BLE data stubs replaced with real telemetry | Codex | 🟡 | In progress |
-| 7 | Assistant contextual replies using device data | ChatGPT | 🟡 | Pending review |
-| 8 | BLE crash handling tests | Codex | 🔜 | Planned |
-| 9 | LLM response refinement (Phase 4 preview) | ChatGPT | 🔜 | To schedule |
+### 🧭 INSTRUCTION TO CODEX
+- **Read this section before any code generation or modification.**  
+- Work **only** on milestones or issues listed under `CURRENT_PHASE`.  
+- Append new findings, bugs, or incomplete behaviours under **Known Issues / Errors**.  
+- When completing a milestone, **do not** mark “✅” automatically — leave 🟡 until user or ChatGPT verifies it.  
+- Respect architecture (core / hub / service / client).  
+- Follow Kotlin + Android best practices and Moncchichi coding patterns.  
 
 ---
 
-## 🧱 Known Issues / Errors
+## 🧩 CODEX TASK ZONE  
+*(Codex updates this section as it works)*  
 
-*(Auto-filled by Codex or GitHub CI)*  
-- [ ] BLE telemetry returning `null` for firmware version  
-- [ ] Occasional `java.io.IOException` during reconnect  
-- [ ] Assistant responses not yet referencing device state  
-- [ ] Intermittent HUD sync delay  
+### Known Issues / Errors
+- The assistant chat log includes unrelated information that’s not between the AI and the user, or anything about the AI (such as issues).  
+  It currently also includes `[BLE] → Ping` and other telemetry messages.  
+  **Action:** Filter out or ignore non-chat logs so that only true AI–user interactions appear in the assistant chat view.  
+  **Status:** 🟡 Pending — requires Codex cleanup of chat stream parsing logic.  
 
----
-
-## 💡 ChatGPT Solutions / Ideas
-
-*(Generated by ChatGPT after reading above section)*  
-- Propose integrating **coroutine retries** for BLE reconnects (with exponential backoff).  
-- Suggest creating a `TelemetryRepository.kt` to abstract BLE data for Assistant layer.  
-- Implement a **context injection service** to feed device info into LLM prompt template.  
-- Add **HUD message queue** for delayed updates when BLE reconnects mid-response.  
-- Create **unit tests** for ApiKeyValidator.kt and BLE disconnection handling.
+### Progress Notes  
+_(Codex appends short summaries per commit here)_
+| Date | Commit Summary | Status | Reviewed |
+|------|----------------|--------|-----------|
+| — | — | — | — |
 
 ---
 
-## 🧠 ChatGPT Responsibilities
+## 🧠 CHATGPT REVIEW ZONE  
+*(ChatGPT updates this section after each user review)*  
 
-1. Maintain this document’s overall structure and clarity.  
-2. Generate updated **Phase summaries, solutions, and next steps**.  
-3. Detect logic or design issues from error logs or Codex commits.  
-4. Recommend architecture or UX refinements aligned with project goals.  
+### Solutions / Ideas
+- Use coroutine retry for BLE reconnect.  
+- Introduce `TelemetryRepository.kt` abstraction.  
+- Queue HUD messages when BLE reconnects mid-response.  
+- Ensure chat adapter filters by `MessageSource.USER` and `MessageSource.ASSISTANT`.  
+- Separate BLE/system log flows from chat message flows.  
 
-**Workflow Trigger:** After each Codex commit or CI run, ChatGPT reviews diff and updates:
-- “Known Issues / Errors”
-- “Solutions / Ideas”
-- “Next Phase Preparation”
-
----
-
-## 👨‍💻 Codex Responsibilities
-
-1. Always read this document before coding.  
-2. Follow current **Phase Objective** and **Milestones**.  
-3. Append any new errors, warnings, or runtime logs under **Known Issues**.  
-4. Commit code changes referencing the current phase (`phase-3.8`) in commit messages.  
-5. When a milestone is complete, mark it ✅ and describe change briefly.
+### Phase Review Log
+| Date | Reviewed Item | Result | Notes |
+|------|----------------|--------|-------|
+| — | — | — | — |
 
 ---
 
-## 🔄 Feedback Loop
-
-| Step | Action | Performed By |
-|------|---------|--------------|
-| 1 | Generate or refine context & milestones | ChatGPT |
-| 2 | Implement code & update Known Issues | Codex |
-| 3 | Review diffs and logs | ChatGPT |
-| 4 | Introduce solutions and next steps | ChatGPT |
-| 5 | Iterate until exit criteria met | Both |
+## 🧾 PHASE SUMMARY (for reference)
+**Previous phase:** 3.7 — Assistant Brain Bootstrap (core LLM integration stable).  
+**Current phase:** 3.8 — Clairvoyant Workflow (BLE + LLM merge and UI refinement).  
+**Next planned phase:** 4.0 — BLE Core Fusion (real telemetry and HUD sync).  
 
 ---
 
-## 🔭 Upcoming Phase (Phase 4 — BLE Core Fusion)
-
-**Focus:** Replace stubbed BLE data with real device telemetry (battery %, firmware, MAC).  
-**Targets:**  
-- Stable two-way BLE read/write  
-- Live HUD sync prototype  
-- Color-coded debug console for BLE + LLM packets  
-
----
-
-## 🧩 Technical Module Map
-
-| Module | Purpose |
-|---------|----------|
-| **core/** | Shared UI, BLE models, LLM tools |
-| **hub/** | Main app fragments (Dashboard, Chat, Settings) |
-| **service/** | BLE connection + telemetry |
-| **client/** | Future external or HUD clients |
+## 🧱 DESIGN PRINCIPLES
+- **Simplicity First:** Single model flow; minimal toggles.  
+- **Reliability Over Complexity:** App must always recover connection.  
+- **Privacy Centric:** Local-only preference storage; no analytics.  
+- **Consistency:** Visuals follow Even Realities theme and typography.  
+- **Transparency:** Each code update documented here before phase completion.  
 
 ---
 
-## 🪶 Design Rules Recap
-- Simplicity first — single-model logic, minimal toggles  
-- Reliability over complexity — graceful recovery  
-- Privacy-centric — local preferences only  
-- Consistent Even Realities visual language  
+## 🧩 INSTRUCTION TO CHATGPT
+- Review new entries under *Codex Task Zone → Progress Notes* and *Known Issues*.  
+- Propose solutions or architecture refinements under *ChatGPT Review Zone*.  
+- Wait for **user confirmation** before updating milestone statuses.  
+- When phase goals are met and verified, generate the next phase block (increment version).  
 
 ---
 
-## 🧾 Version History
-| Version | Date | Summary |
-|----------|------|----------|
-| 3.8 | Oct 2025 | Merged BLE + LLM layers; offline fallback stable |
-| 3.9 (Planned) | Nov 2025 | BLE live telemetry integration; assistant contextualization |
+## 🧾 PROJECT RECAP
+**Goal:** Deliver a seamless, privacy-centric bridge between Even Realities G1 glasses and an intelligent assistant.  
+**Core Focus:** Integrate BLE telemetry, LLM reasoning, and HUD display into one stable Android app experience.  
 
 ---
 
-### ✅ End of Current Context
-> This document is live. Codex updates logs and completions; ChatGPT updates goals and analysis.  
-> All subsequent commits should reference this file before implementation.
+*End of Context File – Always read before committing code.*
