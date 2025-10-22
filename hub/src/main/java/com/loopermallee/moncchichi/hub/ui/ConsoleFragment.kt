@@ -1,6 +1,8 @@
 package com.loopermallee.moncchichi.hub.ui
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.view.LayoutInflater
@@ -14,6 +16,7 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.button.MaterialButton
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.handlers.SystemEventHandler
@@ -55,6 +58,18 @@ class ConsoleFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         val scroller = view.findViewById<NestedScrollView>(R.id.scroll)
         val text = view.findViewById<TextView>(R.id.text_logs)
+        val copyButton = view.findViewById<MaterialButton>(R.id.button_copy_console)
+
+        copyButton.setOnClickListener {
+            val content = text.text?.toString().orEmpty()
+            if (content.isBlank()) {
+                Toast.makeText(requireContext(), "No logs to copy", Toast.LENGTH_SHORT).show()
+            } else {
+                val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Moncchichi Logs", content))
+                Toast.makeText(requireContext(), "Logs copied to clipboard ✅", Toast.LENGTH_SHORT).show()
+            }
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {

@@ -10,10 +10,16 @@
         android:orientation="vertical"
         android:padding="@dimen/assistant_spacing">
 
+        <com.loopermallee.moncchichi.core.ui.components.StatusBarView
+            android:id="@+id/status_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
         <TextView
             android:id="@+id/text_header"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/assistant_spacing"
             android:text="Assistant Configuration"
             android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6" />
 
@@ -35,27 +41,41 @@
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/assistant_spacing">
+            android:layout_marginTop="@dimen/assistant_spacing"
+            app:endIconMode="dropdown_menu">
 
-            <com.google.android.material.textfield.TextInputEditText
+            <com.google.android.material.textfield.MaterialAutoCompleteTextView
                 android:id="@+id/input_model"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Model (e.g. gpt-3.5-turbo)" />
+                android:hint="Model"
+                android:inputType="none"
+                android:focusable="false" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <com.google.android.material.textfield.TextInputLayout
+        <TextView
+            android:id="@+id/text_temperature_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/assistant_spacing"
+            android:text="Temperature: 0.5"
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Body1" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/slider_temperature"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/assistant_spacing">
+            android:valueFrom="0"
+            android:valueTo="1"
+            android:stepSize="0.1"
+            app:labelBehavior="gone" />
 
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/input_temperature"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Temperature (0.0 - 1.0)"
-                android:inputType="numberDecimal" />
-        </com.google.android.material.textfield.TextInputLayout>
+        <TextView
+            android:id="@+id/text_temperature_hint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Lower = precise • Higher = creative"
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Caption" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/button_save"
@@ -63,6 +83,14 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
             android:text="Save API Settings" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/button_reset"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Reset to defaults" />
 
         <TextView
             android:id="@+id/text_status"

@@ -27,6 +27,6 @@ internal object LlmFallback {
                 prompt.takeIf { it.length <= 140 } ?: prompt.take(137) + "…"
             )
         }
-        return LlmTool.Reply(body, isOnline = false)
+        return LlmTool.Reply(body, isOnline = false, errorMessage = null)
     }
 }
