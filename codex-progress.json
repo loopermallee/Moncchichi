@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-22 14:19 SGT",
-  "last_delta": 0,
-  "last_keywords": "refactor",
+  "last_update": "2025-10-22 14:47 SGT",
+  "last_delta": 2,
+  "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 126,
+  "last_pr_number": 127,
   "history": [
+    {
+      "when": "2025-10-22 14:47 SGT",
+      "pr": 127,
+      "title": "Enable OpenAI project support and improve assistant status",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-22 14:19 SGT",
       "pr": 126,
