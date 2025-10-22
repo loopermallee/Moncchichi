@@ -59,7 +59,6 @@ class SettingsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         val statusBar = view.findViewById<StatusBarView>(R.id.status_bar)
         val apiKeyInput = view.findViewById<TextInputEditText>(R.id.input_api_key)
-        val projectInput = view.findViewById<TextInputEditText>(R.id.input_project_id)
         val modelInput = view.findViewById<MaterialAutoCompleteTextView>(R.id.modelDropdown)
         val temperatureLabel = view.findViewById<TextView>(R.id.text_temperature_value)
         val temperatureSlider = view.findViewById<Slider>(R.id.temperatureSlider)
@@ -69,7 +68,6 @@ class SettingsFragment : Fragment() {
         val statusText = view.findViewById<TextView>(R.id.text_status)
 
         apiKeyInput.setText(prefs.getString("openai_api_key", ""))
-        projectInput.setText(prefs.getString("openai_project_id", ""))
 
         val storedModel = prefs.getString("openai_model", null)?.takeIf { it.isNotBlank() }
             ?: ModelCatalog.defaultModel()
@@ -97,20 +95,15 @@ class SettingsFragment : Fragment() {
         saveButton.setOnClickListener {
             viewLifecycleOwner.lifecycleScope.launch {
                 val key = apiKeyInput.text?.toString()?.trim().orEmpty()
-                val projectId = projectInput.text?.toString()?.trim().orEmpty()
                 val temperature = temperatureSlider.value
                 if (key.isBlank()) {
                     showToast("Invalid API key – please check")
                     return@launch
                 }
-                if (key.startsWith("sk-proj-") && projectId.isBlank()) {
-                    showToast("Project ID required for sk-proj keys")
-                    return@launch
-                }
                 saveButton.isEnabled = false
                 try {
                     val (valid, reason) = try {
-                        ApiKeyValidator.validate(key, projectId.ifBlank { null })
+                        ApiKeyValidator.validate(key)
                     } catch (se: SecurityException) {
                         showToast("Missing INTERNET permission")
                         return@launch
@@ -121,7 +114,6 @@ class SettingsFragment : Fragment() {
                     }
                     prefs.edit()
                         .putString("openai_api_key", key)
-                        .putString("openai_project_id", projectId.ifBlank { null })
                         .putString("openai_model", selectedModel)
                         .putString("openai_temperature", temperature.toString())
                         .apply()
@@ -141,11 +133,9 @@ class SettingsFragment : Fragment() {
             temperatureSlider.value = 0.5f
             temperatureLabel.text = formatTemperature(0.5f)
             temperatureHint.text = describeTemp(0.5f)
-            projectInput.setText("")
             prefs.edit()
                 .putString("openai_model", defaultModel)
                 .putString("openai_temperature", 0.5f.toString())
-                .remove("openai_project_id")
                 .apply()
             showToast("Defaults restored")
         }

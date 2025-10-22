@@ -12,7 +12,7 @@ object ApiKeyValidator {
         pattern = """^sk-(proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{20,})[A-Za-z0-9_-]*$"""
     )
 
-    suspend fun validate(key: String, projectId: String? = null): Pair<Boolean, String?> =
+    suspend fun validate(key: String): Pair<Boolean, String?> =
         withContext(Dispatchers.IO) {
             if (!KEY_PATTERN.matches(key.trim())) {
                 return@withContext false to "Invalid format"
@@ -20,9 +20,6 @@ object ApiKeyValidator {
             val requestBuilder = Request.Builder()
                 .url("https://api.openai.com/v1/models")
                 .header("Authorization", "Bearer $key")
-            if (key.startsWith("sk-proj-") && !projectId.isNullOrBlank()) {
-                requestBuilder.header("OpenAI-Project", projectId)
-            }
             val request = requestBuilder.build()
             try {
                 client.newCall(request).execute().use { response ->

@@ -346,10 +346,8 @@ class HubViewModel(
     fun refreshAssistantStatus(forceOnline: Boolean = false) {
         val key = prefs.getString("openai_api_key", null)
         val missingKey = key.isNullOrBlank()
-        val missingProject = key?.startsWith("sk-proj-") == true &&
-            prefs.getString("openai_project_id", null).isNullOrBlank()
         val offline = when {
-            missingKey || missingProject -> true
+            missingKey -> true
             forceOnline -> false
             else -> state.value.assistant.isOffline
         }
@@ -366,8 +364,6 @@ class HubViewModel(
     private fun updateAssistantStatus(offline: Boolean, error: String?) {
         val key = prefs.getString("openai_api_key", null)
         val missingKey = key.isNullOrBlank()
-        val missingProject = key?.startsWith("sk-proj-") == true &&
-            prefs.getString("openai_project_id", null).isNullOrBlank()
         _assistantConn.value = when {
             !error.isNullOrBlank() -> AssistantConnInfo(
                 state = AssistantConnState.ERROR,
@@ -378,11 +374,6 @@ class HubViewModel(
                 state = AssistantConnState.OFFLINE,
                 model = null,
                 reason = "Disabled – add API key"
-            )
-            missingProject -> AssistantConnInfo(
-                state = AssistantConnState.OFFLINE,
-                model = null,
-                reason = "Add project ID for sk-proj key"
             )
             offline -> AssistantConnInfo(
                 state = AssistantConnState.OFFLINE,
@@ -402,6 +393,7 @@ class HubViewModel(
             DeviceConnInfo(
                 state = DeviceConnState.CONNECTED,
                 deviceName = device.name ?: "My G1",
+                deviceId = device.id,
                 batteryPct = device.glassesBattery?.takeIf { it in 0..100 },
                 caseBatteryPct = device.caseBattery?.takeIf { it in 0..100 },
                 firmware = null
