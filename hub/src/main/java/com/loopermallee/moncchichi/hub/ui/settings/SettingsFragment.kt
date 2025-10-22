@@ -73,6 +73,8 @@ class SettingsFragment : Fragment() {
         var selectedModel = storedModel
         val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, ModelCatalog.presets)
         modelInput.setAdapter(adapter)
+        modelInput.setMaxLines(1)
+        modelInput.setSingleLine(true)
         modelInput.setText(selectedModel, false)
         modelInput.setOnItemClickListener { _, _, position, _ ->
             selectedModel = ModelCatalog.presets.getOrNull(position) ?: selectedModel
@@ -98,20 +100,28 @@ class SettingsFragment : Fragment() {
                     return@launch
                 }
                 saveButton.isEnabled = false
-                val (valid, reason) = ApiKeyValidator.validate(key)
-                if (!valid) {
-                    showToast(reason ?: "Validation failed ⚠️")
+                try {
+                    val (valid, reason) = try {
+                        ApiKeyValidator.validate(key)
+                    } catch (se: SecurityException) {
+                        showToast("Missing INTERNET permission")
+                        return@launch
+                    }
+                    if (!valid) {
+                        showToast(reason ?: "Validation failed ⚠️")
+                        return@launch
+                    }
+                    prefs.edit()
+                        .putString("openai_api_key", key)
+                        .putString("openai_model", selectedModel)
+                        .putString("openai_temperature", temperature.toString())
+                        .apply()
+                    showToast("API key valid ✅")
+                    vm.logSystemEvent("[Settings] LLM configuration updated")
+                    vm.refreshAssistantStatus(forceOnline = true)
+                } finally {
                     saveButton.isEnabled = true
-                    return@launch
                 }
-                prefs.edit()
-                    .putString("openai_api_key", key)
-                    .putString("openai_model", selectedModel)
-                    .putString("openai_temperature", temperature.toString())
-                    .apply()
-                showToast("API key valid ✅")
-                vm.logSystemEvent("[Settings] LLM configuration updated")
-                saveButton.isEnabled = true
             }
         }
 
