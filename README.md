@@ -63,6 +63,16 @@ Goal: Modularize BLE control with fault-tolerant handlers and stateful UI.
 
 Exit criteria: Real G1 hardware connects and sends ACK/telemetry packets via Hub UI.
 
+Phase 2.9 — Diagnostic + Console UX Polish ✅
+
+Goal: Improve visibility of system and BLE events.
+        •       ✅ Color-coded logs ([APP], [BLE], [SYS], [AI], [ERROR]).
+        •       ✅ Auto-detect Bluetooth / Airplane-mode state changes.
+        •       ✅ Heartbeat every 30 s to keep BLE alive.
+        •       ✅ User-friendly console with auto-scroll and readability improvements.
+
+Exit criteria: User can diagnose connectivity issues without adb logs.
+
 ⸻
 
 Phase 3 — Assistant Brain (Clairvoyant Workflow) 🚧
