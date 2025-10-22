@@ -5,12 +5,9 @@ import com.loopermallee.moncchichi.hub.data.db.AssistantMessage
 data class DeviceInfo(
     val name: String? = null,
     val id: String? = null,
-    val rssi: Int? = null,
     val isConnected: Boolean = false,
     val glassesBattery: Int? = null,
-    val caseBattery: Int? = null,
-    val firmware: String? = null,
-    val mac: String? = null
+    val caseBattery: Int? = null
 )
 
 data class AssistantPane(

@@ -138,7 +138,7 @@ class AssistantFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 vm.state.collectLatest { state ->
-                    renderMessages(state.assistant.history)
+                    renderMessages(vm.filteredAssistantHistory())
                     partialView.isVisible = !state.assistant.partialTranscript.isNullOrBlank()
                     partialView.text = state.assistant.partialTranscript.orEmpty()
                     sendButton.isEnabled = !state.assistant.isBusy

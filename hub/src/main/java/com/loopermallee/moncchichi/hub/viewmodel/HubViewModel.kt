@@ -145,9 +145,7 @@ class HubViewModel(
                     device = it.device.copy(
                         name = d.name,
                         id = d.id,
-                        rssi = d.rssi,
-                        isConnected = it.device.isConnected,
-                        mac = d.id
+                        isConnected = it.device.isConnected
                     )
                 )
             }
@@ -163,33 +161,20 @@ class HubViewModel(
 
     private suspend fun connectFlow(deviceId: String) = hubLog("Connecting…") {
         val ok = ble.connect(deviceId)
-        val glassesBattery = if (ok) ble.battery() else null
-        val caseBattery = if (ok) ble.caseBattery() else null
-        val firmware = if (ok) ble.firmware() else null
-        val mac = if (ok) ble.macAddress() else null
         _state.update { st ->
             val current = st.device
             st.copy(
                 device = current.copy(
                     isConnected = ok,
                     id = deviceId,
-                    glassesBattery = glassesBattery,
-                    caseBattery = caseBattery,
-                    firmware = firmware ?: current.firmware,
-                    mac = mac ?: current.mac
+                    glassesBattery = null,
+                    caseBattery = null
                 )
             )
         }
         updateDeviceStatus(state.value.device)
         if (ok) {
-            val label = buildString {
-                append("Connected to ${state.value.device.name ?: deviceId}")
-                val addr = state.value.device.mac ?: mac
-                if (!addr.isNullOrBlank()) {
-                    append(" ($addr)")
-                }
-            }
-            recordAssistantReply(label, offline = false, speak = false)
+            val label = "Connected to ${state.value.device.name ?: "My G1"}"
             hubAddLog(label)
         } else {
             hubAddLog("Connection failed")
@@ -200,7 +185,6 @@ class HubViewModel(
         ble.disconnect()
         _state.update { it.copy(device = DeviceInfo()) }
         updateDeviceStatus(state.value.device)
-        recordAssistantReply("Disconnected", offline = false, speak = false)
         hubAddLog("Disconnected")
     }
 
@@ -208,7 +192,6 @@ class HubViewModel(
         val resp = ble.send(command)
         val summary = "[BLE] → $command | ← $resp"
         hubAddLog(summary)
-        recordAssistantReply(summary, offline = false, speak = false)
     }
 
     private suspend fun startListeningFlow() {
@@ -407,17 +390,27 @@ class HubViewModel(
         _deviceConn.value = if (device.isConnected) {
             DeviceConnInfo(
                 state = DeviceConnState.CONNECTED,
-                deviceName = device.name ?: device.id,
-                rssi = device.rssi,
-                glassesBatteryPct = device.glassesBattery,
-                caseBatteryPct = device.caseBattery,
-                firmware = device.firmware?.takeIf { it.isNotBlank() } ?: _deviceConn.value.firmware,
-                macAddress = device.mac?.takeIf { it.isNotBlank() } ?: _deviceConn.value.macAddress
+                deviceName = device.name ?: "My G1",
+                batteryPct = device.glassesBattery?.takeIf { it in 0..100 },
+                caseBatteryPct = device.caseBattery?.takeIf { it in 0..100 },
+                firmware = null
             )
         } else {
             DeviceConnInfo(DeviceConnState.DISCONNECTED)
         }
     }
+
+    fun filteredAssistantHistory(): List<AssistantMessage> =
+        state.value.assistant.history.filterNot { message ->
+            if (message.role != AssistantRole.ASSISTANT) {
+                return@filterNot false
+            }
+            val text = message.text
+            text.contains("Connected", ignoreCase = true) ||
+                text.contains("Disconnected", ignoreCase = true) ||
+                text.contains("BLE", ignoreCase = true) ||
+                text.contains("PING", ignoreCase = true)
+        }
 
     fun handleBluetoothOff() {
         _state.update { st ->
@@ -475,8 +468,8 @@ class HubViewModel(
         }
     }
 
-    private fun buildContext(): List<LlmTool.Message> {
-        return state.value.assistant.history.takeLast(12).map { entry ->
+    private fun buildContext(): List<LlmTool.Message> =
+        filteredAssistantHistory().takeLast(12).map { entry ->
             LlmTool.Message(
                 role = when (entry.role) {
                     AssistantRole.SYSTEM -> LlmTool.Role.SYSTEM
@@ -486,7 +479,6 @@ class HubViewModel(
                 content = entry.text
             )
         }
-    }
 
     private fun timestamp(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
 
