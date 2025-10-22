@@ -344,9 +344,12 @@ class HubViewModel(
     }
 
     fun refreshAssistantStatus(forceOnline: Boolean = false) {
-        val missingKey = prefs.getString("openai_api_key", null).isNullOrBlank()
+        val key = prefs.getString("openai_api_key", null)
+        val missingKey = key.isNullOrBlank()
+        val missingProject = key?.startsWith("sk-proj-") == true &&
+            prefs.getString("openai_project_id", null).isNullOrBlank()
         val offline = when {
-            missingKey -> true
+            missingKey || missingProject -> true
             forceOnline -> false
             else -> state.value.assistant.isOffline
         }
@@ -361,7 +364,10 @@ class HubViewModel(
     }
 
     private fun updateAssistantStatus(offline: Boolean, error: String?) {
-        val missingKey = prefs.getString("openai_api_key", null).isNullOrBlank()
+        val key = prefs.getString("openai_api_key", null)
+        val missingKey = key.isNullOrBlank()
+        val missingProject = key?.startsWith("sk-proj-") == true &&
+            prefs.getString("openai_project_id", null).isNullOrBlank()
         _assistantConn.value = when {
             !error.isNullOrBlank() -> AssistantConnInfo(
                 state = AssistantConnState.ERROR,
@@ -373,10 +379,15 @@ class HubViewModel(
                 model = null,
                 reason = "Disabled – add API key"
             )
+            missingProject -> AssistantConnInfo(
+                state = AssistantConnState.OFFLINE,
+                model = null,
+                reason = "Add project ID for sk-proj key"
+            )
             offline -> AssistantConnInfo(
                 state = AssistantConnState.OFFLINE,
                 model = null,
-                reason = "Offline – fallback mode"
+                reason = "Fallback mode"
             )
             else -> AssistantConnInfo(
                 state = AssistantConnState.ONLINE,
