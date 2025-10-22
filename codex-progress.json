@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-22 11:27 SGT",
+  "last_update": "2025-10-22 12:54 SGT",
   "last_delta": 2,
   "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 123,
+  "last_pr_number": 124,
   "history": [
+    {
+      "when": "2025-10-22 12:54 SGT",
+      "pr": 124,
+      "title": "Phase 3.6 UI and connectivity refresh",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-22 11:27 SGT",
       "pr": 123,
