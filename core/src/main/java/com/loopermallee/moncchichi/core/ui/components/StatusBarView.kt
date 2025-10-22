@@ -42,19 +42,23 @@ class StatusBarView @JvmOverloads constructor(
 
     fun render(assistant: AssistantConnInfo, device: DeviceConnInfo) {
         when (assistant.state) {
-            AssistantConnState.ONLINE -> setChip(
-                assistantCard,
-                assistantText,
-                label = "🌐 Online – ${assistant.model ?: "OpenAI"}",
-                textColor = COLOR_ASSISTANT_ON,
-                backgroundColor = COLOR_ASSISTANT_ON_BG
-            )
-            AssistantConnState.OFFLINE -> {
-                val message = assistant.reason?.takeIf { it.isNotBlank() } ?: "Offline – local mode"
+            AssistantConnState.ONLINE -> {
+                val modelLabel = assistant.model ?: "GPT"
                 setChip(
                     assistantCard,
                     assistantText,
-                    label = "⚡ $message",
+                    label = "🟢 Online • $modelLabel",
+                    textColor = COLOR_ASSISTANT_ON,
+                    backgroundColor = COLOR_ASSISTANT_ON_BG
+                )
+            }
+            AssistantConnState.OFFLINE -> {
+                val message = assistant.reason?.takeIf { it.isNotBlank() }?.let { "⚡ Offline • $it" }
+                    ?: "⚡ Offline Mode"
+                setChip(
+                    assistantCard,
+                    assistantText,
+                    label = message,
                     textColor = COLOR_ASSISTANT_OFF,
                     backgroundColor = COLOR_ASSISTANT_OFF_BG
                 )
@@ -122,9 +126,9 @@ class StatusBarView @JvmOverloads constructor(
     }
 
     companion object {
-        private val COLOR_ASSISTANT_ON = Color.parseColor("#9BE37B")
-        private val COLOR_ASSISTANT_ON_BG = Color.parseColor("#1E2A1E")
-        private val COLOR_ASSISTANT_OFF = Color.parseColor("#FFC107")
+        private val COLOR_ASSISTANT_ON = Color.parseColor("#66FFB2")
+        private val COLOR_ASSISTANT_ON_BG = Color.parseColor("#14271C")
+        private val COLOR_ASSISTANT_OFF = Color.parseColor("#FFB84D")
         private val COLOR_ASSISTANT_OFF_BG = Color.parseColor("#2A2315")
         private val COLOR_ASSISTANT_ERROR = Color.parseColor("#FF6B6B")
         private val COLOR_ASSISTANT_ERROR_BG = Color.parseColor("#2A1E1E")

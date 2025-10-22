@@ -20,6 +20,9 @@ import java.net.URL
 
 private const val TAG = "LlmToolImpl"
 private const val OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
+private const val HEADER_PROJECT = "OpenAI-Project"
+private const val DEFAULT_SYSTEM_PROMPT =
+    "You are Moncchichi Assistant integrated with G1 smart glasses. Respond naturally and briefly."
 private val DEFAULT_MODEL = ModelCatalog.defaultModel()
 
 class LlmToolImpl(private val context: Context) : LlmTool {
@@ -29,14 +32,18 @@ class LlmToolImpl(private val context: Context) : LlmTool {
 
     override suspend fun answer(prompt: String, context: List<LlmTool.Message>): LlmTool.Reply {
         val key = prefs.getString("openai_api_key", null)?.takeIf { it.isNotBlank() }
+        val projectId = prefs.getString("openai_project_id", null)?.trim()?.takeIf { it.isNotEmpty() }
         if (key.isNullOrBlank()) {
             return LlmFallback.respond(prompt, context).copy(errorMessage = "OpenAI API key missing")
+        }
+        if (key.startsWith("sk-proj-") && projectId.isNullOrBlank()) {
+            return LlmFallback.respond(prompt, context).copy(errorMessage = "OpenAI project ID missing")
         }
         if (!isNetworkAvailable()) {
             return LlmFallback.respond(prompt, context).copy(errorMessage = "No network connectivity")
         }
 
-        return runCatching { queryOpenAi(prompt, context, key) }
+        return runCatching { queryOpenAi(prompt, context, key, projectId) }
             .onFailure { Log.w(TAG, "Falling back to offline reply", it) }
             .getOrElse { throwable ->
                 LlmFallback.respond(prompt, context).copy(errorMessage = readableError(throwable))
@@ -46,9 +53,17 @@ class LlmToolImpl(private val context: Context) : LlmTool {
     private suspend fun queryOpenAi(
         prompt: String,
         history: List<LlmTool.Message>,
-        apiKey: String
+        apiKey: String,
+        projectId: String?
     ): LlmTool.Reply = withContext(Dispatchers.IO) {
         val messagesJson = JSONArray().apply {
+            val hasSystem = history.any { it.role == LlmTool.Role.SYSTEM }
+            if (!hasSystem) {
+                put(JSONObject().apply {
+                    put("role", "system")
+                    put("content", DEFAULT_SYSTEM_PROMPT)
+                })
+            }
             history.forEach { message ->
                 put(JSONObject().apply {
                     put("role", message.role.asApiRole())
@@ -77,6 +92,9 @@ class LlmToolImpl(private val context: Context) : LlmTool {
             doOutput = true
             setRequestProperty("Authorization", "Bearer $apiKey")
             setRequestProperty("Content-Type", "application/json")
+            if (apiKey.startsWith("sk-proj-") && !projectId.isNullOrBlank()) {
+                setRequestProperty(HEADER_PROJECT, projectId)
+            }
         }
 
         try {
@@ -117,6 +135,8 @@ class LlmToolImpl(private val context: Context) : LlmTool {
             message.contains("401") -> "Invalid API key"
             message.contains("429") -> "Rate limit reached"
             message.contains("403") -> "API access forbidden"
+            message.contains("400") -> "Bad request – check model or parameters"
+            message.contains("404") -> "Requested model unavailable"
             error is java.net.SocketTimeoutException -> "Request timed out"
             error is java.net.UnknownHostException -> "No network connectivity"
             else -> "Assistant request failed"
