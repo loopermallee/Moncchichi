@@ -44,6 +44,13 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
+            android:hint="Model"
+            app:boxBackgroundColor="?attr/colorSurface"
+            app:boxBackgroundMode="filled"
+            app:boxCornerRadiusBottomEnd="8dp"
+            app:boxCornerRadiusBottomStart="8dp"
+            app:boxCornerRadiusTopEnd="8dp"
+            app:boxCornerRadiusTopStart="8dp"
             app:endIconMode="dropdown_menu">
 
             <com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -53,11 +60,8 @@
                 android:ellipsize="end"
                 android:focusable="false"
                 android:gravity="center_horizontal"
-                android:hint="Model"
-                android:textAlignment="center"
-                app:dropDownAnchor="@id/modelDropdown"
-                app:dropDownHorizontalOffset="0dp"
-                app:dropDownVerticalOffset="0dp" />
+                android:inputType="none"
+                android:textAlignment="center" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <TextView
