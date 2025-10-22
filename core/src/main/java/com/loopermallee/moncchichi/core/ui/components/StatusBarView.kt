@@ -73,14 +73,12 @@ class StatusBarView @JvmOverloads constructor(
 
         when (device.state) {
             DeviceConnState.CONNECTED -> {
-                val segments = mutableListOf<String>()
-                segments += device.deviceName ?: "Moncchichi G1"
-                device.macAddress?.takeIf { it.isNotBlank() }?.let { segments += "MAC $it" }
-                device.rssi?.let { segments += "RSSI ${it} dBm" }
-                device.glassesBatteryPct?.let { segments += "Glasses ${it} %" }
-                device.caseBatteryPct?.let { segments += "Case ${it} %" }
-                device.firmware?.takeIf { it.isNotBlank() }?.let { segments += "FW $it" }
-                val label = "🔗 " + segments.joinToString(separator = " • ")
+                val label = buildString {
+                    append("🔗 Connected")
+                    device.deviceName?.takeIf { it.isNotBlank() }?.let { append(" – ").append(it) }
+                    device.batteryPct?.let { append(" • Glasses ").append(it).append('%') }
+                    device.caseBatteryPct?.let { append(" • Case ").append(it).append('%') }
+                }
                 setChip(deviceCard, deviceText, label, COLOR_DEVICE_ON, COLOR_DEVICE_ON_BG)
             }
             DeviceConnState.DISCONNECTED -> setChip(

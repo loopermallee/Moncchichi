@@ -5,7 +5,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -55,8 +54,6 @@ class HubFragment : Fragment() {
         val deviceName = view.findViewById<TextView>(R.id.text_device_name)
         val deviceStatus = view.findViewById<TextView>(R.id.text_device_status)
         val deviceBattery = view.findViewById<TextView>(R.id.text_device_battery)
-        val deviceFirmware = view.findViewById<TextView>(R.id.text_device_firmware)
-        val deviceMac = view.findViewById<TextView>(R.id.text_device_mac)
         val btnPair = view.findViewById<MaterialButton>(R.id.btn_pair)
         val btnDisconnect = view.findViewById<MaterialButton>(R.id.btn_disconnect)
         val btnPing = view.findViewById<MaterialButton>(R.id.btn_ping)
@@ -86,21 +83,12 @@ class HubFragment : Fragment() {
                 vm.deviceConn.collectLatest { device ->
                     deviceName.text = device.deviceName ?: "My G1"
                     deviceStatus.text = when (device.state) {
-                        DeviceConnState.CONNECTED -> buildString {
-                            append("Connected")
-                            device.rssi?.let { append(" • RSSI ${it} dBm") }
-                        }
+                        DeviceConnState.CONNECTED -> "Connected"
                         DeviceConnState.DISCONNECTED -> "Waiting for connection…"
                     }
-                    val glasses = device.glassesBatteryPct?.let { "$it %" } ?: "— %"
+                    val glasses = device.batteryPct?.let { "$it %" } ?: "— %"
                     val case = device.caseBatteryPct?.let { "$it %" } ?: "— %"
                     deviceBattery.text = "Glasses $glasses • Case $case"
-                    val firmware = device.firmware?.takeIf { it.isNotBlank() }
-                    deviceFirmware.isVisible = firmware != null
-                    if (firmware != null) {
-                        deviceFirmware.text = "Firmware $firmware"
-                    }
-                    deviceMac.text = "MAC ${device.macAddress ?: "—"}"
                     val connected = device.state == DeviceConnState.CONNECTED
                     btnPair.isEnabled = !connected
                     btnDisconnect.isEnabled = connected

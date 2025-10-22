@@ -49,22 +49,7 @@
                 android:text="Glasses — % • Case — %"
                 android:textAppearance="@style/TextAppearance.MaterialComponents.Body1" />
 
-            <TextView
-                android:id="@+id/text_device_firmware"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text=""
-                android:visibility="gone"
-                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
-
-            <TextView
-                android:id="@+id/text_device_mac"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="MAC —"
-                android:textAppearance="@style/TextAppearance.MaterialComponents.Caption" />
+            <!-- Firmware and MAC details removed until live telemetry arrives -->
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
