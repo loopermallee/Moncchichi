@@ -83,6 +83,7 @@ dependencies {
     implementation(libs.androidx.icons.extended)
     implementation("androidx.compose.ui:ui-text")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation(libs.coroutines.android)
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
