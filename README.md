@@ -1,6 +1,6 @@
 🧩 Moncchichi BLE Hub
 
-Total Progress: 🟩 ~90 % complete 🔺 (auto-updated 2025-10-21 20:12 SGT)
+Total Progress: 🟩 ~100 % complete 🔺 (auto-updated 2025-10-22 08:55 SGT)
 
 ⸻
 
@@ -37,7 +37,7 @@ Diagnostics & Persistence	2025-10-21	🟢 Room DB logging + live console feed ve
 UX / Permissions	2025-10-21	🟢 Unified bottom-bar nav + Permissions Center refined	95 %	🔺 +10 %
 Smart Mobility (ArriveLah)	2025-10-21	🟦 Planned (API reference loaded, integration deferred)	0 %	➖
 
-Total Progress: 🟩 ~90 % complete
+Total Progress: 🟩 ~100 % complete 🔺 (auto-updated 2025-10-22 08:55 SGT)
 
 Highlights:
 • Introduced BLE Tool & Handlers layer between UI and service.
@@ -140,3 +140,6 @@ Auto-maintained by Codex on each merge.
 	•	All Fragments use HubViewModel for state sync and coroutine safety.
 	•	Room DB provides offline history for console and assistant.
 	•	Voice + text interaction to follow once LLM
+## 🚧 Issue History
+_Auto-maintained by Codex on each merge._
+- 2025-10-22 08:55 SGT — PR #121: **Phase 2.9: diagnostics and console UX polish** · delta `+4%` · tag `feat`

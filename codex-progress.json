@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-21 20:52 SGT",
-  "last_delta": 0,
-  "last_keywords": "neutral",
+  "last_update": "2025-10-22 08:55 SGT",
+  "last_delta": 4,
+  "last_keywords": "feat",
   "last_goal": null,
-  "last_pr_number": 120,
+  "last_pr_number": 121,
   "history": [
+    {
+      "when": "2025-10-22 08:55 SGT",
+      "pr": 121,
+      "title": "Phase 2.9: diagnostics and console UX polish",
+      "delta": 4,
+      "keywords": "feat",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-21 20:52 SGT",
       "pr": 120,
