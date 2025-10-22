@@ -13,6 +13,7 @@ data class AssistantConnInfo(
 data class DeviceConnInfo(
     val state: DeviceConnState,
     val deviceName: String? = null,
+    val deviceId: String? = null,
     val batteryPct: Int? = null,
     val caseBatteryPct: Int? = null,
     val firmware: String? = null

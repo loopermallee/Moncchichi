@@ -3,6 +3,9 @@ package com.loopermallee.moncchichi.core.ui.components
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.RelativeSizeSpan
 import android.util.AttributeSet
 import android.view.View
 import android.widget.LinearLayout
@@ -77,11 +80,25 @@ class StatusBarView @JvmOverloads constructor(
 
         when (device.state) {
             DeviceConnState.CONNECTED -> {
-                val label = buildString {
-                    append("🔗 Connected")
-                    device.deviceName?.takeIf { it.isNotBlank() }?.let { append(" – ").append(it) }
-                    device.batteryPct?.let { append(" • Glasses ").append(it).append('%') }
-                    device.caseBatteryPct?.let { append(" • Case ").append(it).append('%') }
+                val header = buildString {
+                    append("🟢 Connected")
+                    device.deviceName?.takeIf { it.isNotBlank() }?.let { append(" • ").append(it) }
+                    device.deviceId?.takeIf { it.isNotBlank() }?.let { append(" (").append(it).append(')') }
+                    device.firmware?.takeIf { it.isNotBlank() }?.let { append(" FW ").append(it) }
+                }.ifBlank { "🟢 Connected" }
+                val footer = buildList {
+                    device.batteryPct?.let { add("Glasses ${it}%") }
+                    device.caseBatteryPct?.let { add("Case ${it}%") }
+                }.takeIf { it.isNotEmpty() }?.joinToString(separator = " • ")?.let { "🔋 $it" }
+                val label: CharSequence = if (footer.isNullOrBlank()) {
+                    header
+                } else {
+                    SpannableStringBuilder(header).apply {
+                        append('\n')
+                        val start = length
+                        append(footer)
+                        setSpan(RelativeSizeSpan(0.85f), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
                 }
                 setChip(deviceCard, deviceText, label, COLOR_DEVICE_ON, COLOR_DEVICE_ON_BG)
             }
@@ -110,7 +127,7 @@ class StatusBarView @JvmOverloads constructor(
     private fun setChip(
         card: MaterialCardView,
         text: TextView,
-        label: String,
+        label: CharSequence,
         textColor: Int,
         backgroundColor: Int
     ) {

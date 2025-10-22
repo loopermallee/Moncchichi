@@ -24,9 +24,12 @@
             android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6" />
 
         <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/layout_api_key"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
+            android:hint="OpenAI API Key (sk-proj-…)"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             app:hintAnimationEnabled="true"
             app:hintEnabled="true">
 
@@ -34,27 +37,9 @@
                 android:id="@+id/input_api_key"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:hint="OpenAI API key"
+                android:hint="Paste your OpenAI API key"
                 android:inputType="textPassword"
-                android:textAlignment="center" />
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            app:hintAnimationEnabled="true"
-            app:hintEnabled="true">
-
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/input_project_id"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:hint="OpenAI project ID (for sk-proj keys)"
-                android:inputType="text"
-                android:textAlignment="center" />
+                android:singleLine="true" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <com.google.android.material.textfield.TextInputLayout
