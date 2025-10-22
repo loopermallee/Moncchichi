@@ -55,7 +55,9 @@
                 android:gravity="center_horizontal"
                 android:hint="Model"
                 android:textAlignment="center"
-                app:dropDownWidth="match_anchor" />
+                app:dropDownAnchor="@id/modelDropdown"
+                app:dropDownHorizontalOffset="0dp"
+                app:dropDownVerticalOffset="0dp" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <TextView
