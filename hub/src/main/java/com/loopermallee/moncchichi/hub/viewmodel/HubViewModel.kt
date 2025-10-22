@@ -229,7 +229,7 @@ class HubViewModel(
                 buildContext(),
                 llm,
                 display,
-                onAssistant = { reply -> respond(reply.text, offline = !reply.isOnline, speak = true) },
+                onAssistant = { reply -> respond(reply.text, !reply.isOnline, true) },
                 log = ::hubAddLog
             )
             Route.TRANSIT -> TransitHandler.run(text, display, { respond(it, false, true) }, ::hubAddLog)
