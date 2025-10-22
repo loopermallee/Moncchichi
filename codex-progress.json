@@ -1,12 +1,21 @@
 {
   "project": "Moncchichi BLE Hub",
   "total_progress": 100,
-  "last_update": "2025-10-22 17:04 SGT",
-  "last_delta": 0,
-  "last_keywords": "neutral",
+  "last_update": "2025-10-23 07:36 SGT",
+  "last_delta": 2,
+  "last_keywords": "fix",
   "last_goal": null,
-  "last_pr_number": 128,
+  "last_pr_number": 129,
   "history": [
+    {
+      "when": "2025-10-23 07:36 SGT",
+      "pr": 129,
+      "title": "Filter BLE telemetry out of assistant chat UI",
+      "delta": 2,
+      "keywords": "fix",
+      "goal": null,
+      "total_after": 100
+    },
     {
       "when": "2025-10-22 17:04 SGT",
       "pr": 128,
