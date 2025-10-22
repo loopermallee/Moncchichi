@@ -1,6 +1,6 @@
 package com.loopermallee.moncchichi.hub.viewmodel
 
-import com.loopermallee.moncchichi.hub.data.db.AssistantMessage
+import com.loopermallee.moncchichi.core.model.ChatMessage
 
 data class DeviceInfo(
     val name: String? = null,
@@ -18,7 +18,7 @@ data class AssistantPane(
     val lastResponse: String? = null,
     val isBusy: Boolean = false,
     val isOffline: Boolean = false,
-    val history: List<AssistantMessage> = emptyList(),
+    val history: List<ChatMessage> = emptyList(),
     val voiceEnabled: Boolean = true
 )
 

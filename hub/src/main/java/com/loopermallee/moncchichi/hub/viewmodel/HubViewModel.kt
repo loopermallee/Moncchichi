@@ -11,8 +11,8 @@ import com.loopermallee.moncchichi.core.ui.state.AssistantConnInfo
 import com.loopermallee.moncchichi.core.ui.state.AssistantConnState
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnInfo
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnState
-import com.loopermallee.moncchichi.hub.data.db.AssistantMessage
-import com.loopermallee.moncchichi.hub.data.db.AssistantRole
+import com.loopermallee.moncchichi.core.model.ChatMessage
+import com.loopermallee.moncchichi.core.model.MessageSource
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.handlers.AiAssistHandler
 import com.loopermallee.moncchichi.hub.handlers.BleCommandHandler
@@ -85,9 +85,9 @@ class HubViewModel(
             }
         }
         viewModelScope.launch {
-            val history = memory.assistantHistory(MAX_HISTORY)
+            val history = memory.chatHistory(MAX_HISTORY)
             if (history.isNotEmpty()) {
-                val lastAssistant = history.lastOrNull { it.role == AssistantRole.ASSISTANT }
+                val lastAssistant = history.lastOrNull { it.source == MessageSource.ASSISTANT }
                 _state.update {
                     it.copy(
                         assistant = it.assistant.copy(
@@ -230,14 +230,14 @@ class HubViewModel(
     }
 
     private suspend fun handleTranscript(text: String) {
-        appendAssistantMessage(AssistantRole.USER, text)
+        appendChatMessage(MessageSource.USER, text)
         _state.update { it.copy(assistant = it.assistant.copy(isListening = false)) }
         routeAndHandle(text)
     }
 
     private suspend fun assistantAsk(text: String) {
         _state.update { it.copy(assistant = it.assistant.copy(isBusy = true)) }
-        appendAssistantMessage(AssistantRole.USER, text)
+        appendChatMessage(MessageSource.USER, text)
         routeAndHandle(text)
         _state.update { it.copy(assistant = it.assistant.copy(isBusy = false)) }
     }
@@ -297,24 +297,24 @@ class HubViewModel(
         hubAddLog(message)
     }
 
-    private fun appendAssistantMessage(role: AssistantRole, text: String, persist: Boolean = true) {
-        val message = AssistantMessage(role, text, System.currentTimeMillis())
+    private fun appendChatMessage(source: MessageSource, text: String, persist: Boolean = true) {
+        val message = ChatMessage(text, source, System.currentTimeMillis())
         _state.update { st ->
             val history = (st.assistant.history + message).takeLast(MAX_HISTORY)
             val assistantPane = st.assistant.copy(
                 history = history,
-                lastTranscript = if (role == AssistantRole.USER) text else st.assistant.lastTranscript,
-                lastResponse = if (role == AssistantRole.ASSISTANT) text else st.assistant.lastResponse
+                lastTranscript = if (source == MessageSource.USER) text else st.assistant.lastTranscript,
+                lastResponse = if (source == MessageSource.ASSISTANT) text else st.assistant.lastResponse
             )
             st.copy(assistant = assistantPane)
         }
         if (persist) {
-            viewModelScope.launch { memory.addAssistantMessage(role, text) }
+            viewModelScope.launch { memory.addChatMessage(source, text) }
         }
     }
 
     private fun recordAssistantReply(text: String, offline: Boolean, speak: Boolean, errorMessage: String? = null) {
-        appendAssistantMessage(AssistantRole.ASSISTANT, text)
+        appendChatMessage(MessageSource.ASSISTANT, text)
         _state.update {
             it.copy(assistant = it.assistant.copy(isOffline = offline))
         }
@@ -403,16 +403,9 @@ class HubViewModel(
         }
     }
 
-    fun filteredAssistantHistory(): List<AssistantMessage> =
-        state.value.assistant.history.filterNot { message ->
-            if (message.role != AssistantRole.ASSISTANT) {
-                return@filterNot false
-            }
-            val text = message.text
-            text.contains("Connected", ignoreCase = true) ||
-                text.contains("Disconnected", ignoreCase = true) ||
-                text.contains("BLE", ignoreCase = true) ||
-                text.contains("PING", ignoreCase = true)
+    fun filteredAssistantHistory(): List<ChatMessage> =
+        state.value.assistant.history.filter { message ->
+            message.source == MessageSource.USER || message.source == MessageSource.ASSISTANT
         }
 
     fun handleBluetoothOff() {
@@ -474,10 +467,11 @@ class HubViewModel(
     private fun buildContext(): List<LlmTool.Message> =
         filteredAssistantHistory().takeLast(12).map { entry ->
             LlmTool.Message(
-                role = when (entry.role) {
-                    AssistantRole.SYSTEM -> LlmTool.Role.SYSTEM
-                    AssistantRole.USER -> LlmTool.Role.USER
-                    AssistantRole.ASSISTANT -> LlmTool.Role.ASSISTANT
+                role = when (entry.source) {
+                    MessageSource.SYSTEM -> LlmTool.Role.SYSTEM
+                    MessageSource.USER -> LlmTool.Role.USER
+                    MessageSource.ASSISTANT -> LlmTool.Role.ASSISTANT
+                    MessageSource.BLE -> LlmTool.Role.SYSTEM
                 },
                 content = entry.text
             )

@@ -44,7 +44,7 @@
 _(Codex appends short summaries per commit here)_
 | Date | Commit Summary | Status | Reviewed |
 |------|----------------|--------|-----------|
-| — | — | — | — |
+| 2025-10-24 | Filtered BLE logs from chat UI | 🟡 Pending Review | — |
 
 ---
 

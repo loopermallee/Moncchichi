@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.hub.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -7,6 +8,8 @@ import androidx.room.Insert
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import com.loopermallee.moncchichi.core.model.ChatMessage
+import com.loopermallee.moncchichi.core.model.MessageSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -21,7 +24,7 @@ data class ConsoleLine(
 data class AssistantEntry(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val ts: Long,
-    val role: String,
+    @ColumnInfo(name = "role") val source: String,
     val text: String
 )
 
@@ -45,10 +48,6 @@ abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao
 }
 
-enum class AssistantRole { USER, ASSISTANT, SYSTEM }
-
-data class AssistantMessage(val role: AssistantRole, val text: String, val timestamp: Long)
-
 class MemoryRepository(private val dao: MemoryDao) {
     suspend fun addConsoleLine(s: String) {
         withContext(Dispatchers.IO) {
@@ -56,12 +55,12 @@ class MemoryRepository(private val dao: MemoryDao) {
         }
     }
 
-    suspend fun addAssistantMessage(role: AssistantRole, s: String) {
+    suspend fun addChatMessage(source: MessageSource, s: String) {
         withContext(Dispatchers.IO) {
             dao.addAssistant(
                 AssistantEntry(
                     ts = System.currentTimeMillis(),
-                    role = role.name,
+                    source = source.name,
                     text = s
                 )
             )
@@ -72,12 +71,12 @@ class MemoryRepository(private val dao: MemoryDao) {
         return withContext(Dispatchers.IO) { dao.lastConsole(limit).map { it.line } }
     }
 
-    suspend fun assistantHistory(limit: Int): List<AssistantMessage> {
+    suspend fun chatHistory(limit: Int): List<ChatMessage> {
         return withContext(Dispatchers.IO) {
             dao.lastAssistant(limit)
                 .mapNotNull { entry ->
-                    runCatching { AssistantRole.valueOf(entry.role) }.getOrNull()?.let { role ->
-                        AssistantMessage(role, entry.text, entry.ts)
+                    runCatching { MessageSource.valueOf(entry.source) }.getOrNull()?.let { source ->
+                        ChatMessage(entry.text, source, entry.ts)
                     }
                 }
                 .reversed()

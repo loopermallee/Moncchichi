@@ -28,8 +28,8 @@ import com.loopermallee.moncchichi.core.ui.state.AssistantConnInfo
 import com.loopermallee.moncchichi.core.ui.state.AssistantConnState
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnInfo
 import com.loopermallee.moncchichi.hub.R
-import com.loopermallee.moncchichi.hub.data.db.AssistantMessage
-import com.loopermallee.moncchichi.hub.data.db.AssistantRole
+import com.loopermallee.moncchichi.core.model.ChatMessage
+import com.loopermallee.moncchichi.core.model.MessageSource
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
@@ -181,7 +181,7 @@ class AssistantFragment : Fragment() {
         currentError = null
     }
 
-    private fun renderMessages(history: List<AssistantMessage>) {
+    private fun renderMessages(history: List<ChatMessage>) {
         val signature = history.hashCode()
         if (messageContainer.tag == signature) return
 
@@ -197,7 +197,7 @@ class AssistantFragment : Fragment() {
         history.forEach { entry ->
             val bubble = TextView(requireContext()).apply {
                 text = entry.text
-                background = createBubble(entry.role == AssistantRole.USER)
+                background = createBubble(entry.source == MessageSource.USER)
                 setPadding(horizontal, vertical, horizontal, vertical)
                 setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
             }
@@ -206,7 +206,7 @@ class AssistantFragment : Fragment() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 topMargin = vertical
-                gravity = if (entry.role == AssistantRole.USER) Gravity.END else Gravity.START
+                gravity = if (entry.source == MessageSource.USER) Gravity.END else Gravity.START
             }
             messageContainer.addView(bubble, params)
         }
