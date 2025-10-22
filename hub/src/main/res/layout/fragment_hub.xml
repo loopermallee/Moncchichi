@@ -16,8 +16,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="2dp">
+        app:cardCornerRadius="14dp"
+        app:cardElevation="0dp"
+        app:cardUseCompatPadding="false">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -27,28 +28,42 @@
 
             <TextView
                 android:id="@+id/text_device_name"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Device: —"
-                android:textStyle="bold" />
+                android:text="My G1"
+                android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6" />
 
             <TextView
-                android:id="@+id/text_device_rssi"
-                android:layout_width="wrap_content"
+                android:id="@+id/text_device_status"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="RSSI: —" />
+                android:layout_marginTop="4dp"
+                android:text="Waiting for connection…"
+                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
 
             <TextView
                 android:id="@+id/text_device_battery"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Battery: —" />
+                android:layout_marginTop="8dp"
+                android:text="Glasses — % • Case — %"
+                android:textAppearance="@style/TextAppearance.MaterialComponents.Body1" />
 
             <TextView
                 android:id="@+id/text_device_firmware"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Firmware: —" />
+                android:layout_marginTop="2dp"
+                android:text="Firmware —"
+                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
+
+            <TextView
+                android:id="@+id/text_device_mac"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="MAC —"
+                android:textAppearance="@style/TextAppearance.MaterialComponents.Caption" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -84,35 +99,12 @@
         android:layout_height="wrap_content"/>
 
     <TextView
-        android:id="@+id/text_console_label"
-        android:layout_width="wrap_content"
+        android:id="@+id/text_console_hint"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="24dp"
-        android:text="Device Console"
-        android:textStyle="bold"
-        android:textSize="18sp" />
-
-    <androidx.core.widget.NestedScrollView
-        android:id="@+id/scroll_logs"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="12dp">
-
-        <TextView
-            android:id="@+id/text_logs"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="(no logs yet)"
-            android:typeface="monospace" />
-    </androidx.core.widget.NestedScrollView>
-
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/button_copy_logs"
-        style="@style/Widget.MaterialComponents.Button.TextButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="📋 Copy" />
+        android:gravity="center"
+        android:text="View detailed logs under Console tab 👁"
+        android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
 
 </LinearLayout>

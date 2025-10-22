@@ -41,38 +41,52 @@ class StatusBarView @JvmOverloads constructor(
     }
 
     fun render(assistant: AssistantConnInfo, device: DeviceConnInfo) {
-        val (assistantLabel, assistantColor, assistantEmoji) = when (assistant.state) {
-            AssistantConnState.ONLINE -> Triple(
-                "Online – ${assistant.model ?: "GPT"} connected",
-                ONLINE_COLOR,
-                "🌐"
+        when (assistant.state) {
+            AssistantConnState.ONLINE -> setChip(
+                assistantCard,
+                assistantText,
+                label = "🌐 Online – ${assistant.model ?: "OpenAI"}",
+                textColor = COLOR_ASSISTANT_ON,
+                backgroundColor = COLOR_ASSISTANT_ON_BG
             )
-            AssistantConnState.OFFLINE -> Triple(
-                "Offline Mode – local fallback active",
-                OFFLINE_COLOR,
-                "⚡"
+            AssistantConnState.OFFLINE -> setChip(
+                assistantCard,
+                assistantText,
+                label = "⚡ Offline – local mode",
+                textColor = COLOR_ASSISTANT_OFF,
+                backgroundColor = COLOR_ASSISTANT_OFF_BG
             )
-            AssistantConnState.ERROR -> Triple(
-                "Assistant error – ${assistant.reason ?: "check API or network"}",
-                ERROR_COLOR,
-                "❌"
-            )
+            AssistantConnState.ERROR -> {
+                val reason = assistant.reason ?: "check API key or network"
+                setChip(
+                    assistantCard,
+                    assistantText,
+                    label = "❌ Error – $reason",
+                    textColor = COLOR_ASSISTANT_ERROR,
+                    backgroundColor = COLOR_ASSISTANT_ERROR_BG
+                )
+            }
         }
-        setChipState(assistantCard, assistantText, assistantEmoji, assistantLabel, assistantColor)
 
-        val (deviceLabel, deviceColor, deviceEmoji) = when (device.state) {
-            DeviceConnState.CONNECTED -> Triple(
-                "Connected – ${device.deviceName ?: "Moncchichi G1"} | RSSI ${device.rssi ?: "?"} | Battery ${device.batteryPct ?: "?"}% | FW ${device.firmware ?: "?"}",
-                DEVICE_CONNECTED_COLOR,
-                "🔗"
-            )
-            DeviceConnState.DISCONNECTED -> Triple(
-                "No device connected",
-                ERROR_COLOR,
-                "❌"
+        when (device.state) {
+            DeviceConnState.CONNECTED -> {
+                val name = device.deviceName ?: "Moncchichi G1"
+                val glasses = device.glassesBatteryPct?.let { "$it %" } ?: "— %"
+                val case = device.caseBatteryPct?.let { "$it %" } ?: "— %"
+                val firmware = device.firmware ?: "—"
+                val rssi = device.rssi?.let { " • RSSI ${it} dBm" } ?: ""
+                val mac = device.macAddress?.let { " • $it" } ?: ""
+                val label = "🔗 $name – Glasses $glasses  Case $case$rssi$mac • FW $firmware"
+                setChip(deviceCard, deviceText, label, COLOR_DEVICE_ON, COLOR_DEVICE_ON_BG)
+            }
+            DeviceConnState.DISCONNECTED -> setChip(
+                deviceCard,
+                deviceText,
+                label = "🚫 No device connected",
+                textColor = COLOR_DEVICE_OFF,
+                backgroundColor = COLOR_DEVICE_OFF_BG
             )
         }
-        setChipState(deviceCard, deviceText, deviceEmoji, deviceLabel, deviceColor)
     }
 
     private fun createChipView(): MaterialCardView {
@@ -87,16 +101,16 @@ class StatusBarView @JvmOverloads constructor(
         return card
     }
 
-    private fun setChipState(
+    private fun setChip(
         card: MaterialCardView,
         text: TextView,
-        emoji: String,
         label: String,
-        color: Int
+        textColor: Int,
+        backgroundColor: Int
     ) {
-        card.setCardBackgroundColor(ColorStateList.valueOf(applyAlpha(color, 0.1f)))
-        text.setTextColor(color)
-        text.text = "$emoji $label"
+        card.setCardBackgroundColor(ColorStateList.valueOf(backgroundColor))
+        text.setTextColor(textColor)
+        text.text = label
         text.contentDescription = label
     }
 
@@ -105,18 +119,17 @@ class StatusBarView @JvmOverloads constructor(
         return (dp * scale + 0.5f).toInt()
     }
 
-    private fun applyAlpha(color: Int, alpha: Float): Int {
-        val a = (Color.alpha(color) * alpha).toInt()
-        val r = Color.red(color)
-        val g = Color.green(color)
-        val b = Color.blue(color)
-        return Color.argb(a, r, g, b)
-    }
-
     companion object {
-        private val ONLINE_COLOR = Color.parseColor("#4CAF50")
-        private val OFFLINE_COLOR = Color.parseColor("#FFC107")
-        private val ERROR_COLOR = Color.parseColor("#F44336")
-        private val DEVICE_CONNECTED_COLOR = Color.parseColor("#2196F3")
+        private val COLOR_ASSISTANT_ON = Color.parseColor("#9BE37B")
+        private val COLOR_ASSISTANT_ON_BG = Color.parseColor("#1E2A1E")
+        private val COLOR_ASSISTANT_OFF = Color.parseColor("#FFC107")
+        private val COLOR_ASSISTANT_OFF_BG = Color.parseColor("#2A2315")
+        private val COLOR_ASSISTANT_ERROR = Color.parseColor("#FF6B6B")
+        private val COLOR_ASSISTANT_ERROR_BG = Color.parseColor("#2A1E1E")
+
+        private val COLOR_DEVICE_ON = Color.parseColor("#A691F2")
+        private val COLOR_DEVICE_ON_BG = Color.parseColor("#272033")
+        private val COLOR_DEVICE_OFF = Color.parseColor("#FF8A65")
+        private val COLOR_DEVICE_OFF_BG = Color.parseColor("#2E1F1F")
     }
 }

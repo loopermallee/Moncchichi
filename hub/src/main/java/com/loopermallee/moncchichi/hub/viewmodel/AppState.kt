@@ -7,7 +7,10 @@ data class DeviceInfo(
     val id: String? = null,
     val rssi: Int? = null,
     val isConnected: Boolean = false,
-    val battery: Int? = null
+    val glassesBattery: Int? = null,
+    val caseBattery: Int? = null,
+    val firmware: String? = null,
+    val mac: String? = null
 )
 
 data class AssistantPane(
