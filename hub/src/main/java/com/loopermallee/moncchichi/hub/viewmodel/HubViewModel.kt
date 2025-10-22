@@ -16,10 +16,12 @@ import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
 import com.loopermallee.moncchichi.hub.tools.SpeechTool
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -44,6 +46,20 @@ class HubViewModel(
             val recent = memory.lastConsoleLines(100)
             if (recent.isNotEmpty()) {
                 _state.update { it.copy(consoleLines = recent.reversed()) }
+            }
+        }
+        viewModelScope.launch {
+            while (isActive) {
+                delay(30_000)
+                if (state.value.device.isConnected) {
+                    val result = runCatching { ble.send("PING") }
+                    result.onSuccess { resp ->
+                        hubAddLog("[BLE] ❤️ Keepalive → $resp")
+                    }
+                    result.onFailure { err ->
+                        hubAddLog("[ERROR] Keepalive failed: ${err.message ?: "unknown"}")
+                    }
+                }
             }
         }
     }
@@ -159,6 +175,10 @@ class HubViewModel(
             st.copy(consoleLines = newLines)
         }
         viewModelScope.launch { memory.addConsoleLine(stamped) }
+    }
+
+    fun logSystemEvent(message: String) {
+        hubAddLog(message)
     }
 
     private fun updateAssistantResponse(text: String) {
