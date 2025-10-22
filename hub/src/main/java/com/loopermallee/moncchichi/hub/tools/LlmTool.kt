@@ -1,5 +1,12 @@
 package com.loopermallee.moncchichi.hub.tools
 
 interface LlmTool {
-    suspend fun answer(prompt: String): String
+
+    data class Message(val role: Role, val content: String)
+
+    enum class Role { SYSTEM, USER, ASSISTANT }
+
+    data class Reply(val text: String, val isOnline: Boolean)
+
+    suspend fun answer(prompt: String, context: List<Message> = emptyList()): Reply
 }

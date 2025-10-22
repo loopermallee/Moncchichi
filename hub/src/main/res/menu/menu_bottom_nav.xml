@@ -16,4 +16,8 @@
         android:id="@+id/tab_assistant"
         android:title="Assistant"
         android:icon="@android:drawable/ic_btn_speak_now"/>
+    <item
+        android:id="@+id/tab_settings"
+        android:title="Settings"
+        android:icon="@android:drawable/ic_menu_preferences"/>
 </menu>

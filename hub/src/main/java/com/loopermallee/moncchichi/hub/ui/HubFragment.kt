@@ -28,7 +28,9 @@ class HubFragment : Fragment() {
             AppLocator.llm,
             AppLocator.display,
             AppLocator.memory,
-            AppLocator.perms
+            AppLocator.perms,
+            AppLocator.tts,
+            AppLocator.prefs
         )
     }
 

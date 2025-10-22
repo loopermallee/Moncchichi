@@ -1,6 +1,8 @@
 package com.loopermallee.moncchichi.hub.di
 
 import android.content.Context
+import android.content.SharedPreferences
+import androidx.preference.PreferenceManager
 import androidx.room.Room
 import com.loopermallee.moncchichi.hub.data.db.MemoryDb
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
@@ -9,12 +11,14 @@ import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
 import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
+import com.loopermallee.moncchichi.hub.tools.TtsTool
 import com.loopermallee.moncchichi.hub.tools.SpeechTool
 import com.loopermallee.moncchichi.hub.tools.impl.BleToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.DisplayToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.LlmToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.PermissionToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.SpeechToolImpl
+import com.loopermallee.moncchichi.hub.tools.impl.TtsToolImpl
 
 object AppLocator {
     lateinit var memory: MemoryRepository
@@ -31,12 +35,18 @@ object AppLocator {
         private set
     lateinit var perms: PermissionTool
         private set
+    lateinit var tts: TtsTool
+        private set
+    lateinit var prefs: SharedPreferences
+        private set
 
     private var initialized = false
 
     fun init(ctx: Context) {
         if (initialized) return
         val appCtx = ctx.applicationContext
+        prefs = PreferenceManager.getDefaultSharedPreferences(appCtx)
+
         val db = Room.databaseBuilder(appCtx, MemoryDb::class.java, "moncchichi.db")
             .fallbackToDestructiveMigration()
             .build()
@@ -47,6 +57,7 @@ object AppLocator {
         llm = LlmToolImpl(appCtx)
         display = DisplayToolImpl(appCtx)
         perms = PermissionToolImpl(appCtx)
+        tts = TtsToolImpl(appCtx)
         initialized = true
     }
 }
