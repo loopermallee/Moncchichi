@@ -73,6 +73,7 @@ class HubViewModel(
     init {
         val voiceEnabled = prefs.getBoolean(KEY_VOICE_ENABLED, true)
         _state.update { it.copy(assistant = it.assistant.copy(voiceEnabled = voiceEnabled)) }
+        refreshAssistantStatus()
     }
 
     init {
@@ -359,14 +360,41 @@ class HubViewModel(
         }
     }
 
+    fun refreshAssistantStatus(forceOnline: Boolean = false) {
+        val missingKey = prefs.getString("openai_api_key", null).isNullOrBlank()
+        val offline = when {
+            missingKey -> true
+            forceOnline -> false
+            else -> state.value.assistant.isOffline
+        }
+        _state.update {
+            it.copy(
+                assistant = it.assistant.copy(
+                    isOffline = offline
+                )
+            )
+        }
+        updateAssistantStatus(offline, error = null)
+    }
+
     private fun updateAssistantStatus(offline: Boolean, error: String?) {
+        val missingKey = prefs.getString("openai_api_key", null).isNullOrBlank()
         _assistantConn.value = when {
             !error.isNullOrBlank() -> AssistantConnInfo(
                 state = AssistantConnState.ERROR,
                 model = null,
                 reason = error
             )
-            offline -> AssistantConnInfo(AssistantConnState.OFFLINE, model = null)
+            missingKey -> AssistantConnInfo(
+                state = AssistantConnState.OFFLINE,
+                model = null,
+                reason = "Disabled – add API key"
+            )
+            offline -> AssistantConnInfo(
+                state = AssistantConnState.OFFLINE,
+                model = null,
+                reason = "Offline – fallback mode"
+            )
             else -> AssistantConnInfo(
                 state = AssistantConnState.ONLINE,
                 model = prefs.getString("openai_model", ModelCatalog.defaultModel())?.ifBlank { null }
@@ -383,8 +411,8 @@ class HubViewModel(
                 rssi = device.rssi,
                 glassesBatteryPct = device.glassesBattery,
                 caseBatteryPct = device.caseBattery,
-                firmware = device.firmware ?: _deviceConn.value.firmware,
-                macAddress = device.mac ?: _deviceConn.value.macAddress
+                firmware = device.firmware?.takeIf { it.isNotBlank() } ?: _deviceConn.value.firmware,
+                macAddress = device.mac?.takeIf { it.isNotBlank() } ?: _deviceConn.value.macAddress
             )
         } else {
             DeviceConnInfo(DeviceConnState.DISCONNECTED)

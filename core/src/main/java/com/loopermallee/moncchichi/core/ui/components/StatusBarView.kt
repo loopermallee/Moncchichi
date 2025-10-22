@@ -49,13 +49,16 @@ class StatusBarView @JvmOverloads constructor(
                 textColor = COLOR_ASSISTANT_ON,
                 backgroundColor = COLOR_ASSISTANT_ON_BG
             )
-            AssistantConnState.OFFLINE -> setChip(
-                assistantCard,
-                assistantText,
-                label = "⚡ Offline – local mode",
-                textColor = COLOR_ASSISTANT_OFF,
-                backgroundColor = COLOR_ASSISTANT_OFF_BG
-            )
+            AssistantConnState.OFFLINE -> {
+                val message = assistant.reason?.takeIf { it.isNotBlank() } ?: "Offline – local mode"
+                setChip(
+                    assistantCard,
+                    assistantText,
+                    label = "⚡ $message",
+                    textColor = COLOR_ASSISTANT_OFF,
+                    backgroundColor = COLOR_ASSISTANT_OFF_BG
+                )
+            }
             AssistantConnState.ERROR -> {
                 val reason = assistant.reason ?: "check API key or network"
                 setChip(
@@ -70,13 +73,14 @@ class StatusBarView @JvmOverloads constructor(
 
         when (device.state) {
             DeviceConnState.CONNECTED -> {
-                val name = device.deviceName ?: "Moncchichi G1"
-                val glasses = device.glassesBatteryPct?.let { "$it %" } ?: "— %"
-                val case = device.caseBatteryPct?.let { "$it %" } ?: "— %"
-                val firmware = device.firmware ?: "—"
-                val rssi = device.rssi?.let { " • RSSI ${it} dBm" } ?: ""
-                val mac = device.macAddress?.let { " • $it" } ?: ""
-                val label = "🔗 $name – Glasses $glasses  Case $case$rssi$mac • FW $firmware"
+                val segments = mutableListOf<String>()
+                segments += device.deviceName ?: "Moncchichi G1"
+                device.macAddress?.takeIf { it.isNotBlank() }?.let { segments += "MAC $it" }
+                device.rssi?.let { segments += "RSSI ${it} dBm" }
+                device.glassesBatteryPct?.let { segments += "Glasses ${it} %" }
+                device.caseBatteryPct?.let { segments += "Case ${it} %" }
+                device.firmware?.takeIf { it.isNotBlank() }?.let { segments += "FW $it" }
+                val label = "🔗 " + segments.joinToString(separator = " • ")
                 setChip(deviceCard, deviceText, label, COLOR_DEVICE_ON, COLOR_DEVICE_ON_BG)
             }
             DeviceConnState.DISCONNECTED -> setChip(

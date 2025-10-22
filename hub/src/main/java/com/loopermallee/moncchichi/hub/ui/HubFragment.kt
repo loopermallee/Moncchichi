@@ -5,6 +5,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -94,7 +95,11 @@ class HubFragment : Fragment() {
                     val glasses = device.glassesBatteryPct?.let { "$it %" } ?: "— %"
                     val case = device.caseBatteryPct?.let { "$it %" } ?: "— %"
                     deviceBattery.text = "Glasses $glasses • Case $case"
-                    deviceFirmware.text = "Firmware ${device.firmware ?: "—"}"
+                    val firmware = device.firmware?.takeIf { it.isNotBlank() }
+                    deviceFirmware.isVisible = firmware != null
+                    if (firmware != null) {
+                        deviceFirmware.text = "Firmware $firmware"
+                    }
                     deviceMac.text = "MAC ${device.macAddress ?: "—"}"
                     val connected = device.state == DeviceConnState.CONNECTED
                     btnPair.isEnabled = !connected
