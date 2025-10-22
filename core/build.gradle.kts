@@ -50,4 +50,7 @@ dependencies {
     implementation(libs.nordic.ble.ktx)
     implementation(libs.nordic.ble.common)
     implementation(libs.nordic.scanner)
+    implementation(libs.material)
+    implementation(libs.coroutines.android)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

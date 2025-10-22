@@ -6,7 +6,7 @@ interface LlmTool {
 
     enum class Role { SYSTEM, USER, ASSISTANT }
 
-    data class Reply(val text: String, val isOnline: Boolean)
+    data class Reply(val text: String, val isOnline: Boolean, val errorMessage: String? = null)
 
     suspend fun answer(prompt: String, context: List<Message> = emptyList()): Reply
 }

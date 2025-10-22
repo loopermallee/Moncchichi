@@ -3,6 +3,14 @@ package com.loopermallee.moncchichi.hub.viewmodel
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.loopermallee.moncchichi.core.errors.ErrorAction
+import com.loopermallee.moncchichi.core.errors.ErrorResolver
+import com.loopermallee.moncchichi.core.errors.UiError
+import com.loopermallee.moncchichi.core.llm.ModelCatalog
+import com.loopermallee.moncchichi.core.ui.state.AssistantConnInfo
+import com.loopermallee.moncchichi.core.ui.state.AssistantConnState
+import com.loopermallee.moncchichi.core.ui.state.DeviceConnInfo
+import com.loopermallee.moncchichi.core.ui.state.DeviceConnState
 import com.loopermallee.moncchichi.hub.data.db.AssistantMessage
 import com.loopermallee.moncchichi.hub.data.db.AssistantRole
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
@@ -50,6 +58,17 @@ class HubViewModel(
 
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state.asStateFlow()
+
+    private val _assistantConn = MutableStateFlow(
+        AssistantConnInfo(AssistantConnState.OFFLINE, model = null)
+    )
+    val assistantConn: StateFlow<AssistantConnInfo> = _assistantConn.asStateFlow()
+
+    private val _deviceConn = MutableStateFlow(DeviceConnInfo(DeviceConnState.DISCONNECTED))
+    val deviceConn: StateFlow<DeviceConnInfo> = _deviceConn.asStateFlow()
+
+    private val _uiError = MutableStateFlow<UiError?>(null)
+    val uiError: StateFlow<UiError?> = _uiError.asStateFlow()
 
     init {
         val voiceEnabled = prefs.getBoolean(KEY_VOICE_ENABLED, true)
@@ -125,6 +144,7 @@ class HubViewModel(
                     device = it.device.copy(name = d.name, id = d.id, rssi = d.rssi, isConnected = it.device.isConnected)
                 )
             }
+            updateDeviceStatus(state.value.device)
             hubAddLog("[SCAN] ${d.name ?: "Unnamed"} (${d.id}) rssi=${d.rssi}")
             if (!connected) {
                 connected = true
@@ -141,6 +161,7 @@ class HubViewModel(
             val current = it.device
             it.copy(device = current.copy(isConnected = ok, id = deviceId, battery = battery))
         }
+        updateDeviceStatus(state.value.device)
         if (ok) {
             recordAssistantReply("Connected to $deviceId", offline = false, speak = false)
         }
@@ -150,6 +171,7 @@ class HubViewModel(
     private suspend fun disconnectFlow() = hubLog("Disconnecting…") {
         ble.disconnect()
         _state.update { it.copy(device = DeviceInfo()) }
+        updateDeviceStatus(state.value.device)
         recordAssistantReply("Disconnected", offline = false, speak = false)
         hubAddLog("Disconnected")
     }
@@ -182,6 +204,9 @@ class HubViewModel(
                         post(AppEvent.UserSaid(final))
                     }
                 }
+            },
+            onError = { code ->
+                viewModelScope.launch { handleSpeechError(code) }
             }
         )
     }
@@ -207,9 +232,9 @@ class HubViewModel(
     }
 
     private suspend fun routeAndHandle(text: String) {
-        val respond: (String, Boolean, Boolean) -> Unit = { response, offline, speak ->
+        val respond: (String, Boolean, Boolean, String?) -> Unit = { response, offline, speak, error ->
             if (response.isNotBlank()) {
-                recordAssistantReply(response, offline, speak)
+                recordAssistantReply(response, offline, speak, error)
             }
         }
         when (router.route(text)) {
@@ -218,26 +243,26 @@ class HubViewModel(
                 display,
                 memory,
                 state.value.device.isConnected,
-                { respond(it, false, false) },
+                { respond(it, false, false, null) },
                 ::hubAddLog
             )
-            Route.COMMAND_CONTROL -> BleCommandHandler.run(text, ble, display, { respond(it, false, false) }, ::hubAddLog)
-            Route.LIVE_FEED -> LiveFeedHandler.run(ble, display, memory, { respond(it, false, false) }, ::hubAddLog)
-            Route.SUBTITLES -> SubtitleHandler.run(text, display, memory, { respond(it, false, false) }, ::hubAddLog)
+            Route.COMMAND_CONTROL -> BleCommandHandler.run(text, ble, display, { respond(it, false, false, null) }, ::hubAddLog)
+            Route.LIVE_FEED -> LiveFeedHandler.run(ble, display, memory, { respond(it, false, false, null) }, ::hubAddLog)
+            Route.SUBTITLES -> SubtitleHandler.run(text, display, memory, { respond(it, false, false, null) }, ::hubAddLog)
             Route.AI_ASSISTANT -> AiAssistHandler.run(
                 text,
                 buildContext(),
                 llm,
                 display,
-                onAssistant = { reply -> respond(reply.text, !reply.isOnline, true) },
+                onAssistant = { reply -> respond(reply.text, !reply.isOnline, true, reply.errorMessage) },
                 log = ::hubAddLog
             )
-            Route.TRANSIT -> TransitHandler.run(text, display, { respond(it, false, true) }, ::hubAddLog)
-            Route.BLE_DEBUG -> BleDebugHandler.run(text, ble, { respond(it, false, false) }, ::hubAddLog)
+            Route.TRANSIT -> TransitHandler.run(text, display, { respond(it, false, true, null) }, ::hubAddLog)
+            Route.BLE_DEBUG -> BleDebugHandler.run(text, ble, { respond(it, false, false, null) }, ::hubAddLog)
             Route.UNKNOWN -> {
                 val msg = "Not sure. Try 'battery status' or 'turn off right lens'."
                 display.showLines(listOf(msg))
-                respond(msg, false, false)
+                respond(msg, false, false, null)
                 hubAddLog("[Router] UNKNOWN → $text")
             }
         }
@@ -277,10 +302,20 @@ class HubViewModel(
         }
     }
 
-    private fun recordAssistantReply(text: String, offline: Boolean, speak: Boolean) {
+    private fun recordAssistantReply(text: String, offline: Boolean, speak: Boolean, errorMessage: String? = null) {
         appendAssistantMessage(AssistantRole.ASSISTANT, text)
         _state.update {
             it.copy(assistant = it.assistant.copy(isOffline = offline))
+        }
+        updateAssistantStatus(offline, errorMessage)
+        if (errorMessage.isNullOrBlank()) {
+            _uiError.value = null
+        } else {
+            _uiError.value = UiError(
+                title = "Assistant error",
+                detail = errorMessage,
+                action = ErrorAction.NONE
+            )
         }
         if (speak && tts.isReady() && state.value.assistant.voiceEnabled) {
             speakReply(text)
@@ -294,6 +329,73 @@ class HubViewModel(
         viewModelScope.launch {
             delay(duration)
             _state.update { it.copy(assistant = it.assistant.copy(isSpeaking = false)) }
+        }
+    }
+
+    private fun updateAssistantStatus(offline: Boolean, error: String?) {
+        _assistantConn.value = when {
+            !error.isNullOrBlank() -> AssistantConnInfo(
+                state = AssistantConnState.ERROR,
+                model = null,
+                reason = error
+            )
+            offline -> AssistantConnInfo(AssistantConnState.OFFLINE, model = null)
+            else -> AssistantConnInfo(
+                state = AssistantConnState.ONLINE,
+                model = prefs.getString("openai_model", ModelCatalog.defaultModel())?.ifBlank { null }
+                    ?: ModelCatalog.defaultModel()
+            )
+        }
+    }
+
+    private fun updateDeviceStatus(device: DeviceInfo) {
+        _deviceConn.value = if (device.isConnected) {
+            DeviceConnInfo(
+                state = DeviceConnState.CONNECTED,
+                deviceName = device.name ?: device.id,
+                rssi = device.rssi,
+                batteryPct = device.battery,
+                firmware = _deviceConn.value.firmware
+            )
+        } else {
+            DeviceConnInfo(DeviceConnState.DISCONNECTED)
+        }
+    }
+
+    private suspend fun handleSpeechError(code: Int) {
+        val error = ErrorResolver.fromSpeech(code)
+        _state.update {
+            it.copy(assistant = it.assistant.copy(isListening = false, partialTranscript = null))
+        }
+        pushUiError(error, updateAssistant = true)
+        hubAddLog("[Speech] Error $code – ${error.title}")
+    }
+
+    private fun pushUiError(error: UiError, updateAssistant: Boolean) {
+        _uiError.value = error
+        if (updateAssistant) {
+            updateAssistantStatus(offline = true, error = error.title)
+        }
+    }
+
+    fun dismissUiError() {
+        _uiError.value = null
+        if (_assistantConn.value.state == AssistantConnState.ERROR) {
+            updateAssistantStatus(offline = state.value.assistant.isOffline, error = null)
+        }
+    }
+
+    fun retryLastAssistant() {
+        state.value.assistant.lastTranscript?.let { prompt ->
+            post(AppEvent.AssistantAsk(prompt))
+        }
+    }
+
+    fun requestDeviceReconnect() {
+        post(AppEvent.Disconnect)
+        viewModelScope.launch {
+            delay(300)
+            post(AppEvent.StartScan)
         }
     }
 

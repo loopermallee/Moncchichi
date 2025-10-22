@@ -1,32 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:orientation="vertical"
     android:padding="20dp"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <TextView
-        android:id="@+id/label"
-        android:text="Hub Dashboard"
-        android:textStyle="bold"
-        android:textSize="22sp"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"/>
+    <com.loopermallee.moncchichi.core.ui.components.StatusBarView
+        android:id="@+id/status_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
 
-    <TextView
-        android:id="@+id/text_status"
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/card_device"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="Not connected"
-        android:textSize="16sp"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"/>
+        app:cardCornerRadius="12dp"
+        app:cardElevation="2dp">
 
-    <TextView
-        android:id="@+id/text_device"
-        android:layout_marginTop="8dp"
-        android:text="Device: (none)"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"/>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/text_device_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Device: —"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/text_device_rssi"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="RSSI: —" />
+
+            <TextView
+                android:id="@+id/text_device_battery"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Battery: —" />
+
+            <TextView
+                android:id="@+id/text_device_firmware"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Firmware: —" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
     <LinearLayout
         android:orientation="horizontal"
@@ -34,14 +58,14 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_pair"
             android:text="Scan &amp; Pair"
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="wrap_content"/>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_disconnect"
             android:text="Disconnect"
             android:enabled="false"
@@ -51,11 +75,44 @@
             android:layout_height="wrap_content"/>
     </LinearLayout>
 
-    <Button
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/btn_ping"
         android:text="Send Test PING"
         android:enabled="false"
         android:layout_marginTop="12dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
+
+    <TextView
+        android:id="@+id/text_console_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Device Console"
+        android:textStyle="bold"
+        android:textSize="18sp" />
+
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scroll_logs"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="12dp">
+
+        <TextView
+            android:id="@+id/text_logs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="(no logs yet)"
+            android:typeface="monospace" />
+    </androidx.core.widget.NestedScrollView>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/button_copy_logs"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="📋 Copy" />
+
 </LinearLayout>

@@ -4,8 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.util.Log
 import androidx.preference.PreferenceManager
+import android.util.Log
+import com.loopermallee.moncchichi.core.llm.ModelCatalog
 import com.loopermallee.moncchichi.hub.tools.LlmTool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,7 +20,7 @@ import java.net.URL
 
 private const val TAG = "LlmToolImpl"
 private const val OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-private const val DEFAULT_MODEL = "gpt-3.5-turbo"
+private val DEFAULT_MODEL = ModelCatalog.defaultModel()
 
 class LlmToolImpl(private val context: Context) : LlmTool {
 
@@ -28,13 +29,18 @@ class LlmToolImpl(private val context: Context) : LlmTool {
 
     override suspend fun answer(prompt: String, context: List<LlmTool.Message>): LlmTool.Reply {
         val key = prefs.getString("openai_api_key", null)?.takeIf { it.isNotBlank() }
-        if (key.isNullOrBlank() || !isNetworkAvailable()) {
-            return LlmFallback.respond(prompt, context)
+        if (key.isNullOrBlank()) {
+            return LlmFallback.respond(prompt, context).copy(errorMessage = "OpenAI API key missing")
+        }
+        if (!isNetworkAvailable()) {
+            return LlmFallback.respond(prompt, context).copy(errorMessage = "No network connectivity")
         }
 
         return runCatching { queryOpenAi(prompt, context, key) }
             .onFailure { Log.w(TAG, "Falling back to offline reply", it) }
-            .getOrElse { LlmFallback.respond(prompt, context) }
+            .getOrElse { throwable ->
+                LlmFallback.respond(prompt, context).copy(errorMessage = readableError(throwable))
+            }
     }
 
     private suspend fun queryOpenAi(
@@ -99,9 +105,21 @@ class LlmToolImpl(private val context: Context) : LlmTool {
                 .getString("content")
                 .trim()
 
-            LlmTool.Reply(text.ifBlank { prompt }, isOnline = true)
+            LlmTool.Reply(text.ifBlank { prompt }, isOnline = true, errorMessage = null)
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun readableError(error: Throwable): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("401") -> "Invalid API key"
+            message.contains("429") -> "Rate limit reached"
+            message.contains("403") -> "API access forbidden"
+            error is java.net.SocketTimeoutException -> "Request timed out"
+            error is java.net.UnknownHostException -> "No network connectivity"
+            else -> "Assistant request failed"
         }
     }
 

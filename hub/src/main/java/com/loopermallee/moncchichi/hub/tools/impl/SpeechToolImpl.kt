@@ -17,6 +17,7 @@ class SpeechToolImpl(context: Context) : SpeechTool {
     private val recognizer = SpeechRecognizer.createSpeechRecognizer(appContext)
     private var partialCallback: ((String) -> Unit)? = null
     private var finalCallback: ((String) -> Unit)? = null
+    private var errorCallback: ((Int) -> Unit)? = null
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
@@ -32,7 +33,7 @@ class SpeechToolImpl(context: Context) : SpeechTool {
         override fun onEndOfSpeech() {}
 
         override fun onError(error: Int) {
-            finalCallback?.invoke("Speech error: $error")
+            errorCallback?.invoke(error)
         }
 
         override fun onResults(results: Bundle) {
@@ -58,13 +59,18 @@ class SpeechToolImpl(context: Context) : SpeechTool {
         recognizer.setRecognitionListener(listener)
     }
 
-    override suspend fun startListening(onPartial: (String) -> Unit, onFinal: (String) -> Unit) {
+    override suspend fun startListening(
+        onPartial: (String) -> Unit,
+        onFinal: (String) -> Unit,
+        onError: (Int) -> Unit
+    ) {
         if (!SpeechRecognizer.isRecognitionAvailable(appContext)) {
             onFinal("Speech recognition unavailable")
             return
         }
         partialCallback = onPartial
         finalCallback = onFinal
+        errorCallback = onError
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
