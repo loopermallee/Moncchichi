@@ -1,6 +1,6 @@
 🧩 Moncchichi BLE Hub
 
-Total Progress: 🟩 ~100 % complete 🔺 (auto-updated 2025-10-22 13:33 SGT)
+Total Progress: 🟩 ~100 % complete ➖ (auto-updated 2025-10-22 14:19 SGT)
 
 ⸻
 
@@ -37,7 +37,7 @@ Diagnostics & Persistence	2025-10-21	🟢 Room DB logging + live console feed ve
 UX / Permissions	2025-10-22	🟢 Assistant tab redesign + settings hub added	97 %	🔺 +2 %
 Smart Mobility (ArriveLah)	2025-10-22	🟡 Transit handler stubbed, API wiring next	10 %	🔺 +10 %
 
-Total Progress: 🟩 ~100 % complete 🔺 (auto-updated 2025-10-22 13:33 SGT)
+Total Progress: 🟩 ~100 % complete ➖ (auto-updated 2025-10-22 14:19 SGT)
 
 Highlights:
 • Assistant Brain now speaks & listens: LLM online calls with offline fallback, speech recognition, and TTS loop.
@@ -142,5 +142,5 @@ Auto-maintained by Codex on each merge.
 	•	Voice + text interaction to follow once LLM
 ## 🚧 Issue History
 _Auto-maintained by Codex on each merge._
-- 2025-10-22 13:33 SGT — PR #125: **Add network permissions and update hub status UX** · delta `+2%` · tag `fix`
+- 2025-10-22 14:19 SGT — PR #126: **Phase 3 cleanup remove placeholder telemetry** · delta `+0%` · tag `refactor`
 
