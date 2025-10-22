@@ -27,55 +27,69 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
-            app:hintEnabled="true"
-            app:hintAnimationEnabled="true">
+            app:hintAnimationEnabled="true"
+            app:hintEnabled="true">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/input_api_key"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="OpenAI API Key"
-                android:inputType="textPassword" />
+                android:gravity="center_horizontal"
+                android:hint="OpenAI API key"
+                android:inputType="textPassword"
+                android:textAlignment="center" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
+            android:hint="Model"
+            app:boxBackgroundColor="?attr/colorSurface"
+            app:boxBackgroundMode="filled"
+            app:boxCornerRadiusBottomEnd="8dp"
+            app:boxCornerRadiusBottomStart="8dp"
+            app:boxCornerRadiusTopEnd="8dp"
+            app:boxCornerRadiusTopStart="8dp"
             app:endIconMode="dropdown_menu">
 
             <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                android:id="@+id/input_model"
+                android:id="@+id/modelDropdown"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Model"
+                android:ellipsize="end"
+                android:focusable="false"
+                android:gravity="center_horizontal"
                 android:inputType="none"
-                android:focusable="false" />
+                android:textAlignment="center" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <TextView
             android:id="@+id/text_temperature_value"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
+            android:gravity="center"
             android:text="Temperature: 0.5"
             android:textAppearance="@style/TextAppearance.MaterialComponents.Body1" />
 
         <com.google.android.material.slider.Slider
-            android:id="@+id/slider_temperature"
+            android:id="@+id/temperatureSlider"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:valueFrom="0"
-            android:valueTo="1"
-            android:stepSize="0.1"
+            android:value="0.5"
+            android:valueFrom="0.0"
+            android:valueTo="1.0"
             app:labelBehavior="gone" />
 
         <TextView
             android:id="@+id/text_temperature_hint"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center"
             android:text="Lower = precise • Higher = creative"
-            android:textAppearance="@style/TextAppearance.MaterialComponents.Caption" />
+            android:textColor="?android:textColorSecondary" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/button_save"

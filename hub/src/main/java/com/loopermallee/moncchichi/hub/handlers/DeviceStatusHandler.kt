@@ -13,10 +13,14 @@ object DeviceStatusHandler {
         onAssistant: (String) -> Unit,
         log: (String) -> Unit
     ) {
-        val batt = ble.battery()
+        val glasses = ble.battery()
+        val case = ble.caseBattery()
+        val firmware = ble.firmware()
         val lines = listOf(
             "Device Status",
-            "Battery: ${batt ?: "unknown"}%",
+            "Glasses: ${glasses ?: "unknown"}%",
+            "Case: ${case ?: "unknown"}%",
+            "Firmware: ${firmware ?: "unknown"}",
             "Connected: ${if (isConnected) "yes" else "no"}"
         )
         val summary = lines.joinToString(" | ")

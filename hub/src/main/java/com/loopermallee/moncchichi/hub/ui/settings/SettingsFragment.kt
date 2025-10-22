@@ -6,7 +6,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.TextView
-import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -30,13 +29,10 @@ import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 
 class SettingsFragment : Fragment() {
 
     private val prefs by lazy { AppLocator.prefs }
-
-    private val apiKeyValidator by lazy { ApiKeyValidator(OkHttpClient()) }
 
     private val vm: HubViewModel by activityViewModels {
         HubVmFactory(
@@ -63,9 +59,9 @@ class SettingsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         val statusBar = view.findViewById<StatusBarView>(R.id.status_bar)
         val apiKeyInput = view.findViewById<TextInputEditText>(R.id.input_api_key)
-        val modelInput = view.findViewById<MaterialAutoCompleteTextView>(R.id.input_model)
+        val modelInput = view.findViewById<MaterialAutoCompleteTextView>(R.id.modelDropdown)
         val temperatureLabel = view.findViewById<TextView>(R.id.text_temperature_value)
-        val temperatureSlider = view.findViewById<Slider>(R.id.slider_temperature)
+        val temperatureSlider = view.findViewById<Slider>(R.id.temperatureSlider)
         val saveButton = view.findViewById<MaterialButton>(R.id.button_save)
         val resetButton = view.findViewById<MaterialButton>(R.id.button_reset)
         val voiceSwitch = view.findViewById<SwitchMaterial>(R.id.switch_voice)
@@ -84,9 +80,12 @@ class SettingsFragment : Fragment() {
 
         val initialTemp = prefs.getString("openai_temperature", null)?.toFloatOrNull() ?: 0.5f
         temperatureSlider.value = initialTemp
-        temperatureLabel.text = "Temperature: %.1f".format(initialTemp)
+        temperatureLabel.text = formatTemperature(initialTemp)
+        val temperatureHint = view.findViewById<TextView>(R.id.text_temperature_hint)
+        temperatureHint.text = describeTemp(initialTemp)
         temperatureSlider.addOnChangeListener { _, value, _ ->
-            temperatureLabel.text = "Temperature: %.1f".format(value)
+            temperatureLabel.text = formatTemperature(value)
+            temperatureHint.text = describeTemp(value)
         }
         voiceSwitch.isChecked = prefs.getBoolean("assistant_voice_enabled", true)
 
@@ -95,13 +94,13 @@ class SettingsFragment : Fragment() {
                 val key = apiKeyInput.text?.toString()?.trim().orEmpty()
                 val temperature = temperatureSlider.value
                 if (key.isBlank()) {
-                    Toast.makeText(requireContext(), "Invalid API Key – please check", Toast.LENGTH_SHORT).show()
+                    showToast("Invalid API key – please check")
                     return@launch
                 }
                 saveButton.isEnabled = false
-                val valid = apiKeyValidator.validate(key)
+                val (valid, reason) = ApiKeyValidator.validate(key)
                 if (!valid) {
-                    Toast.makeText(requireContext(), "Invalid API Key – please check", Toast.LENGTH_SHORT).show()
+                    showToast(reason ?: "Validation failed ⚠️")
                     saveButton.isEnabled = true
                     return@launch
                 }
@@ -110,7 +109,7 @@ class SettingsFragment : Fragment() {
                     .putString("openai_model", selectedModel)
                     .putString("openai_temperature", temperature.toString())
                     .apply()
-                Toast.makeText(requireContext(), "API key validated • Settings saved", Toast.LENGTH_SHORT).show()
+                showToast("API key valid ✅")
                 vm.logSystemEvent("[Settings] LLM configuration updated")
                 saveButton.isEnabled = true
             }
@@ -121,12 +120,13 @@ class SettingsFragment : Fragment() {
             selectedModel = defaultModel
             modelInput.setText(defaultModel, false)
             temperatureSlider.value = 0.5f
-            temperatureLabel.text = "Temperature: 0.5"
+            temperatureLabel.text = formatTemperature(0.5f)
+            temperatureHint.text = describeTemp(0.5f)
             prefs.edit()
                 .putString("openai_model", defaultModel)
                 .putString("openai_temperature", 0.5f.toString())
                 .apply()
-            Toast.makeText(requireContext(), "Defaults restored", Toast.LENGTH_SHORT).show()
+            showToast("Defaults restored")
         }
 
         voiceSwitch.setOnCheckedChangeListener { _, isChecked ->
@@ -162,5 +162,19 @@ class SettingsFragment : Fragment() {
                 }
             }
         }
+    }
+
+    private fun formatTemperature(value: Float): String = "Temperature: %.1f".format(value)
+
+    private fun describeTemp(v: Float): String = when {
+        v <= 0.2f -> "Very precise, deterministic replies"
+        v <= 0.5f -> "Balanced and pragmatic"
+        v <= 0.8f -> "More exploratory and varied"
+        else -> "Highly creative and unpredictable"
+    }
+
+    private fun showToast(message: String) {
+        if (!isAdded) return
+        android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT).show()
     }
 }

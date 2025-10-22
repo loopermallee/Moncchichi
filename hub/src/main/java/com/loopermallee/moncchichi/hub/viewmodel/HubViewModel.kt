@@ -141,7 +141,13 @@ class HubViewModel(
         ble.scanDevices { d ->
             _state.update {
                 it.copy(
-                    device = it.device.copy(name = d.name, id = d.id, rssi = d.rssi, isConnected = it.device.isConnected)
+                    device = it.device.copy(
+                        name = d.name,
+                        id = d.id,
+                        rssi = d.rssi,
+                        isConnected = it.device.isConnected,
+                        mac = d.id
+                    )
                 )
             }
             updateDeviceStatus(state.value.device)
@@ -156,16 +162,37 @@ class HubViewModel(
 
     private suspend fun connectFlow(deviceId: String) = hubLog("Connecting…") {
         val ok = ble.connect(deviceId)
-        val battery = if (ok) ble.battery() else null
-        _state.update {
-            val current = it.device
-            it.copy(device = current.copy(isConnected = ok, id = deviceId, battery = battery))
+        val glassesBattery = if (ok) ble.battery() else null
+        val caseBattery = if (ok) ble.caseBattery() else null
+        val firmware = if (ok) ble.firmware() else null
+        val mac = if (ok) ble.macAddress() else null
+        _state.update { st ->
+            val current = st.device
+            st.copy(
+                device = current.copy(
+                    isConnected = ok,
+                    id = deviceId,
+                    glassesBattery = glassesBattery,
+                    caseBattery = caseBattery,
+                    firmware = firmware ?: current.firmware,
+                    mac = mac ?: current.mac
+                )
+            )
         }
         updateDeviceStatus(state.value.device)
         if (ok) {
-            recordAssistantReply("Connected to $deviceId", offline = false, speak = false)
+            val label = buildString {
+                append("Connected to ${state.value.device.name ?: deviceId}")
+                val addr = state.value.device.mac ?: mac
+                if (!addr.isNullOrBlank()) {
+                    append(" ($addr)")
+                }
+            }
+            recordAssistantReply(label, offline = false, speak = false)
+            hubAddLog(label)
+        } else {
+            hubAddLog("Connection failed")
         }
-        hubAddLog(if (ok) "Connected to $deviceId" else "Connection failed")
     }
 
     private suspend fun disconnectFlow() = hubLog("Disconnecting…") {
@@ -354,12 +381,33 @@ class HubViewModel(
                 state = DeviceConnState.CONNECTED,
                 deviceName = device.name ?: device.id,
                 rssi = device.rssi,
-                batteryPct = device.battery,
-                firmware = _deviceConn.value.firmware
+                glassesBatteryPct = device.glassesBattery,
+                caseBatteryPct = device.caseBattery,
+                firmware = device.firmware ?: _deviceConn.value.firmware,
+                macAddress = device.mac ?: _deviceConn.value.macAddress
             )
         } else {
             DeviceConnInfo(DeviceConnState.DISCONNECTED)
         }
+    }
+
+    fun handleBluetoothOff() {
+        _state.update { st ->
+            val current = st.device
+            st.copy(
+                device = current.copy(
+                    isConnected = false,
+                    glassesBattery = null,
+                    caseBattery = null
+                )
+            )
+        }
+        updateDeviceStatus(state.value.device)
+        hubAddLog("[BLE] Bluetooth off – keepalive paused")
+    }
+
+    fun handleBluetoothOn() {
+        hubAddLog("[BLE] Bluetooth on – awaiting device connection")
     }
 
     private suspend fun handleSpeechError(code: Int) {

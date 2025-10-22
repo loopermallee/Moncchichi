@@ -38,4 +38,16 @@ class BleToolImpl(@Suppress("UNUSED_PARAMETER") context: Context) : BleTool {
     override suspend fun battery(): Int? {
         return if (connectedId != null) 87 else null
     }
+
+    override suspend fun caseBattery(): Int? {
+        return if (connectedId != null) 62 else null
+    }
+
+    override suspend fun firmware(): String? {
+        return if (connectedId != null) "v1.2.0" else null
+    }
+
+    override suspend fun macAddress(): String? {
+        return connectedId?.uppercase()
+    }
 }

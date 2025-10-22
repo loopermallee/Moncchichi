@@ -9,4 +9,7 @@ interface BleTool {
     suspend fun disconnect()
     suspend fun send(command: String): String
     suspend fun battery(): Int?
+    suspend fun caseBattery(): Int?
+    suspend fun firmware(): String?
+    suspend fun macAddress(): String?
 }
