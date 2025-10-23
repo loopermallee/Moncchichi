@@ -1,11 +1,3 @@
-Excellent — below is the finalized, ready-to-paste Context Engineering update that integrates everything you, ChatGPT, and Codex have established so far.
-
-This version keeps your existing structure but now adds a dedicated “Codex Implementation Guidelines” section explaining exactly how to write prompts and context so Codex can act intelligently across different situations.
-It merges the logic of your Phase 3.9.4 goals with Codex’s feedback principles.
-
-⸻
-
-
 # 🧠 Moncchichi Hub — Context Engineering Document  
 *(Shared operational memory between ChatGPT, Codex, and the user)*  
 
