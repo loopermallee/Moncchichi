@@ -15,16 +15,16 @@ It merges:
 
 | # | Milestone | Status | Summary |
 |---|------------|--------|---------|
-| 1 | **Reconnection Flow** | `HubViewModel.kt` | Add online-recovery logic that posts “I’m back online ✅”, replay up to 10 queued prompts. |
-| 2 | **Thinking Indicator** | `AssistantFragment.kt` | Animated dots “• •• •••” loop while `assistant.isThinking == true`. |
-| 3 | **Offline Diagnostics** | `OfflineAssistant.kt` | Add compact summary + contextual responses using `ConsoleInterpreter.quickSummary()`. Skip repeating “offline” for direct topics (battery, status, general). |
-| 4 | **Console Controls** | `ConsoleFragment.kt` / `Memory.kt` | Add “Clear Console” button, link to `MemoryRepository.clearConsole()`. |
-| 5 | **UI Formatting** | `AssistantFragment.kt` | Add “You:” / “Assistant:” labels with icons (🟢 ChatGPT / ⚡ Offline / 🟣 Device). |
-| 6 | **Color Theme** | `AssistantFragment.kt` + XML | Apply Even Realities palette:<br>• User: #5AFFC6<br>• Assistant: #2A2335<br>• Accent: #A691F2 |
-| 7 | **Voice Removal** | `SpeechTool.kt`, `SpeechToolImpl.kt`, `AppLocator.kt`, manifests | Remove voice input classes and RECORD_AUDIO permission. |
-| 8 | **Temperature Hint Behavior** | `SettingsFragment.kt` | Default message shown on reset; updates dynamically on slider change. |
-| 9 | **Offline Queue Limit** | `HubViewModel.kt` | Queue auto-trim to max 10 prompts, FIFO. |
-| 10 | **Java 17 Toolchain Handling** | — | If missing, skip assembleDebug, perform lint validation. |
+| 1 | Reconnection replay + “I’m back online ✅” sequence | ✅ Implemented / 🟡 Pending user confirmation | Verify auto-replay of ≤ 10 prompts |
+| 2 | Offline diagnostics + compact summary | ✅ Implemented / 🟡 Pending user confirmation | Confirm icon summary + context-aware tips |
+| 3 | Console “Clear + Copy” controls | ✅ Implemented / 🟡 Pending user confirmation | Functional buttons + visual feedback |
+| 4 | Assistant “thinking…” animation | ✅ Implemented / 🟡 Pending user confirmation | 300 ms dot cycle |
+| 5 | UI headers with labels and icons | ✅ Implemented / 🟡 Pending user confirmation | “You:” / “Assistant 🟢 ChatGPT” |
+| 6 | Temperature slider reset behavior | ✅ Working | Shows default hint on reset |
+| 7 | Color palette application | ✅ Partial (offlineCard pending) | Switch amber to Even Realities tokens |
+| 8 | Voice permission removal (scope-wide) | 🟡 Hub done; check core/subtitles | Remove RECORD_AUDIO if found |
+| 9 | Build tool fallback rules | 🟢 Defined | Lint allowed if Java 17 missing |
+| 10 | Progress Notes logging | 🟢 Required per commit | Append at bottom of this file |
 
 ## 🧩 Phase History (Chronological Overview)
 | Major Phase | Highlights | Status |
