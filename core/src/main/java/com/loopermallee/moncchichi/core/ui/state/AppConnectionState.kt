@@ -1,6 +1,6 @@
 package com.loopermallee.moncchichi.core.ui.state
 
-enum class AssistantConnState { ONLINE, OFFLINE, ERROR }
+enum class AssistantConnState { ONLINE, OFFLINE, FALLBACK, ERROR }
 
 enum class DeviceConnState { CONNECTED, DISCONNECTED }
 

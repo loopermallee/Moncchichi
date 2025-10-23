@@ -130,7 +130,8 @@ class AssistantFragment : Fragment() {
                     assistant to device
                 }.collectLatest { (assistant, device) ->
                     statusBar.render(assistant, device)
-                    offlineCard.isVisible = assistant.state == AssistantConnState.OFFLINE
+                    offlineCard.isVisible =
+                        assistant.state == AssistantConnState.OFFLINE || assistant.state == AssistantConnState.FALLBACK
                 }
             }
         }
@@ -194,9 +195,19 @@ class AssistantFragment : Fragment() {
         val horizontal = resources.getDimensionPixelSize(R.dimen.assistant_spacing)
         val vertical = horizontal / 2
 
+        val assistantState = vm.assistantConn.value.state
         history.forEach { entry ->
+            val prefix = if (
+                entry.source == MessageSource.ASSISTANT &&
+                assistantState != AssistantConnState.ONLINE &&
+                entry.text.trimStart().startsWith("🛑").not()
+            ) {
+                "🛑 "
+            } else {
+                ""
+            }
             val bubble = TextView(requireContext()).apply {
-                text = entry.text
+                text = prefix + entry.text
                 background = createBubble(entry.source == MessageSource.USER)
                 setPadding(horizontal, vertical, horizontal, vertical)
                 setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
