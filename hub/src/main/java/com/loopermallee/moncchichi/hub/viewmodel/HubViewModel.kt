@@ -12,6 +12,7 @@ import com.loopermallee.moncchichi.core.ui.state.AssistantConnState
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnInfo
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnState
 import com.loopermallee.moncchichi.core.model.ChatMessage
+import com.loopermallee.moncchichi.core.model.MessageOrigin
 import com.loopermallee.moncchichi.core.model.MessageSource
 import com.loopermallee.moncchichi.hub.assistant.OfflineAssistant
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
@@ -303,19 +304,18 @@ class HubViewModel(
         text: String,
         persist: Boolean = true,
         forceOfflinePrefix: Boolean = false,
+        origin: MessageOrigin = MessageOrigin.LLM,
     ) {
         val adjustedText = if (
             source == MessageSource.ASSISTANT &&
-            (forceOfflinePrefix ||
-                _assistantConn.value.state == AssistantConnState.OFFLINE ||
-                _assistantConn.value.state == AssistantConnState.FALLBACK) &&
+            (forceOfflinePrefix || _assistantConn.value.state != AssistantConnState.ONLINE) &&
             text.trimStart().startsWith("🛑").not()
         ) {
             "🛑 $text"
         } else {
             text
         }
-        val message = ChatMessage(adjustedText, source, System.currentTimeMillis())
+        val message = ChatMessage(adjustedText, source, System.currentTimeMillis(), origin)
         _state.update { st ->
             val history = (st.assistant.history + message).takeLast(MAX_HISTORY)
             val assistantPane = st.assistant.copy(
@@ -331,20 +331,30 @@ class HubViewModel(
     }
 
     private fun recordAssistantReply(text: String, offline: Boolean, speak: Boolean, errorMessage: String? = null) {
-        appendChatMessage(MessageSource.ASSISTANT, text, forceOfflinePrefix = offline)
+        val origin = when {
+            offline -> MessageOrigin.OFFLINE
+            text.contains("[Status]") || text.contains("Battery", ignoreCase = true) -> MessageOrigin.DEVICE
+            else -> MessageOrigin.LLM
+        }
+
+        appendChatMessage(
+            MessageSource.ASSISTANT,
+            text,
+            forceOfflinePrefix = offline,
+            origin = origin,
+        )
+
         _state.update {
             it.copy(assistant = it.assistant.copy(isOffline = offline))
         }
         updateAssistantStatus(offline, errorMessage)
-        if (errorMessage.isNullOrBlank()) {
-            _uiError.value = null
+
+        if (!errorMessage.isNullOrBlank()) {
+            _uiError.value = UiError("Assistant error", errorMessage, ErrorAction.NONE)
         } else {
-            _uiError.value = UiError(
-                title = "Assistant error",
-                detail = errorMessage,
-                action = ErrorAction.NONE
-            )
+            _uiError.value = null
         }
+
         if (speak && tts.isReady() && state.value.assistant.voiceEnabled) {
             speakReply(text)
         }
@@ -411,7 +421,11 @@ class HubViewModel(
         ) {
             viewModelScope.launch {
                 val report = OfflineAssistant.generateDiagnostic(memory, state.value)
-                appendChatMessage(MessageSource.ASSISTANT, report)
+                appendChatMessage(
+                    MessageSource.ASSISTANT,
+                    report,
+                    origin = MessageOrigin.OFFLINE,
+                )
             }
         }
     }

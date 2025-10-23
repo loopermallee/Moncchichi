@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.hub.ui.assistant
 
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -29,6 +30,7 @@ import com.loopermallee.moncchichi.core.ui.state.AssistantConnState
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnInfo
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.core.model.ChatMessage
+import com.loopermallee.moncchichi.core.model.MessageOrigin
 import com.loopermallee.moncchichi.core.model.MessageSource
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
@@ -195,19 +197,27 @@ class AssistantFragment : Fragment() {
         val horizontal = resources.getDimensionPixelSize(R.dimen.assistant_spacing)
         val vertical = horizontal / 2
 
-        val assistantState = vm.assistantConn.value.state
         history.forEach { entry ->
-            val prefix = if (
-                entry.source == MessageSource.ASSISTANT &&
-                assistantState != AssistantConnState.ONLINE &&
-                entry.text.trimStart().startsWith("🛑").not()
-            ) {
-                "🛑 "
-            } else {
-                ""
+            val headerText = when (entry.source) {
+                MessageSource.USER -> "You"
+                MessageSource.ASSISTANT -> when (entry.origin) {
+                    MessageOrigin.LLM -> "Assistant 🟢 (ChatGPT)"
+                    MessageOrigin.OFFLINE -> "Assistant ⚡ (Offline)"
+                    MessageOrigin.DEVICE -> "Assistant 🟣 (Device Only) 🛠"
+                }
+                else -> entry.source.name
             }
+
+            val header = TextView(requireContext()).apply {
+                text = headerText
+                setTextColor(Color.parseColor("#A691F2"))
+                textSize = 12f
+                setPadding(horizontal, vertical / 2, horizontal, 0)
+            }
+            messageContainer.addView(header)
+
             val bubble = TextView(requireContext()).apply {
-                text = prefix + entry.text
+                text = entry.text
                 background = createBubble(entry.source == MessageSource.USER)
                 setPadding(horizontal, vertical, horizontal, vertical)
                 setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
@@ -226,11 +236,11 @@ class AssistantFragment : Fragment() {
     }
 
     private fun createBubble(isUser: Boolean): GradientDrawable {
-        val colorRes = if (isUser) android.R.color.holo_blue_dark else android.R.color.darker_gray
+        val color = if (isUser) Color.parseColor("#66FFB2") else Color.parseColor("#2A2335")
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = resources.getDimension(R.dimen.assistant_bubble_radius)
-            setColor(ContextCompat.getColor(requireContext(), colorRes))
+            setColor(color)
         }
     }
 }
