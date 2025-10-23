@@ -15,6 +15,16 @@ It merges:
 
 | # | Milestone | Status | Summary |
 |---|------------|--------|---------|
+| 1 | **Reconnection Flow** | `HubViewModel.kt` | Add online-recovery logic that posts “I’m back online ✅”, replay up to 10 queued prompts. |
+| 2 | **Thinking Indicator** | `AssistantFragment.kt` | Animated dots “• •• •••” loop while `assistant.isThinking == true`. |
+| 3 | **Offline Diagnostics** | `OfflineAssistant.kt` | Add compact summary + contextual responses using `ConsoleInterpreter.quickSummary()`. Skip repeating “offline” for direct topics (battery, status, general). |
+| 4 | **Console Controls** | `ConsoleFragment.kt` / `Memory.kt` | Add “Clear Console” button, link to `MemoryRepository.clearConsole()`. |
+| 5 | **UI Formatting** | `AssistantFragment.kt` | Add “You:” / “Assistant:” labels with icons (🟢 ChatGPT / ⚡ Offline / 🟣 Device). |
+| 6 | **Color Theme** | `AssistantFragment.kt` + XML | Apply Even Realities palette:<br>• User: #5AFFC6<br>• Assistant: #2A2335<br>• Accent: #A691F2 |
+| 7 | **Voice Removal** | `SpeechTool.kt`, `SpeechToolImpl.kt`, `AppLocator.kt`, manifests | Remove voice input classes and RECORD_AUDIO permission. |
+| 8 | **Temperature Hint Behavior** | `SettingsFragment.kt` | Default message shown on reset; updates dynamically on slider change. |
+| 9 | **Offline Queue Limit** | `HubViewModel.kt` | Queue auto-trim to max 10 prompts, FIFO. |
+| 10 | **Java 17 Toolchain Handling** | — | If missing, skip assembleDebug, perform lint validation. |
 
 ## 🧩 Phase History (Chronological Overview)
 | Major Phase | Highlights | Status |
