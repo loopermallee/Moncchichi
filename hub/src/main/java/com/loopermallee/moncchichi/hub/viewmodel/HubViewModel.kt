@@ -250,10 +250,11 @@ class HubViewModel(
     }
 
     private suspend fun routeAndHandle(text: String) {
-        val respond: (String, Boolean, Boolean, String?, Boolean) -> Unit =
-            { response, offline, speak, error, fromDiagnostics ->
+        // Use the stable 4-parameter responder to maintain compatibility with existing handlers.
+        val respond: (String, Boolean, Boolean, String?) -> Unit =
+            { response, offline, speak, error ->
                 if (response.isNotBlank()) {
-                    recordAssistantReply(response, offline, speak, error, fromDiagnostics)
+                    recordAssistantReply(response, offline, speak, error)
                 }
             }
         when (router.route(text)) {
@@ -262,12 +263,12 @@ class HubViewModel(
                 display,
                 memory,
                 state.value.device.isConnected,
-                { respond(it, false, false, null, false) },
+                { respond(it, false, false, null) },
                 ::hubAddLog
             )
-            Route.COMMAND_CONTROL -> BleCommandHandler.run(text, ble, display, { respond(it, false, false, null, false) }, ::hubAddLog)
-            Route.LIVE_FEED -> LiveFeedHandler.run(ble, display, memory, { respond(it, false, false, null, false) }, ::hubAddLog)
-            Route.SUBTITLES -> SubtitleHandler.run(text, display, memory, { respond(it, false, false, null, false) }, ::hubAddLog)
+            Route.COMMAND_CONTROL -> BleCommandHandler.run(text, ble, display, { respond(it, false, false, null) }, ::hubAddLog)
+            Route.LIVE_FEED -> LiveFeedHandler.run(ble, display, memory, { respond(it, false, false, null) }, ::hubAddLog)
+            Route.SUBTITLES -> SubtitleHandler.run(text, display, memory, { respond(it, false, false, null) }, ::hubAddLog)
             Route.AI_ASSISTANT -> AiAssistHandler.run(
                 text,
                 buildContext(),
@@ -275,7 +276,7 @@ class HubViewModel(
                 display,
                 onAssistant = { reply ->
                     if (reply.isOnline) {
-                        respond(reply.text, false, true, reply.errorMessage, false)
+                        respond(reply.text, false, true, reply.errorMessage)
                     } else {
                         enqueueOfflinePrompt(text)
                         viewModelScope.launch {
@@ -285,18 +286,18 @@ class HubViewModel(
                                 diagnostics = diagnostics,
                                 pendingQueries = offlineQueue.size,
                             )
-                            respond(diagnostic, true, speak = true, error = reply.errorMessage, fromDiagnostics = true)
+                            respond(diagnostic, true, speak = true, error = reply.errorMessage)
                         }
                     }
                 },
                 log = ::hubAddLog
             )
-            Route.TRANSIT -> TransitHandler.run(text, display, { respond(it, false, true, null, false) }, ::hubAddLog)
-            Route.BLE_DEBUG -> BleDebugHandler.run(text, ble, { respond(it, false, false, null, false) }, ::hubAddLog)
+            Route.TRANSIT -> TransitHandler.run(text, display, { respond(it, false, true, null) }, ::hubAddLog)
+            Route.BLE_DEBUG -> BleDebugHandler.run(text, ble, { respond(it, false, false, null) }, ::hubAddLog)
             Route.UNKNOWN -> {
                 val msg = "Not sure. Try 'battery status' or 'turn off right lens'."
                 display.showLines(listOf(msg))
-                respond(msg, false, false, null, false)
+                respond(msg, false, false, null)
                 hubAddLog("[Router] UNKNOWN → $text")
             }
         }
@@ -363,7 +364,6 @@ class HubViewModel(
         offline: Boolean,
         speak: Boolean,
         errorMessage: String? = null,
-        fromDiagnostics: Boolean = false,
     ) {
         val origin = when {
             offline -> MessageOrigin.OFFLINE
@@ -381,7 +381,7 @@ class HubViewModel(
         _state.update {
             it.copy(assistant = it.assistant.copy(isOffline = offline))
         }
-        updateAssistantStatus(offline, errorMessage, autoReport = !fromDiagnostics)
+        updateAssistantStatus(offline, errorMessage)
 
         if (!errorMessage.isNullOrBlank()) {
             _uiError.value = UiError("Assistant error", errorMessage, ErrorAction.NONE)

@@ -43,10 +43,10 @@ class SettingsFragment : Fragment() {
             AppLocator.llm,
             AppLocator.display,
             AppLocator.memory,
+            AppLocator.diagnostics,
             AppLocator.perms,
             AppLocator.tts,
             AppLocator.prefs,
-            AppLocator.diagnostics,
         )
     }
 
