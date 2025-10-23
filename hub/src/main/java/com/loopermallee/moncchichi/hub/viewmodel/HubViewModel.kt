@@ -13,6 +13,7 @@ import com.loopermallee.moncchichi.core.ui.state.DeviceConnInfo
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnState
 import com.loopermallee.moncchichi.core.model.ChatMessage
 import com.loopermallee.moncchichi.core.model.MessageSource
+import com.loopermallee.moncchichi.hub.assistant.OfflineAssistant
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.handlers.AiAssistHandler
 import com.loopermallee.moncchichi.hub.handlers.BleCommandHandler
@@ -297,24 +298,40 @@ class HubViewModel(
         hubAddLog(message)
     }
 
-    private fun appendChatMessage(source: MessageSource, text: String, persist: Boolean = true) {
-        val message = ChatMessage(text, source, System.currentTimeMillis())
+    private fun appendChatMessage(
+        source: MessageSource,
+        text: String,
+        persist: Boolean = true,
+        forceOfflinePrefix: Boolean = false,
+    ) {
+        val adjustedText = if (
+            source == MessageSource.ASSISTANT &&
+            (forceOfflinePrefix ||
+                _assistantConn.value.state == AssistantConnState.OFFLINE ||
+                _assistantConn.value.state == AssistantConnState.FALLBACK) &&
+            text.trimStart().startsWith("🛑").not()
+        ) {
+            "🛑 $text"
+        } else {
+            text
+        }
+        val message = ChatMessage(adjustedText, source, System.currentTimeMillis())
         _state.update { st ->
             val history = (st.assistant.history + message).takeLast(MAX_HISTORY)
             val assistantPane = st.assistant.copy(
                 history = history,
                 lastTranscript = if (source == MessageSource.USER) text else st.assistant.lastTranscript,
-                lastResponse = if (source == MessageSource.ASSISTANT) text else st.assistant.lastResponse
+                lastResponse = if (source == MessageSource.ASSISTANT) adjustedText else st.assistant.lastResponse
             )
             st.copy(assistant = assistantPane)
         }
         if (persist) {
-            viewModelScope.launch { memory.addChatMessage(source, text) }
+            viewModelScope.launch { memory.addChatMessage(source, adjustedText) }
         }
     }
 
     private fun recordAssistantReply(text: String, offline: Boolean, speak: Boolean, errorMessage: String? = null) {
-        appendChatMessage(MessageSource.ASSISTANT, text)
+        appendChatMessage(MessageSource.ASSISTANT, text, forceOfflinePrefix = offline)
         _state.update {
             it.copy(assistant = it.assistant.copy(isOffline = offline))
         }
@@ -364,7 +381,8 @@ class HubViewModel(
     private fun updateAssistantStatus(offline: Boolean, error: String?) {
         val key = prefs.getString("openai_api_key", null)
         val missingKey = key.isNullOrBlank()
-        _assistantConn.value = when {
+        val previous = _assistantConn.value
+        val updated = when {
             !error.isNullOrBlank() -> AssistantConnInfo(
                 state = AssistantConnState.ERROR,
                 model = null,
@@ -376,7 +394,7 @@ class HubViewModel(
                 reason = "Disabled – add API key"
             )
             offline -> AssistantConnInfo(
-                state = AssistantConnState.OFFLINE,
+                state = AssistantConnState.FALLBACK,
                 model = null,
                 reason = "Fallback mode"
             )
@@ -385,6 +403,16 @@ class HubViewModel(
                 model = prefs.getString("openai_model", ModelCatalog.defaultModel())?.ifBlank { null }
                     ?: ModelCatalog.defaultModel()
             )
+        }
+        _assistantConn.value = updated
+        if (
+            (updated.state == AssistantConnState.OFFLINE || updated.state == AssistantConnState.FALLBACK) &&
+            (previous.state != updated.state || previous.reason != updated.reason)
+        ) {
+            viewModelScope.launch {
+                val report = OfflineAssistant.generateDiagnostic(memory, state.value)
+                appendChatMessage(MessageSource.ASSISTANT, report)
+            }
         }
     }
 

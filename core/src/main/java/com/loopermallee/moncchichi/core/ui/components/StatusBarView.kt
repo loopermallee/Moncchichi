@@ -66,6 +66,17 @@ class StatusBarView @JvmOverloads constructor(
                     backgroundColor = COLOR_ASSISTANT_OFF_BG
                 )
             }
+            AssistantConnState.FALLBACK -> {
+                val message = assistant.reason?.takeIf { it.isNotBlank() }?.let { "🟠 Fallback • $it" }
+                    ?: "🟠 Offline Fallback"
+                setChip(
+                    assistantCard,
+                    assistantText,
+                    label = message,
+                    textColor = COLOR_ASSISTANT_OFF,
+                    backgroundColor = COLOR_ASSISTANT_OFF_BG
+                )
+            }
             AssistantConnState.ERROR -> {
                 val reason = assistant.reason ?: "check API key or network"
                 setChip(
