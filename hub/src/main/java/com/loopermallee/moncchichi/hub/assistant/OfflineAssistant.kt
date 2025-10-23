@@ -9,6 +9,8 @@ import java.util.Locale
 
 object OfflineAssistant {
 
+    private var offlineIntroShown = false
+
     private enum class DiagnosticTopic {
         CONNECTION,
         INTERNET,
@@ -56,6 +58,10 @@ object OfflineAssistant {
         val topic = DiagnosticTopic.fromPrompt(prompt)
         val insight = snapshot.insights
         val device = snapshot.device
+
+        if (!state.assistant.isOffline) {
+            offlineIntroShown = false
+        }
 
         val summary = ConsoleInterpreter.quickSummary(
             device.glassesBattery,
@@ -114,8 +120,9 @@ object OfflineAssistant {
 
         buildString {
             append(summary)
-            if (!skipIntro) {
+            if (!skipIntro && !offlineIntroShown) {
                 append("\n⚡ Offline fallback is active – I'll sync replies once I'm online.")
+                offlineIntroShown = true
             }
             savedLine?.let { append("\n").append(it) }
             queueLine?.let { append("\n").append(it) }
@@ -144,5 +151,9 @@ object OfflineAssistant {
                 }
             }
         }
+    }
+
+    fun resetSession() {
+        offlineIntroShown = false
     }
 }

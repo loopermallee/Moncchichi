@@ -450,19 +450,13 @@ class HubViewModel(
         if (cameOnline) {
             val queued = offlineQueue.toList()
             offlineQueue.clear()
-            val header = buildString {
-                append("I’m back online ✅ and ready to continue.")
-                if (queued.isNotEmpty()) {
-                    append("\nHere’s what you asked while I was offline:")
-                    queued.forEach { append("\n• ").append(it) }
-                }
-            }
+            OfflineAssistant.resetSession()
             appendChatMessage(
                 MessageSource.ASSISTANT,
-                header,
+                "I’m back online ✅ and ready to continue.",
                 origin = MessageOrigin.LLM,
             )
-            queued.forEachIndexed { index, prompt ->
+            queued.take(MAX_OFFLINE_QUEUE).forEachIndexed { index, prompt ->
                 viewModelScope.launch {
                     if (index > 0) delay(400L * index)
                     post(AppEvent.AssistantAsk(prompt))

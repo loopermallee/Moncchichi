@@ -1,7 +1,6 @@
 package com.loopermallee.moncchichi.hub.ui.assistant
 
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -12,6 +11,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
@@ -208,7 +208,7 @@ class AssistantFragment : Fragment() {
 
             val header = TextView(requireContext()).apply {
                 text = headerText
-                setTextColor(Color.parseColor("#A691F2"))
+                setTextColor(ContextCompat.getColor(requireContext(), R.color.er_accent))
                 textSize = 12f
                 setPadding(horizontal, vertical / 2, horizontal, 0)
                 gravity = if (entry.source == MessageSource.USER) Gravity.END else Gravity.START
@@ -219,7 +219,12 @@ class AssistantFragment : Fragment() {
                 text = entry.text
                 background = createBubble(entry.source == MessageSource.USER)
                 setPadding(horizontal, vertical, horizontal, vertical)
-                val textColor = if (entry.source == MessageSource.USER) Color.parseColor("#1B1530") else Color.WHITE
+                textSize = 14f
+                val textColor = if (entry.source == MessageSource.USER) {
+                    ContextCompat.getColor(requireContext(), R.color.er_background)
+                } else {
+                    ContextCompat.getColor(requireContext(), android.R.color.white)
+                }
                 setTextColor(textColor)
             }
             val params = LinearLayout.LayoutParams(
@@ -234,7 +239,7 @@ class AssistantFragment : Fragment() {
             val formattedTime = DateFormat.getTimeFormat(requireContext()).format(Date(entry.timestamp))
             val timestamp = TextView(requireContext()).apply {
                 text = formattedTime
-                setTextColor(Color.parseColor("#B0AFC8"))
+                setTextColor(ContextCompat.getColor(requireContext(), R.color.er_timestamp_text))
                 textSize = 10f
                 setPadding(horizontal, 4, horizontal, vertical)
             }
@@ -251,7 +256,8 @@ class AssistantFragment : Fragment() {
     }
 
     private fun createBubble(isUser: Boolean): GradientDrawable {
-        val color = if (isUser) Color.parseColor("#5AFFC6") else Color.parseColor("#2A2335")
+        val colorRes = if (isUser) R.color.er_user_bubble else R.color.er_assistant_bubble
+        val color = ContextCompat.getColor(requireContext(), colorRes)
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = resources.getDimension(R.dimen.assistant_bubble_radius)

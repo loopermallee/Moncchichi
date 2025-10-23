@@ -12,10 +12,9 @@ It’s structured exactly how Codex expects: top context summary → implementat
 
 ⚙️ ACTIVE DEVELOPMENT CONTEXT
 
-CURRENT_PHASE: Phase 3.9.2 — Final Assistant Brain Stabilization
+CURRENT_PHASE: Phase 3.9.3 — Assistant Brain (Refined Stabilization)
 PHASE_OBJECTIVE:
-Refine all Assistant Brain (Phase 3.x) components based on user testing feedback:
-improve context awareness, simplify replies, polish UI/UX, and prepare clean hand-off to Phase 4 (BLE telemetry + voice via glasses).
+Clarify logic structures and UI tokens, finalize reconnection flow, offline diagnostics, and queued message replay ahead of Phase 4 BLE telemetry work.
 
 ⸻
 
@@ -112,6 +111,12 @@ Voice Layer	Fully removed from app level (code + permissions)	⬜
 Color Theme	Matches Even Realities green & violet scheme	⬜
 Build Status	./gradlew assembleDebug → BUILD SUCCESSFUL	⬜
 
+
+⸻
+
+📝 PROGRESS NOTES
+- 2025-10-23: Synced Phase 3.9.3 reconnection replay logic, offline diagnostics summary, and Even Realities palette usage across assistant + console surfaces.
+- 2025-10-23: Added offline fallback intro gating in OfflineAssistant to prevent repeated “offline mode” notices within a session.
 
 ⸻
 
