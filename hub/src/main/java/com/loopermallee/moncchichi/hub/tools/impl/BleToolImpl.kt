@@ -50,4 +50,8 @@ class BleToolImpl(@Suppress("UNUSED_PARAMETER") context: Context) : BleTool {
     override suspend fun macAddress(): String? {
         return connectedId?.uppercase()
     }
+
+    override suspend fun signal(): Int? {
+        return if (connectedId != null) -55 else null
+    }
 }

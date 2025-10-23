@@ -15,6 +15,7 @@ object LogFormatter {
             raw.contains("Connected to") -> Color.parseColor("#9BE37B")
             raw.contains("[ERR]") || raw.contains("FAILED") || raw.contains("Bluetooth off") -> Color.parseColor("#FF6B6B")
             raw.contains("[BLE]") -> Color.parseColor("#A691F2")
+            raw.contains("[DIAG]") -> Color.parseColor("#A691F2")
             raw.contains("[AI]") -> Color.parseColor("#6F5AE6")
             raw.contains("[SYS]") -> Color.parseColor("#FFC107")
             else -> Color.parseColor("#DDDDDD")

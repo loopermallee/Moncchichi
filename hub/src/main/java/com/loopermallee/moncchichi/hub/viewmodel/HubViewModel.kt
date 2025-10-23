@@ -113,7 +113,7 @@ class HubViewModel(
                         hubAddLog("[BLE] ❤️ Keepalive → $resp")
                     }
                     result.onFailure { err ->
-                        hubAddLog("[ERROR] Keepalive failed: ${err.message ?: "unknown"}")
+                        hubAddLog("[BLE] ⚠️ Keepalive failed: ${err.message ?: "unknown"}")
                     }
                 }
             }
@@ -177,7 +177,9 @@ class HubViewModel(
                     isConnected = ok,
                     id = deviceId,
                     glassesBattery = null,
-                    caseBattery = null
+                    caseBattery = null,
+                    firmwareVersion = null,
+                    signalRssi = null,
                 )
             )
         }
@@ -185,6 +187,7 @@ class HubViewModel(
         if (ok) {
             val label = "Connected to ${state.value.device.name ?: "My G1"}"
             hubAddLog(label)
+            refreshDeviceVitals()
         } else {
             hubAddLog("Connection failed")
         }
@@ -201,6 +204,55 @@ class HubViewModel(
         val resp = ble.send(command)
         val summary = "[BLE] → $command | ← $resp"
         hubAddLog(summary)
+    }
+
+    private suspend fun refreshDeviceVitals() {
+        if (!state.value.device.isConnected) return
+        val battery = runCatching { ble.battery() }.getOrNull()
+        val case = runCatching { ble.caseBattery() }.getOrNull()
+        val firmware = runCatching { ble.firmware() }.getOrNull()
+        val signal = runCatching { ble.signal() }.getOrNull()
+        val mac = runCatching { ble.macAddress() }.getOrNull()
+        applyDeviceTelemetry(
+            battery = battery,
+            case = case,
+            firmware = firmware,
+            signal = signal,
+            deviceId = mac,
+            connectionState = "CONNECTED",
+        )
+        val parts = buildList {
+            battery?.let { add("Glasses ${it}%") }
+            case?.let { add("Case ${it}%") }
+            firmware?.let { add("FW $it") }
+            signal?.let { add("Signal ${it} dBm") }
+        }
+        if (parts.isNotEmpty()) {
+            hubAddLog("[BLE] Telemetry • ${parts.joinToString(" • ")}")
+        }
+    }
+
+    private fun applyDeviceTelemetry(
+        battery: Int?,
+        case: Int?,
+        firmware: String?,
+        signal: Int?,
+        deviceId: String?,
+        connectionState: String? = null,
+    ) {
+        _state.update { current ->
+            val device = current.device
+            val updated = device.copy(
+                id = deviceId ?: device.id,
+                glassesBattery = battery ?: device.glassesBattery,
+                caseBattery = case ?: device.caseBattery,
+                firmwareVersion = firmware ?: device.firmwareVersion,
+                signalRssi = signal ?: device.signalRssi,
+                connectionState = connectionState ?: device.connectionState,
+            )
+            current.copy(device = updated)
+        }
+        updateDeviceStatus(state.value.device)
     }
 
     private suspend fun handleTranscript(text: String) {
@@ -236,7 +288,17 @@ class HubViewModel(
                 memory,
                 state.value.device.isConnected,
                 { respond(it, false, false, null) },
-                ::hubAddLog
+                ::hubAddLog,
+                onTelemetry = { glasses, case, firmware, signal ->
+                    applyDeviceTelemetry(
+                        battery = glasses,
+                        case = case,
+                        firmware = firmware,
+                        signal = signal,
+                        deviceId = null,
+                        connectionState = if (state.value.device.isConnected) "CONNECTED" else "DISCONNECTED",
+                    )
+                }
             )
             Route.COMMAND_CONTROL -> BleCommandHandler.run(text, ble, display, { respond(it, false, false, null) }, ::hubAddLog)
             Route.LIVE_FEED -> LiveFeedHandler.run(ble, display, memory, { respond(it, false, false, null) }, ::hubAddLog)
@@ -352,8 +414,9 @@ class HubViewModel(
         speak: Boolean,
         errorMessage: String? = null,
     ) {
+        val isDiagnostic = text.startsWith("Assistant 🟣") || text.contains("[Status]")
         val origin = when {
-            text.contains("[Status]") || text.contains("Battery", ignoreCase = true) -> MessageOrigin.DEVICE
+            isDiagnostic -> MessageOrigin.DEVICE
             offline -> MessageOrigin.OFFLINE
             else -> MessageOrigin.LLM
         }
@@ -368,6 +431,10 @@ class HubViewModel(
             forceOfflinePrefix = offline,
             origin = origin,
         )
+
+        if (origin == MessageOrigin.DEVICE) {
+            hubAddLog("[DIAG] ${text.replace('\n', ' ')}")
+        }
 
         _state.update {
             it.copy(assistant = it.assistant.copy(isOffline = offline))
@@ -497,7 +564,9 @@ class HubViewModel(
                 deviceId = device.id,
                 batteryPct = device.glassesBattery?.takeIf { it in 0..100 },
                 caseBatteryPct = device.caseBattery?.takeIf { it in 0..100 },
-                firmware = null
+                firmware = device.firmwareVersion,
+                signalRssi = device.signalRssi,
+                connectionState = device.connectionState,
             )
         } else {
             DeviceConnInfo(DeviceConnState.DISCONNECTED)
@@ -516,7 +585,10 @@ class HubViewModel(
                 device = current.copy(
                     isConnected = false,
                     glassesBattery = null,
-                    caseBattery = null
+                    caseBattery = null,
+                    firmwareVersion = null,
+                    signalRssi = null,
+                    connectionState = "DISCONNECTED",
                 )
             )
         }

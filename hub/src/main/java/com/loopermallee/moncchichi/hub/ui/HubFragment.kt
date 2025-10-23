@@ -54,6 +54,8 @@ class HubFragment : Fragment() {
         val deviceName = view.findViewById<TextView>(R.id.text_device_name)
         val deviceStatus = view.findViewById<TextView>(R.id.text_device_status)
         val deviceBattery = view.findViewById<TextView>(R.id.text_device_battery)
+        val deviceFirmware = view.findViewById<TextView>(R.id.text_device_firmware)
+        val deviceSignal = view.findViewById<TextView>(R.id.text_device_signal)
         val btnPair = view.findViewById<MaterialButton>(R.id.btn_pair)
         val btnDisconnect = view.findViewById<MaterialButton>(R.id.btn_disconnect)
         val btnPing = view.findViewById<MaterialButton>(R.id.btn_ping)
@@ -82,13 +84,17 @@ class HubFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 vm.deviceConn.collectLatest { device ->
                     deviceName.text = device.deviceName ?: "My G1"
-                    deviceStatus.text = when (device.state) {
-                        DeviceConnState.CONNECTED -> "Connected"
+                    val stateLabel = when (device.state) {
+                        DeviceConnState.CONNECTED -> device.connectionState ?: "Connected"
                         DeviceConnState.DISCONNECTED -> "Waiting for connection…"
                     }
+                    deviceStatus.text = stateLabel
                     val glasses = device.batteryPct?.let { "$it %" } ?: "— %"
                     val case = device.caseBatteryPct?.let { "$it %" } ?: "— %"
                     deviceBattery.text = "Glasses $glasses • Case $case"
+                    deviceFirmware.text = "Firmware: ${device.firmware ?: "—"}"
+                    val rssi = device.signalRssi?.let { "${it} dBm" } ?: "— dBm"
+                    deviceSignal.text = "Signal: $rssi"
                     val connected = device.state == DeviceConnState.CONNECTED
                     btnPair.isEnabled = !connected
                     btnDisconnect.isEnabled = connected

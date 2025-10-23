@@ -12,4 +12,5 @@ interface BleTool {
     suspend fun caseBattery(): Int?
     suspend fun firmware(): String?
     suspend fun macAddress(): String?
+    suspend fun signal(): Int?
 }

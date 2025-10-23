@@ -16,5 +16,7 @@ data class DeviceConnInfo(
     val deviceId: String? = null,
     val batteryPct: Int? = null,
     val caseBatteryPct: Int? = null,
-    val firmware: String? = null
+    val firmware: String? = null,
+    val signalRssi: Int? = null,
+    val connectionState: String? = null,
 )

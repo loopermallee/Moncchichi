@@ -10,7 +10,11 @@ object G1ReplyParser {
 
     data class DeviceVitals(
         val battery: Int? = null,
+        val caseBattery: Int? = null,
         val firmware: String? = null,
+        val signalRssi: Int? = null,
+        val deviceId: String? = null,
+        val connectionState: String? = null,
         val lastKeepAlive: Long? = null
     )
 
@@ -32,12 +36,57 @@ object G1ReplyParser {
                     logger("[DEVICE] Battery = $level %")
                 } else logger("[DEVICE] Battery packet malformed: $text")
             }
-            text.startsWith("+v") -> {
-                val fw = text.removePrefix("+v")
-                vitalsFlow.value = vitalsFlow.value.copy(firmware = fw)
-                logger("[DEVICE] Firmware = $fw")
+            text.startsWith("+c") -> {
+                val level = bytes.getOrNull(2)?.toUByte()?.toInt()
+                if (level != null && level in 0..100) {
+                    vitalsFlow.value = vitalsFlow.value.copy(caseBattery = level)
+                    logger("[DEVICE] Case battery = $level %")
+                } else logger("[DEVICE] Case packet malformed: $text")
             }
-            else -> logger("[DEVICE] Unknown reply: $text (${bytes.toHex()})")
+            text.startsWith("+v") -> {
+                val fw = text.removePrefix("+v").trim()
+                vitalsFlow.value = vitalsFlow.value.copy(firmware = fw.ifBlank { null })
+                logger("[DEVICE] Firmware = ${fw.ifBlank { "unknown" }}")
+            }
+            else -> {
+                val normalized = text.lowercase()
+                val battery = Regex("""battery\\s*[:=]\\s*(\\d{1,3})""")
+                    .find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val case = Regex("""case\\s*[:=]\\s*(\\d{1,3})""")
+                    .find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val fw = Regex("""firmware\\s*[:=]\\s*([A-Za-z0-9\\.\-_]+)""")
+                    .find(text)?.groupValues?.getOrNull(1)
+                val rssi = Regex("""rssi\\s*[:=]\\s*(-?\\d{1,3})""")
+                    .find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val id = Regex("""id\\s*[:=]\\s*([A-Za-z0-9\-_:]+)""")
+                    .find(text)?.groupValues?.getOrNull(1)
+                val state = Regex("""state\\s*[:=]\\s*([A-Za-z]+)""")
+                    .find(text)?.groupValues?.getOrNull(1)
+
+                if (listOf(battery, case, fw, rssi, id, state).any { it != null }) {
+                    val current = vitalsFlow.value
+                    vitalsFlow.value = current.copy(
+                        battery = battery ?: current.battery,
+                        caseBattery = case ?: current.caseBattery,
+                        firmware = fw ?: current.firmware,
+                        signalRssi = rssi ?: current.signalRssi,
+                        deviceId = id ?: current.deviceId,
+                        connectionState = state?.uppercase() ?: current.connectionState,
+                    )
+                    logger(
+                        "[DEVICE] ${buildString {
+                            battery?.let { append("Battery $it% ") }
+                            case?.let { append("Case $it% ") }
+                            fw?.let { append("FW $it ") }
+                            rssi?.let { append("RSSI $it ") }
+                            id?.let { append("ID $it ") }
+                            state?.let { append("State ${it.uppercase()} ") }
+                        }.trim()}"
+                    )
+                } else {
+                    logger("[DEVICE] Unknown reply: $text (${bytes.toHex()})")
+                }
+            }
         }
     }
 }
