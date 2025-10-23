@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest package="com.loopermallee.moncchichi.hub"
-    xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Network permissions (normal; no runtime prompt) -->
     <uses-permission android:name="android.permission.INTERNET" />

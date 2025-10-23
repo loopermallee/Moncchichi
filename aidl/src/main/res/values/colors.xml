@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Even Realities Monochrome Palette -->
+    <color name="black">#000000</color>
+    <color name="gray_dark">#1A1A1A</color>
+    <color name="gray_medium">#2A2A2A</color>
+    <color name="gray_light">#CCCCCC</color>
+    <color name="gray_disabled">#777777</color>
+    <color name="white">#FFFFFF</color>
+    <!-- Accent reserved for console/log UI -->
+    <color name="er_accent_purple">#A691F2</color>
+</resources>

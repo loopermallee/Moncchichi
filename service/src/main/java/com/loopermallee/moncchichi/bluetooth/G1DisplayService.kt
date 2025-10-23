@@ -17,7 +17,7 @@ import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
-import com.loopermallee.moncchichi.R
+import com.loopermallee.moncchichi.service.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

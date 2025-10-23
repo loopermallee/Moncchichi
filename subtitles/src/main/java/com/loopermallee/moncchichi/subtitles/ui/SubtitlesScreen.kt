@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.loopermallee.moncchichi.client.G1ServiceCommon
-import com.loopermallee.moncchichi.R
+import com.loopermallee.moncchichi.subtitles.R
 
 @Composable
 fun SubtitlesScreen(
