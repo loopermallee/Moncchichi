@@ -5,7 +5,6 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.provider.Settings
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -13,7 +12,6 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
@@ -34,10 +32,14 @@ import com.loopermallee.moncchichi.core.model.MessageOrigin
 import com.loopermallee.moncchichi.core.model.MessageSource
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
+import android.provider.Settings
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
 import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import android.text.format.DateFormat
 import java.util.Date
@@ -48,7 +50,6 @@ class AssistantFragment : Fragment() {
         HubVmFactory(
             AppLocator.router,
             AppLocator.ble,
-            AppLocator.speech,
             AppLocator.llm,
             AppLocator.display,
             AppLocator.memory,
@@ -62,16 +63,17 @@ class AssistantFragment : Fragment() {
     private lateinit var statusBar: StatusBarView
     private lateinit var inputField: TextInputEditText
     private lateinit var sendButton: MaterialButton
-    private lateinit var listenButton: MaterialButton
     private lateinit var offlineCard: View
     private lateinit var errorCard: View
     private lateinit var errorTitle: TextView
     private lateinit var errorDetail: TextView
     private lateinit var errorActionButton: MaterialButton
     private var currentError: UiError? = null
-    private lateinit var partialView: TextView
     private lateinit var scrollView: ScrollView
     private lateinit var messageContainer: LinearLayout
+    private lateinit var thinkingContainer: View
+    private lateinit var thinkingText: TextView
+    private var thinkingJob: Job? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -89,24 +91,20 @@ class AssistantFragment : Fragment() {
         errorTitle = view.findViewById(R.id.text_error_title)
         errorDetail = view.findViewById(R.id.text_error_detail)
         errorActionButton = view.findViewById(R.id.button_error_action)
-        partialView = view.findViewById(R.id.text_partial)
         scrollView = view.findViewById(R.id.scroll_conversation)
         messageContainer = view.findViewById(R.id.container_messages)
         inputField = view.findViewById(R.id.input_message)
         sendButton = view.findViewById(R.id.button_send)
-        listenButton = view.findViewById(R.id.button_listen)
+        thinkingContainer = view.findViewById(R.id.container_thinking)
+        thinkingText = view.findViewById(R.id.text_thinking)
+        thinkingText.background = createBubble(false)
 
         errorActionButton.setOnClickListener {
             val error = currentError ?: return@setOnClickListener
             when (error.action) {
                 ErrorAction.RETRY -> vm.retryLastAssistant()
                 ErrorAction.RECONNECT_DEVICE -> vm.requestDeviceReconnect()
-                ErrorAction.OPEN_MIC_PERMS -> {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = Uri.fromParts("package", requireContext().packageName, null)
-                    }
-                    startActivity(intent)
-                }
+                ErrorAction.OPEN_MIC_PERMS -> openAppSettings()
                 ErrorAction.NONE -> Unit
             }
             vm.dismissUiError()
@@ -118,14 +116,6 @@ class AssistantFragment : Fragment() {
                 vm.dismissUiError()
                 viewLifecycleOwner.lifecycleScope.launch { vm.post(AppEvent.AssistantAsk(text)) }
                 inputField.setText("")
-            }
-        }
-
-        listenButton.setOnClickListener {
-            viewLifecycleOwner.lifecycleScope.launch {
-                val listening = vm.state.value.assistant.isListening
-                val event = if (listening) AppEvent.AssistantStopListening else AppEvent.AssistantStartListening
-                vm.post(event)
             }
         }
 
@@ -145,11 +135,8 @@ class AssistantFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 vm.state.collectLatest { state ->
                     renderMessages(vm.filteredAssistantHistory())
-                    partialView.isVisible = !state.assistant.partialTranscript.isNullOrBlank()
-                    partialView.text = state.assistant.partialTranscript.orEmpty()
                     sendButton.isEnabled = !state.assistant.isBusy
-                    listenButton.isEnabled = !state.assistant.isBusy
-                    listenButton.text = if (state.assistant.isListening) "⏹" else "🎙"
+                    updateThinkingIndicator(state.assistant.isThinking)
                 }
             }
         }
@@ -172,7 +159,7 @@ class AssistantFragment : Fragment() {
                             errorActionButton.text = when (error.action) {
                                 ErrorAction.RETRY -> "Retry"
                                 ErrorAction.RECONNECT_DEVICE -> "Reconnect device"
-                                ErrorAction.OPEN_MIC_PERMS -> "Open mic settings"
+                                ErrorAction.OPEN_MIC_PERMS -> "Open settings"
                                 ErrorAction.NONE -> ""
                             }
                         }
@@ -185,6 +172,8 @@ class AssistantFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         currentError = null
+        thinkingJob?.cancel()
+        thinkingJob = null
     }
 
     private fun renderMessages(history: List<ChatMessage>) {
@@ -202,13 +191,19 @@ class AssistantFragment : Fragment() {
 
         history.forEach { entry ->
             val headerText = when (entry.source) {
-                MessageSource.USER -> "You"
-                MessageSource.ASSISTANT -> when (entry.origin) {
-                    MessageOrigin.LLM -> "Assistant 🟢 (ChatGPT)"
-                    MessageOrigin.OFFLINE -> "Assistant ⚡ (Offline)"
-                    MessageOrigin.DEVICE -> "Assistant 🟣 (Device Only) 🛠"
+                MessageSource.USER -> "You:"
+                MessageSource.ASSISTANT -> buildString {
+                    append("Assistant:")
+                    append(' ')
+                    append(
+                        when (entry.origin) {
+                            MessageOrigin.LLM -> "🟢 ChatGPT"
+                            MessageOrigin.OFFLINE -> "⚡ Offline"
+                            MessageOrigin.DEVICE -> "🟣 Device"
+                        }
+                    )
                 }
-                else -> entry.source.name
+                else -> entry.source.name + ":"
             }
 
             val header = TextView(requireContext()).apply {
@@ -224,7 +219,8 @@ class AssistantFragment : Fragment() {
                 text = entry.text
                 background = createBubble(entry.source == MessageSource.USER)
                 setPadding(horizontal, vertical, horizontal, vertical)
-                setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
+                val textColor = if (entry.source == MessageSource.USER) Color.parseColor("#1B1530") else Color.WHITE
+                setTextColor(textColor)
             }
             val params = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -255,11 +251,39 @@ class AssistantFragment : Fragment() {
     }
 
     private fun createBubble(isUser: Boolean): GradientDrawable {
-        val color = if (isUser) Color.parseColor("#66FFB2") else Color.parseColor("#2A2335")
+        val color = if (isUser) Color.parseColor("#5AFFC6") else Color.parseColor("#2A2335")
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = resources.getDimension(R.dimen.assistant_bubble_radius)
             setColor(color)
         }
+    }
+
+    private fun updateThinkingIndicator(isThinking: Boolean) {
+        thinkingContainer.isVisible = isThinking
+        if (isThinking) {
+            if (thinkingJob == null) {
+                thinkingJob = viewLifecycleOwner.lifecycleScope.launch {
+                    val frames = listOf("•", "••", "•••")
+                    var index = 0
+                    while (isActive) {
+                        thinkingText.text = frames[index % frames.size]
+                        index++
+                        delay(300)
+                    }
+                }
+            }
+        } else {
+            thinkingJob?.cancel()
+            thinkingJob = null
+            thinkingText.text = ""
+        }
+    }
+
+    private fun openAppSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", requireContext().packageName, null)
+        }
+        startActivity(intent)
     }
 }

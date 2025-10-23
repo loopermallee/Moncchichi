@@ -1,5 +1,7 @@
 package com.loopermallee.moncchichi.core.utils
 
+import java.util.Locale
+
 object ConsoleInterpreter {
 
     enum class HealthState { GOOD, DEGRADED, DOWN, UNKNOWN }
@@ -108,6 +110,44 @@ object ConsoleInterpreter {
             llm = llmStatus,
             notes = notes.distinct()
         )
+    }
+
+    fun quickSummary(
+        glassesBattery: Int?,
+        caseBattery: Int?,
+        networkLabel: String,
+        network: ChannelStatus,
+        api: ChannelStatus,
+        llm: ChannelStatus,
+    ): String {
+        val batteryText = "🔋 Glasses ${glassesBattery?.let { "$it %" } ?: "—"}"
+        val caseText = caseBattery?.let { "💼 Case $it %" }
+        val labelBase = networkLabel.ifBlank { "Network" }
+        val normalizedLabel = labelBase.replaceFirstChar {
+            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+        }
+        val networkDescriptor = when (network.state) {
+            HealthState.GOOD -> network.detail ?: "Good"
+            HealthState.DEGRADED -> network.detail ?: "Check"
+            HealthState.DOWN -> network.detail ?: "Offline"
+            HealthState.UNKNOWN -> network.detail ?: "Unknown"
+        }
+        val networkText = buildString {
+            append("📶 ")
+            append(listOf(normalizedLabel, networkDescriptor).distinct().joinToString(" "))
+        }
+        val apiText = "⚙️ API ${statusWord(api, "OK")}"
+        val llmText = "🧠 LLM ${statusWord(llm, "Ready")}"
+
+        return listOfNotNull(batteryText, caseText, networkText, apiText, llmText)
+            .joinToString("  ")
+    }
+
+    private fun statusWord(status: ChannelStatus, whenGood: String): String = when (status.state) {
+        HealthState.GOOD -> status.detail ?: whenGood
+        HealthState.DEGRADED -> status.detail ?: "Check"
+        HealthState.DOWN -> status.detail ?: "Offline"
+        HealthState.UNKNOWN -> status.detail ?: "Unknown"
     }
 
     fun summarize(lines: List<String>): List<String> = analyze(lines).notes

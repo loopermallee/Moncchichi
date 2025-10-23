@@ -41,6 +41,9 @@ interface MemoryDao {
 
     @Query("SELECT * FROM assistant_log ORDER BY ts DESC LIMIT :n")
     suspend fun lastAssistant(n: Int): List<AssistantEntry>
+
+    @Query("DELETE FROM console_log")
+    suspend fun clearConsole()
 }
 
 @Database(entities = [ConsoleLine::class, AssistantEntry::class], version = 2)
@@ -69,6 +72,10 @@ class MemoryRepository(private val dao: MemoryDao) {
 
     suspend fun lastConsoleLines(limit: Int): List<String> {
         return withContext(Dispatchers.IO) { dao.lastConsole(limit).map { it.line } }
+    }
+
+    suspend fun clearConsole() {
+        withContext(Dispatchers.IO) { dao.clearConsole() }
     }
 
     suspend fun chatHistory(limit: Int): List<ChatMessage> {

@@ -11,15 +11,14 @@ data class DeviceInfo(
 )
 
 data class AssistantPane(
-    val isListening: Boolean = false,
     val isSpeaking: Boolean = false,
-    val partialTranscript: String? = null,
     val lastTranscript: String? = null,
     val lastResponse: String? = null,
     val isBusy: Boolean = false,
     val isOffline: Boolean = false,
     val history: List<ChatMessage> = emptyList(),
-    val voiceEnabled: Boolean = true
+    val voiceEnabled: Boolean = true,
+    val isThinking: Boolean = false,
 )
 
 data class AppState(

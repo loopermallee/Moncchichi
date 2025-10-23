@@ -13,12 +13,10 @@ import com.loopermallee.moncchichi.hub.tools.DisplayTool
 import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
 import com.loopermallee.moncchichi.hub.tools.TtsTool
-import com.loopermallee.moncchichi.hub.tools.SpeechTool
 import com.loopermallee.moncchichi.hub.tools.impl.BleToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.DisplayToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.LlmToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.PermissionToolImpl
-import com.loopermallee.moncchichi.hub.tools.impl.SpeechToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.TtsToolImpl
 
 object AppLocator {
@@ -27,8 +25,6 @@ object AppLocator {
     lateinit var router: IntentRouter
         private set
     lateinit var ble: BleTool
-        private set
-    lateinit var speech: SpeechTool
         private set
     lateinit var llm: LlmTool
         private set
@@ -56,7 +52,6 @@ object AppLocator {
         memory = MemoryRepository(db.dao())
         router = IntentRouter()
         ble = BleToolImpl(appCtx)
-        speech = SpeechToolImpl(appCtx)
         llm = LlmToolImpl(appCtx)
         display = DisplayToolImpl(appCtx)
         perms = PermissionToolImpl(appCtx)

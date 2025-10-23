@@ -152,16 +152,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
-            android:text="Speech ready"
+            android:text="Online mode – up to 10 offline prompts are remembered"
             android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
-            android:textColor="#FFFFFF" />
-
-        <com.google.android.material.switchmaterial.SwitchMaterial
-            android:id="@+id/switch_voice"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/assistant_spacing"
-            android:text="Speak responses on HUD"
             android:textColor="#FFFFFF" />
 
     </LinearLayout>

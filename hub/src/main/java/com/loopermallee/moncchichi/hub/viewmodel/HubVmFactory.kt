@@ -8,7 +8,6 @@ import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
 import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
-import com.loopermallee.moncchichi.hub.tools.SpeechTool
 import com.loopermallee.moncchichi.hub.tools.TtsTool
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
@@ -16,7 +15,6 @@ import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
 class HubVmFactory(
     private val router: IntentRouter,
     private val ble: BleTool,
-    private val speech: SpeechTool,
     private val llm: LlmTool,
     private val display: DisplayTool,
     private val memory: MemoryRepository,
@@ -31,7 +29,6 @@ class HubVmFactory(
         return HubViewModel(
             router,
             ble,
-            speech,
             llm,
             display,
             memory,
