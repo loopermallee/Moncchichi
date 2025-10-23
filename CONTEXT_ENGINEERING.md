@@ -1,11 +1,3 @@
-Perfect — below is the complete, updated CONTEXT_ENGINEERING.md that merges your previous Phase 3.9.5 document with the new Phase 4.0: BLE Core Fusion and Bidirectional Communication framework.
-
-It preserves your document structure (headers, milestones, rules, formatting) and adds the full bidirectional BLE integration logic written in Codex-ready language — clear, actionable, and technically specific.
-
-You can copy-paste this directly into your repository to replace the current file.
-
-⸻
-
 🧠 Moncchichi Hub — Context Engineering Document
 
 (Shared operational memory between ChatGPT, Codex, and the user)
@@ -248,7 +240,3 @@ Phase 4.2 — Voice and Microphone Bridge
 (Codex appends here after each patch)
 
 [4.0-r1] Initial BLE Core Fusion framework and bidirectional communication setup.
-
-⸻
-
-Would you like me to also generate a Codex-ready milestone tracker table (for PHASE_TRACKER.md) summarizing the tasks it should automatically check off during builds?
