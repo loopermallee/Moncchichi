@@ -4,26 +4,31 @@
 ---
 
 ## ⚙️ ACTIVE DEVELOPMENT CONTEXT  
-**CURRENT_PHASE:** Phase 3.9.4 — Assistant Brain (Precision Codex Scope)  
+**CURRENT_PHASE:** Phase 3.9.5 — Assistant Brain (Adaptive Offline Behaviour & UI Consistency)  
 **PHASE_OBJECTIVE:**  
-Ensure the assistant, diagnostics, and console systems function stably under all conditions.  
-Clarify the level of detail, scope boundaries, design tokens, and testing workflow expected in future prompts so Codex can generate consistent and verifiable code.
+Refine the assistant’s offline reliability, UI contrast, connection state feedback, and color consistency.  
+Ensure the assistant accurately reflects network status, queues and replays offline messages, and maintains clear visual distinction between online/offline states using the Even Realities **monochrome theme** (black + gray surfaces, white text/icons only).
 
 ---
 
 ## 🧩 CURRENT MILESTONES  
 | # | Milestone | Status | Notes |
 |---|------------|--------|-------|
-| 1 | Reconnection replay + “I’m back online ✅” sequence | ✅ Implemented / 🟡 Pending user confirmation | Verify auto-replay of ≤ 10 prompts |
-| 2 | Offline diagnostics + compact summary | ✅ Implemented / 🟡 Pending user confirmation | Confirm icon summary + context-aware tips |
-| 3 | Console “Clear + Copy” controls | ✅ Implemented / 🟡 Pending user confirmation | Functional buttons + visual feedback |
-| 4 | Assistant “thinking…” animation | ✅ Implemented / 🟡 Pending user confirmation | 300 ms dot cycle |
-| 5 | UI headers with labels and icons | ✅ Implemented / 🟡 Pending user confirmation | “You:” / “Assistant 🟢 ChatGPT” |
-| 6 | Temperature slider reset behavior | ✅ Working | Shows default hint on reset |
-| 7 | Color palette application | ✅ Partial (offlineCard pending) | Switch amber to Even Realities tokens |
-| 8 | Voice permission removal (scope-wide) | 🟡 Hub done; check core/subtitles | Remove RECORD_AUDIO if found |
-| 9 | Build tool fallback rules | 🟢 Defined | Lint allowed if Java 17 missing |
-| 10 | Progress Notes logging | 🟢 Required per commit | Append at bottom of this file |
+| 1 | Accurate online/offline state indicator | 🟡 Pending | Must switch to “Assistant ⚡ (Offline)” when Wi-Fi is off. No false “GPT-4 Online” state. |
+| 2 | Offline diagnostic context reply update | 🟡 Pending | When offline and user asks battery/status, header must change to Offline/🟣 Device. |
+| 3 | Offline message queue and replay | 🟡 Pending | Queue ≤ 10 prompts while offline, replay after “I’m back online ✅”. |
+| 4 | Offline fallback message frequency | 🟡 Pending | Show “Beep boop offline” only once per downtime period. |
+| 5 | Offline announcement and recovery message | 🟡 Pending | Announce offline once; announce online once on reconnect. |
+| 6 | Console “Clear + Copy” controls | ✅ Working | Feature stable and retained. |
+| 7 | Assistant “thinking…” animation | ✅ Working | 300 ms dot cycle. |
+| 8 | Input field text visibility | 🟡 Pending | Text in message box must be white on dark background. |
+| 9 | “User is typing…” indicator | 🟡 Pending | Animated hint below chat; disappears when input cleared or sent. |
+| 10 | Voice permission removal | ✅ Confirmed | No `RECORD_AUDIO` anywhere. |
+| 11 | Greeting routing | 🟡 Pending | “Hi” / “Good morning” must reach GPT, not filtered. |
+| 12 | Even Realities color theme update | 🟡 Pending | Apply black + gray theme; white only for text/icons; purple accent for console only. |
+| 13 | Temperature slider reset | ✅ Working | Shows default hint on reset. |
+| 14 | Build tool fallback rules | 🟢 Defined | `./gradlew lint` allowed if Java 17 missing. |
+| 15 | Progress Notes logging | 🟢 Required | Append after each commit. |
 
 ---
 
@@ -31,131 +36,135 @@ Clarify the level of detail, scope boundaries, design tokens, and testing workfl
 *(Use this section as a permanent framework for how to interpret and act on context.)*
 
 ### 1️⃣  **Read and Segment the Context First**  
-Before coding, break the document into:
+Before coding, split this document into:  
 - **What to build** (active milestones)  
-- **What to skip** (future phases or “PHASE4” placeholders)  
-- **Design and testing expectations** (how success will be measured).  
+- **What to skip** (future phases or PHASE 4 placeholders)  
+- **Design and testing expectations** (how success is measured).  
 
-> Codex must not merge speculative or future features into the current phase unless explicitly written.
+> Codex must not merge future-phase features unless explicitly stated.
 
 ---
 
 ### 2️⃣  **Expand on Ambiguity Before Coding**  
-If any section references a concept that spans multiple modules (e.g., “remove voice”),  
-Codex should automatically:
-- Search across all packages for that permission/class,  
-- Note where it still exists,  
-- And either remove or flag it with a `//TODO` comment marked with the next phase.
+If a directive spans multiple modules (e.g., voice removal or network listener), Codex should:  
+- Search all packages for references,  
+- Flag residual code with `//TODO Phase 4`, or remove if safe.  
 
 ---
 
-### 3️⃣  **Always Reference Canonical Design Tokens**  
-All colors and fonts must come from:
-```xml
-@color/er_accent_primary      #A691F2  
-@color/er_user_bubble         #5AFFC6  
-@color/er_assistant_bubble    #2A2335  
-@color/er_timestamp_text      #B0AFC8  
-@color/er_background          #1B1530  
+### 3️⃣  **Even Realities Monochrome Theme Specification**
 
-Typography:
-	•	12sp semi-bold header (@style/ErHeaderText)
-	•	14sp body text
-	•	10sp timestamp text
+**Base Principle:**  
+The interface follows a **dark monochrome** design — **black and gray** surfaces with **white text only**.  
+White is used *solely* for readable text and key icons, never as a panel or button background.
 
-If these tokens are missing, Codex should create or reference them in core/res/values/colors.xml and styles.xml.
+| Element | Color Code | Purpose |
+|----------|-------------|----------|
+| **Background (global)** | `#000000` | Root UI background |
+| **Surface / Card / Panel** | `#1A1A1A` | Cards, buttons, message bubbles, sliders |
+| **Divider / Border** | `#2A2A2A` | Section separators |
+| **Primary Text / Icons** | `#FFFFFF` | All readable text, chat input, headers |
+| **Secondary Text** | `#CCCCCC` | Hints, timestamps, placeholders |
+| **Disabled Text / Labels** | `#777777` | Non-interactive UI labels |
+| **Accent (Console only)** | `#A691F2` | Optional highlight for console/log areas only |
 
-⸻
+Typography:  
+- **Headers:** 12 sp semi-bold white  
+- **Body:** 14 sp white  
+- **Timestamps:** 10 sp light gray  
 
-4️⃣  Include Acceptance Examples When Logic Is Heuristic
+> 🟢 Rule: Only text and essential icons may use white.  
+> 🟡 Never use white as a background for cards, buttons, or panels.  
+> 🟣 Purple accent limited to console/log sections only.
 
-For logic that interprets language (e.g., offline diagnostics classifier), always provide examples:
+---
 
-User Prompt	Expected Topic	Expected Output
-“Battery status?”	BATTERY	“🔋 Glasses 85 %  💼 Case 92 %”
-“Check Wi-Fi”	INTERNET	“📶 Wi-Fi Offline ⚙️ API Check”
-“Firmware update”	FIRMWARE	“🛠 Awaiting firmware data”
+### 4️⃣  **Offline Behaviour Flow & Acceptance Examples**
 
-This ensures Codex can unit-test or at least simulate expected string results.
+**Logic Overview:**  
+- On offline → announce once: `We are offline. Reverting back to fallback Beep boop!`  
+- Show diagnostic summary once per downtime.  
+- Queue ≤ 10 prompts for replay.  
+- On reconnect → insert “I’m back online ✅” then replay.
 
-⸻
+**Acceptance Samples:**  
+| User Prompt | Expected Response |
+|--------------|------------------|
+| “Battery status?” | `🔋 Glasses 85 %  💼 Case 92 %  📱 Phone 78 %` |
+| “Check Wi-Fi” | `📶 Wi-Fi Offline  ⚙️ API Check  🧠 LLM Fallback` |
+| “Hi” / “Good morning” | ChatGPT responds normally (should not be filtered). |
 
-5️⃣  Respect Environment Fallback Rules
+---
 
-If Java 17 toolchain or AGP 8.3+ is unavailable:
+### 5️⃣  **Environment Fallback Rules**  
+If Java 17 or AGP 8.3+ is unavailable:  
 
-./gradlew lint --no-daemon
+./gradlew lint –no-daemon
 
-is the valid substitute for assembleDebug.
-Codex must append a line in Progress Notes:
+Codex must record in Progress Notes:  
+`⚙️ Build skipped: Java 17 missing; lint completed successfully.`  
 
-⚙️ Build skipped: Java 17 missing; lint completed successfully.
+---
 
+### 6️⃣  **Progress Notes Discipline**  
+Each patch must append concise entries like:  
 
-⸻
+[3.9.5-r1] Fixed offline state label and fallback message limit.
+[3.9.5-r2] White input text and “User is typing…” animation added.
+[3.9.5-r3] Applied black/gray UI and restricted white to text only.
 
-6️⃣  Progress Notes Discipline
+Mark unfinished items as “🟡 Pending Review”.  
 
-Every new patch or fix must be documented like this:
+---
 
-[3.9.4-r1] Updated offlineCard to Even Realities tokens.  
-[3.9.4-r2] Removed RECORD_AUDIO from core manifest.  
-[3.9.4-r3] Validated offline classifier with sample prompts.  
+### 7️⃣  **Output Validation Philosophy**
+ • Visually verify online/offline labels and color contrast.  
+ • Confirm queued prompt replay and announcement frequency.  
+ • Ensure greetings route to LLM.  
+ • Retain console and thinking animations.  
+ • Do not add voice features until Phase 4.  
 
-If a feature is partially complete, include “🟡 Pending Review”.
+---
 
-⸻
+### 8️⃣  **When Uncertainty Exists**  
+If behaviour is unclear:  
+ 1. Default to stable behaviour.  
+ 2. Implement minimal safe fix.  
+ 3. Document reasoning in Progress Notes.  
 
-7️⃣  Output Validation Philosophy
-	•	Prioritize visual confirmation (UI states and color themes).
-	•	Verify functional logic (assistant queue replay, offline responses).
-	•	Defer BLE telemetry and voice features to Phase 4+.
-	•	Never silently discard existing features—replace or mark deprecated.
+---
 
-⸻
+## 🧾 DESIGN SUMMARY  
+**Core Purpose:**  
+Deliver a stable assistant experience that accurately tracks connectivity, stores and replays offline messages, and uses a clean, dark monochrome Even Realities UI where only text and icons are white.
 
-8️⃣  When Uncertainty Exists
+---
 
-If context or logic is ambiguous:
-	1.	Assume stability > innovation.
-	2.	Implement the smallest safe improvement.
-	3.	Document rationale in Progress Notes.
+## ✅ EXIT CRITERIA (User Verification)  
 
-⸻
+| Test Scenario | Expected Behaviour |
+|----------------|-------------------|
+| Switch off Wi-Fi | Assistant header changes to “⚡ Offline”; fallback message appears once. |
+| Reconnect Wi-Fi | “I’m back online ✅” + queued prompts replayed. |
+| Ask battery offline | Shows compact icon summary only. |
+| Send “Hi” | LLM responds normally (confirmed delivery). |
+| Text input | Visible white text on dark background. |
+| Typing animation | “User is typing…” appears and disappears correctly. |
+| Console clear | ✅ Working. |
+| Theme | Only black and gray backgrounds; white for text/icons; purple for console accent only. |
+| Permissions | No `RECORD_AUDIO` present. |
 
-🧾 DESIGN SUMMARY
+---
 
-Core Purpose:
-Provide a seamless, privacy-centric bridge between the Even Realities G1 glasses and an intelligent assistant that:
-	•	Functions fully offline with diagnostics narration,
-	•	Syncs smoothly online with contextual reasoning, and
-	•	Presents a unified, minimal, polished UI.
+## 🔮 NEXT PHASE (Preview Only)
+ • Phase 4.0 — BLE Core Fusion  
+ • Add real telemetry and HUD feedback.  
+ • Introduce speech from glasses microphone.  
 
-⸻
+---
 
-✅ EXIT CRITERIA (User Verification)
+## 📄 PROGRESS NOTES  
 
-Test Scenario	Expected Behavior
-Disconnect Wi-Fi → Ask “battery”	Short icon summary; no repeated offline paragraph
-Reconnect Wi-Fi	“I’m back online ✅” + queued questions replayed
-Use “Clear Console”	Console empties immediately
-Observe assistant thinking	“• •• •••” loop visible until reply
-Check offlineCard colors	Matches Even Realities palette
-Review permissions	No RECORD_AUDIO anywhere
+(Codex appends here after each patch)  
 
-
-⸻
-
-🔮 NEXT PHASE (Preview Only)
-	•	Phase 4.0 — BLE Core Fusion
-	•	Replace stub BLE data with real telemetry.
-	•	Integrate glasses microphone input path.
-	•	Add HUD ack and speech loopback.
-
-⸻
-
-📄 PROGRESS NOTES
-
-(Codex appends here after each patch)
-
-[3.9.4-r1] Initial Precision Scope guidelines integrated.  
+[3.9.5-r1] Initial Adaptive Offline update – offline state accuracy and UI contrast.  
