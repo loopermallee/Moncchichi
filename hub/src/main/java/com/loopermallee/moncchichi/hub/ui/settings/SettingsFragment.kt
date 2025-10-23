@@ -10,9 +10,8 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.google.android.material.slider.Slider
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.slider.Slider
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.loopermallee.moncchichi.core.llm.ApiKeyValidator
@@ -22,7 +21,6 @@ import com.loopermallee.moncchichi.core.ui.state.AssistantConnInfo
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnInfo
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.di.AppLocator
-import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
 import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
 import kotlinx.coroutines.flow.collectLatest
@@ -39,7 +37,6 @@ class SettingsFragment : Fragment() {
         HubVmFactory(
             AppLocator.router,
             AppLocator.ble,
-            AppLocator.speech,
             AppLocator.llm,
             AppLocator.display,
             AppLocator.memory,
@@ -67,7 +64,6 @@ class SettingsFragment : Fragment() {
         val temperatureSlider = view.findViewById<Slider>(R.id.temperatureSlider)
         val saveButton = view.findViewById<MaterialButton>(R.id.button_save)
         val resetButton = view.findViewById<MaterialButton>(R.id.button_reset)
-        val voiceSwitch = view.findViewById<SwitchMaterial>(R.id.switch_voice)
         val statusText = view.findViewById<TextView>(R.id.text_status)
         val modelLabel = view.findViewById<TextView>(R.id.text_model_label)
         val temperatureHint = view.findViewById<TextView>(R.id.text_temperature_hint)
@@ -109,7 +105,6 @@ class SettingsFragment : Fragment() {
             }
             temperatureHint.text = if (hasAdjustedTemp) describeTemp(value) else defaultTemperatureHint
         }
-        voiceSwitch.isChecked = prefs.getBoolean("assistant_voice_enabled", true)
 
         editKeyButton.setOnClickListener {
             if (keyLocked) {
@@ -170,13 +165,6 @@ class SettingsFragment : Fragment() {
             showToast("Defaults restored")
         }
 
-        voiceSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (!voiceSwitch.isPressed) return@setOnCheckedChangeListener
-            viewLifecycleOwner.lifecycleScope.launch {
-                vm.post(AppEvent.AssistantVoiceToggle(isChecked))
-            }
-        }
-
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 combine(vm.assistantConn, vm.deviceConn) { assistant: AssistantConnInfo, device: DeviceConnInfo ->
@@ -191,14 +179,10 @@ class SettingsFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 vm.state.collectLatest { state ->
                     val offline = state.assistant.isOffline
-                    val speechReady = if (AppLocator.tts.isReady()) "ready" else "initializing"
                     statusText.text = if (offline) {
-                        "Offline mode – fallback responses ($speechReady TTS)"
+                        "Offline mode – queued prompts will auto-send when back online"
                     } else {
-                        "Online mode – $speechReady TTS"
-                    }
-                    if (voiceSwitch.isChecked != state.assistant.voiceEnabled) {
-                        voiceSwitch.isChecked = state.assistant.voiceEnabled
+                        "Online mode – up to 10 offline prompts are remembered"
                     }
                 }
             }

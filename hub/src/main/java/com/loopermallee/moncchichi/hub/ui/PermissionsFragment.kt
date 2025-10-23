@@ -25,7 +25,6 @@ class PermissionsFragment : Fragment() {
         HubVmFactory(
             AppLocator.router,
             AppLocator.ble,
-            AppLocator.speech,
             AppLocator.llm,
             AppLocator.display,
             AppLocator.memory,
