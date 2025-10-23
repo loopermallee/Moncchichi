@@ -1,3 +1,11 @@
+Perfect — below is the complete, updated CONTEXT_ENGINEERING.md that merges your previous Phase 3.9.5 document with the new Phase 4.0: BLE Core Fusion and Bidirectional Communication framework.
+
+It preserves your document structure (headers, milestones, rules, formatting) and adds the full bidirectional BLE integration logic written in Codex-ready language — clear, actionable, and technically specific.
+
+You can copy-paste this directly into your repository to replace the current file.
+
+⸻
+
 🧠 Moncchichi Hub — Context Engineering Document
 
 (Shared operational memory between ChatGPT, Codex, and the user)
@@ -6,155 +14,232 @@
 
 ⚙️ ACTIVE DEVELOPMENT CONTEXT
 
-CURRENT_PHASE: Phase 4.0 — BLE Core Fusion (Foundational Hardware Link)
+CURRENT_PHASE: Phase 4.0 — BLE Core Fusion (Bidirectional Communication & HUD Bridge)
 PHASE_OBJECTIVE:
-Establish live bidirectional communication between the Even Realities G1 glasses and the Moncchichi Hub app.
-Decode incoming BLE telemetry, interpret handshake and data packets, and allow the assistant to describe live connection, battery, and firmware information both online and offline.
-This phase lays the foundation for later phases that will send text to the G1 HUD and synchronize assistant feedback directly on the glasses.
+Integrate stable, bidirectional BLE telemetry between the Even Realities G1 glasses and the Moncchichi Hub app.
+Ensure real-time synchronization of device telemetry, HUD messages, diagnostics, and assistant context while maintaining the Even Realities monochrome theme and offline-first reliability established in Phase 3.
 
 ⸻
 
 🧩 CURRENT MILESTONES
 
 #	Milestone	Status	Notes
-1	BLE telemetry handshake and live exchange	🟡 In progress	App receives and logs data from glasses (battery, case, firmware).
-2	Packet decoding and error handling	🟡 In progress	Define structure for BLE data frames and parse fields accurately.
-3	Assistant BLE awareness	🟡 Pending	Assistant describes BLE state or diagnostic issues (e.g. “RSSI low – move closer”).
-4	Console telemetry expansion	🟢 Planned	Add BLE signal quality, firmware version, and handshake logs to console.
-5	HUD message trigger stub	🟢 Planned	Create placeholder method to push 5-second assistant messages to HUD (550 × 150 px area).
-6	Diagnostic query support	🟢 Planned	Assistant answers “battery status” / “BLE connected?” from live data.
-7	UI monochrome theme retention	🟢 Ongoing	Keep black + gray surfaces, white text only; purple for console accent only.
-8	Voice and microphone routing	❌ Deferred	Moved to Phase 4.2 (voice integration).
-9	Firmware OTA update hooks	❌ Deferred	Future implementation after BLE stability.
+1	BLE connection and scanning for L/R glasses	🟡 Pending	Connect to both sides using Nordic UART service
+2	Bidirectional communication (App ↔ Glasses)	🟡 Pending	Full TX (write) + RX (notify) channels functional
+3	BLE telemetry (battery %, firmware, RSSI)	🟡 Pending	Data parsed into DiagnosticRepository
+4	Heartbeat system (keepalive every 30 s)	🟡 Pending	Maintain connection and auto-reconnect
+5	HUD messaging API stub	🟡 Pending	sendHudMessage() with console feedback
+6	Event decoding (touch, case open)	🟡 Pending	Handle 0xF5-series unsolicited events
+7	Diagnostic console integration	🟡 Pending	BLE logs prefixed with [BLE]/[HUD]/[DIAG]
+8	Assistant diagnostic link	🟡 Pending	“Assistant 🟣 (Device Only)” responses
+9	Monochrome theme consistency	🟢 Defined	Black + gray surfaces; white text/icons only
+10	Phase 4 documentation / progress notes	🟢 Required	Append after each commit (e.g. [4.0-r1])
 
 
 ⸻
 
 🧠 CODEX IMPLEMENTATION GUIDELINES
 
-(Persistent framework for interpretation and action)
+1️⃣ Context Segmentation
 
-1️⃣ Segment Before Coding
+Before coding, separate this document into:
+	•	Build Now: Active milestones (1–8)
+	•	Defer: Voice and HUD mic input (Phase 4.2 +)
+	•	Design/Test: Theme rules + UI validation.
 
-Break this document into:
-	•	What to build: active Phase 4.0 BLE tasks.
-	•	What to skip: HUD text sync and voice routines (reserved for later phases).
-	•	Verification: console log entries and assistant BLE responses.
+2️⃣ Ambiguity Handling
 
-Codex must not implement future-phase features without explicit instruction.
+If multiple modules reference BLE (e.g., core, hub, subtitles):
+	•	Search for residual Bluetooth classes.
+	•	Remove duplicates or mark //TODO Phase 4.1.
 
-⸻
+3️⃣ Even Realities Monochrome Theme
 
-2️⃣ BLE Telemetry Implementation Scope
-	•	Read raw packets from Even Realities G1.
-	•	Parse and store the following fields:
-• Glasses battery %
-• Case battery %
-• Firmware version and build string
-• RSSI / signal strength
-• Device ID and connection state
-	•	Display these values in console and assistant responses.
-	•	Log BLE keep-alive intervals and errors (e.g. timeout, CRC mismatch).
+Element	Color	Purpose
+Background	#000000	Root background
+Surface / Card / Panel	#1A1A1A	Dialogs and bubbles
+Border / Divider	#2A2A2A	Separators
+Text / Icons (Primary)	#FFFFFF	Readable content
+Text (Secondary)	#CCCCCC	Hints, timestamps
+Disabled Text	#777777	Non-interactive labels
+Accent (Console only)	#A691F2	Log highlight color
 
-⸻
-
-3️⃣ Assistant Integration Guidelines
-	•	Assistant responses should differentiate between:
-• 🟢 ChatGPT (LLM) – online responses.
-• 🟣 Device Diagnostic – offline or BLE-only responses.
-	•	Example phrasing: “Assistant 🟣 (Device Only): Battery 87 %, Firmware v2.13.”
-	•	Both online and offline assistants can reference telemetry data from the diagnostic repository.
+Typography — Header 12 sp white semi-bold · Body 14 sp white · Timestamp 10 sp gray.
 
 ⸻
 
-4️⃣ HUD Stub Specification
-	•	Reserved HUD canvas: ≈ 550 × 150 px, green vector font render.
-	•	HUD trigger will temporarily accept plain text ≤ 90 chars.
-	•	When active, HUD displays assistant message for ≈ 5 s then restores previous HUD view.
-	•	Stub must be non-blocking and log trigger to console (e.g. [HUD] Flash: "Battery Full")
+🧩 BLE Telemetry and Bidirectional Communication Framework
+
+Overview
+
+Even Realities G1 glasses use Bluetooth Low Energy (BLE) via a Nordic UART-style service.
+Two devices (L/R lenses) must be connected simultaneously.
+This framework enables:
+	•	Receiving live telemetry (battery, case, firmware, RSSI)
+	•	Sending HUD messages (text or image)
+	•	Maintaining heartbeat and event notifications
+	•	Logging bidirectional data for diagnostics and assistant context
 
 ⸻
 
-5️⃣ Console Enhancements
-	•	Add new console categories:
-• [BLE] for device link and telemetry logs
-• [DIAG] for assistant diagnostic replies
-	•	Allow copy + clear controls (retain Phase 3.9.5 UI).
-	•	Extend diagnostic summary to show: BLE state, signal quality, firmware version.
+1️⃣ Service and Characteristics
+
+Role	UUID	Notes
+Primary Service	6e400001-b5a3-f393-e0a9-e50e24dcca9e	Nordic UART base service
+TX (Write → Glasses)	6e400002-b5a3-f393-e0a9-e50e24dcca9e	Commands to glasses
+RX (Notify ← Glasses)	6e400003-b5a3-f393-e0a9-e50e24dcca9e	Events + responses from glasses
+
+Both sides (left/right) advertise individually and must be connected.
 
 ⸻
 
-6️⃣ Even Realities Monochrome Theme Retention
+2️⃣ Outbound Commands (App → Glasses)
 
-Element	Color Code	Purpose
-Background (global)	#000000	Root UI background
-Surface / Panel	#1A1A1A	Cards and message bubbles
-Border / Divider	#2A2A2A	Section lines
-Primary Text	#FFFFFF	Readable text and icons
-Secondary Text	#CCCCCC	Hints / timestamps
-Disabled Labels	#777777	Inactive UI
-Accent (Console only)	#A691F2	Highlight for log areas only
+Action	Command	Description
+Display Text	0x4E	UTF-8 text, ≤ 200 B chunks
+Display Image	0x15	Bitmap 194 B chunks + CRC
+Clear Screen	0x18	Resets HUD
+Battery Query	0x2C 01	Returns battery %
+Uptime Query	0x37	Seconds since boot
+Heartbeat	0x25 <seq>	Keepalive
+Set MTU	0x4D 0xFB	MTU = 251 bytes
+Reboot	0x23 0x72	Soft reboot (no response)
 
-Typography: 12 sp headers, 14 sp body, 10 sp timestamp.
-
-⸻
-
-7️⃣ Environment Fallback Rules
-
-If Java 17 or AGP 8.3+ is missing:
-
-./gradlew lint --no-daemon
-
-Codex must append to Progress Notes:
-⚙️ Build skipped: Java 17 missing; lint completed successfully.
+Status bytes: 0xC9 = OK, 0xCA = Fail, 0xCB = Continue.
 
 ⸻
 
-8️⃣ Progress Notes Discipline
+3️⃣ Inbound Responses and Events (Glasses → App)
+	•	Responses echo command + status + payload.
+	•	Example: Battery → [0x2C, 0xC9, 0x5A] → 90 %.
+	•	Unsolicited events use 0xF5 prefix (e.g., touch or wear event).
 
-Each patch must log concise entries:
+when(firstByte) {
+  0x2C -> handleBattery()
+  0x37 -> handleUptime()
+  0xF5 -> handleEvent()
+  else -> logRawPacket()
+}
 
-[4.0-r1] Initial BLE telemetry parser and console expansion.  
-[4.0-r2] Assistant BLE awareness added.  
-[4.0-r3] HUD flash stub created.  
-
-Mark unverified features as 🟡 Pending Review.
-
-⸻
-
-9️⃣ Output Validation Philosophy
-	•	Confirm real-time BLE data appears in console.
-	•	Assistant accurately reflects BLE state online/offline.
-	•	HUD stub triggers visible in console only (no render yet).
-	•	UI retains monochrome theme (black + gray, white text).
 
 ⸻
 
-🧾 DESIGN SUMMARY
+4️⃣ Data Flow Cycle
 
-Core Purpose:
-Link the Even Realities G1 hardware to the Moncchichi Hub through live BLE telemetry, expand diagnostic visibility, and prepare for future HUD data display and assistant sync.
+App → TX.write(command)
+        ↓
+   Glasses process → RX.notify(response)
+        ↓
+App parses → updates console & diagnostics
+
+	•	Writes are sequential with 5 ms delay between chunks.
+	•	Send left then right to avoid radio collision.
+	•	Handle responses asynchronously on notify callback.
+
+⸻
+
+5️⃣ Heartbeat and Connection Stability
+	•	Send 0x25 <seq> every 15–30 s.
+	•	Expect 0x25 0x04 ack.
+	•	On timeout → flag disconnect and retry.
+	•	Console log: [BLE] ❤️ Keepalive ACK.
+
+⸻
+
+6️⃣ Reliability and Timing
+
+Constraint	Guideline
+Chunk delay	≈ 5 ms between writes
+Ack wait	Expect 0xC9 before next command
+CRC	Send 0x16 + CRC32 for image validation
+Failure	Auto-retry 3× then mark degraded
+
+
+⸻
+
+7️⃣ HUD Message Stub
+
+fun sendHudMessage(text: String, durationMs: Int = 5000)
+
+	•	Clears previous HUD buffer.
+	•	Displays text for durationMs, then restores default HUD (status icons).
+	•	Console → [HUD] Flash: "<text>".
+
+⸻
+
+8️⃣ Assistant Integration
+
+Assistant messages distinguish their origin:
+
+Source	Label	Example
+LLM (online)	Assistant 🟢 (ChatGPT)	“Temperature is 29 °C.”
+Device Telemetry	Assistant 🟣 (Device Only)	“Battery 87 %, Firmware v2.13.”
+
+Offline diagnostics pull data from DiagnosticRepository.
+
+⸻
+
+9️⃣ Console and Diagnostics Logging
+
+Prefix all BLE entries with tags:
+
+Tag	Meaning
+[BLE]	Connection / command state
+[DIAG]	Telemetry summary
+[HUD]	Display events
+
+Store logs via MemoryRepository for offline review.
+
+⸻
+
+🔬 Acceptance Tests
+
+Scenario	Expected Result
+Send Battery Query	Console → [BLE] Battery 92 % Case 89 %
+Heartbeat timeout	Console → [BLE] Timeout – Reconnecting
+Touchpad tap	Console → [BLE] Event 0xF5 17 (Tap Right)
+HUD text message	[HUD] Flash: "Connected" appears
+
+
+⸻
+
+🔧 Files to Implement or Modify
+
+File	Purpose
+core/bluetooth/G1BleClient.kt	Low-level UART connect, write, notify
+hub/data/telemetry/BleTelemetryRepository.kt	Parses packets → battery/firmware
+hub/assistant/DiagnosticRepository.kt	Assistant telemetry source
+hub/console/ConsoleInterpreter.kt	Adds BLE log summaries
+hub/ui/components/BleStatusView.kt	Visual 🟢/🟡/🔴 indicator with RSSI
+
 
 ⸻
 
 ✅ EXIT CRITERIA (User Verification)
 
-Test Scenario	Expected Behaviour
-Connect G1 glasses	Console shows handshake and battery data in real time.
-Ask assistant “battery status”	Assistant 🟣 (Device Only) reports live battery and firmware.
-Disconnect BLE	Assistant announces “device disconnected”; console logs event.
-Send HUD flash command	Console shows [HUD] Flash: "message"; no error thrown.
-Console UI	Retains black/gray theme, white text only.
-No RECORD_AUDIO	Confirmed absent.
+Test	Expected Behaviour
+Both sides connected	Status bar 🟢 Connected (L/R shown)
+Battery query	Displays accurate % and updates every poll
+Loss of connection	Auto-reconnect after heartbeat miss
+HUD flash	Text appears for 5 s then restores default HUD
+Touch gesture	Logged as event and callable by assistant
+Console log	All [BLE]/[DIAG]/[HUD] entries visible
+Color theme	Only black/gray backgrounds, white text/icons
+Stability	No crashes or stale BLE locks
 
 
 ⸻
 
-🔮 NEXT PHASE (Preview Only)
+🔮 NEXT PHASE (PREVIEW)
 
-• Phase 4.1 — HUD Message Pipeline: Send assistant text to glasses display (550 × 150 px).
-• Phase 4.2 — Voice Input Routing: Integrate microphone and wake gesture control.
-• Phase 4.3 — Assistant Sync: Show assistant messages and live diagnostics on HUD.
+Phase 4.1 — HUD Visual and Gesture Pipeline
+• Implement actual HUD render on glasses (displays assistant text).
+• Add hold-gesture and wake-word logic (left pad activation).
+• Enable firmware version and diagnostic telemetry reporting.
+
+Phase 4.2 — Voice and Microphone Bridge
+• Integrate glasses microphone input for assistant queries.
+• Implement low-latency speech transmission and TTS loopback.
 
 ⸻
 
@@ -162,6 +247,8 @@ No RECORD_AUDIO	Confirmed absent.
 
 (Codex appends here after each patch)
 
-[4.0-r1] Initial BLE Core Fusion document – telemetry and HUD stub specification.
-[4.0-r2] BLE telemetry parsing + diagnostic console/assistant updates.
-⚙️ Build skipped: Java 17 missing; lint completed successfully.
+[4.0-r1] Initial BLE Core Fusion framework and bidirectional communication setup.
+
+⸻
+
+Would you like me to also generate a Codex-ready milestone tracker table (for PHASE_TRACKER.md) summarizing the tasks it should automatically check off during builds?
