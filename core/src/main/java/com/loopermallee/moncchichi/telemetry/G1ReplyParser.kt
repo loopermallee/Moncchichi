@@ -6,6 +6,11 @@ object G1ReplyParser {
 
     data class DeviceVitals(
         val batteryPercent: Int? = null,
+        val caseBatteryPercent: Int? = null,
+        val firmwareVersion: String? = null,
+        val signalRssi: Int? = null,
+        val deviceId: String? = null,
+        val connectionState: String? = null,
         val wearing: Boolean? = null,
         val inCradle: Boolean? = null,
         val charging: Boolean? = null,
@@ -73,6 +78,11 @@ object G1ReplyParser {
         val current = vitalsFlow.value
         val next = DeviceVitals(
             batteryPercent = partial.batteryPercent ?: current.batteryPercent,
+            caseBatteryPercent = partial.caseBatteryPercent ?: current.caseBatteryPercent,
+            firmwareVersion = partial.firmwareVersion ?: current.firmwareVersion,
+            signalRssi = partial.signalRssi ?: current.signalRssi,
+            deviceId = partial.deviceId ?: current.deviceId,
+            connectionState = partial.connectionState ?: current.connectionState,
             wearing = partial.wearing ?: current.wearing,
             inCradle = partial.inCradle ?: current.inCradle,
             charging = partial.charging ?: current.charging,

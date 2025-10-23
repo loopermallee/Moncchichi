@@ -96,14 +96,27 @@ object OfflineAssistant {
             DiagnosticTopic.BATTERY, DiagnosticTopic.STATUS, DiagnosticTopic.GENERAL -> buildList {
                 add("🔋 Glasses: ${snapshot.device.glassesBattery?.let { "$it %" } ?: "unknown"}")
                 add("💼 Case: ${snapshot.device.caseBattery?.let { "$it %" } ?: "unknown"}")
+                add("🛠 Firmware: ${snapshot.device.firmwareVersion ?: "unknown"}")
+                add("📶 Signal: ${snapshot.device.signalRssi?.let { "${it} dBm" } ?: "unknown"}")
                 snapshot.phoneBattery?.let { add("📱 Phone: $it %") }
                 if (snapshot.isPowerSaver) add("⚡ Phone power saver is ON")
             }
             DiagnosticTopic.FIRMWARE -> listOf(
-                "🛠 Firmware: ${snapshot.device.name?.let { "Awaiting firmware data for $it" } ?: "No firmware info yet"}"
+                "🛠 Firmware: ${snapshot.device.firmwareVersion ?: "No firmware info yet"}"
             )
             else -> emptyList()
         }
+
+        val telemetryHeadline = if (topic in directResponseTopics) {
+            val parts = buildList {
+                snapshot.device.glassesBattery?.let { add("Battery ${it}%") }
+                snapshot.device.caseBattery?.let { add("Case ${it}%") }
+                snapshot.device.firmwareVersion?.let { add("Firmware ${it}") }
+                snapshot.device.signalRssi?.let { add("Signal ${it} dBm") }
+                snapshot.device.connectionState?.let { add("State ${it}") }
+            }
+            if (parts.isNotEmpty()) "Assistant 🟣 (Device Only): ${parts.joinToString(", ")}" else null
+        } else null
 
         val notesLine = insight.notes.takeIf { it.isNotEmpty() }?.joinToString(" • ")?.let { "🗒 $it" }
 
@@ -118,6 +131,7 @@ object OfflineAssistant {
         }
 
         buildString {
+            telemetryHeadline?.let { append(it).append('\n') }
             append(summary)
             if (!skipIntro && !offlineIntroShown) {
                 append("\n⚡ Offline fallback is active – I'll sync replies once I'm online.")

@@ -163,3 +163,5 @@ No RECORD_AUDIO	Confirmed absent.
 (Codex appends here after each patch)
 
 [4.0-r1] Initial BLE Core Fusion document – telemetry and HUD stub specification.
+[4.0-r2] BLE telemetry parsing + diagnostic console/assistant updates.
+⚙️ Build skipped: Java 17 missing; lint completed successfully.

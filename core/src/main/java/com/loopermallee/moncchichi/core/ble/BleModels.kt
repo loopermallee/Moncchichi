@@ -5,5 +5,9 @@ package com.loopermallee.moncchichi.core.ble
  */
 data class DeviceVitals(
     val batteryPercent: Int? = null,
+    val caseBatteryPercent: Int? = null,
     val firmwareVersion: String? = null,
+    val signalRssi: Int? = null,
+    val deviceId: String? = null,
+    val connectionState: String? = null,
 )

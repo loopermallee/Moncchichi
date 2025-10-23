@@ -90,6 +90,8 @@ class StatusBarView @JvmOverloads constructor(
                 val parts = buildList {
                     device.batteryPct?.let { add("Glasses ${it}%") }
                     device.caseBatteryPct?.let { add("Case ${it}%") }
+                    device.firmware?.takeIf { it.isNotBlank() }?.let { add("FW $it") }
+                    device.signalRssi?.let { add("Signal ${it} dBm") }
                 }
                 val subtitle = when {
                     parts.isEmpty() -> device.deviceId?.takeIf { it.isNotBlank() }

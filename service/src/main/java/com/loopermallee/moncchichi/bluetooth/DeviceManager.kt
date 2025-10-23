@@ -198,7 +198,11 @@ internal class DeviceManager(
                     val current = _vitals.value
                     val merged = DeviceVitals(
                         batteryPercent = parsed.batteryPercent ?: current.batteryPercent,
+                        caseBatteryPercent = parsed.caseBatteryPercent ?: current.caseBatteryPercent,
                         firmwareVersion = parsed.firmwareVersion ?: current.firmwareVersion,
+                        signalRssi = parsed.signalRssi ?: current.signalRssi,
+                        deviceId = parsed.deviceId ?: current.deviceId,
+                        connectionState = parsed.connectionState ?: current.connectionState,
                     )
                     if (merged != current) {
                         _vitals.value = merged
@@ -208,9 +212,21 @@ internal class DeviceManager(
                         logTelemetry("DEVICE", "[BATTERY]", "Battery = ${level}%")
                         updateBatteryLevel(level)
                     }
+                    parsed.caseBatteryPercent?.let { case ->
+                        logTelemetry("DEVICE", "[CASE]", "Case battery = ${case}%")
+                    }
                     parsed.firmwareVersion?.let { fw ->
                         completePendingQuery(QueryToken.FIRMWARE)
                         logTelemetry("DEVICE", "[FIRMWARE]", "Firmware = $fw")
+                    }
+                    parsed.signalRssi?.let { rssi ->
+                        logTelemetry("DEVICE", "[SIGNAL]", "RSSI = ${rssi} dBm")
+                    }
+                    parsed.deviceId?.let { id ->
+                        logTelemetry("DEVICE", "[HANDSHAKE]", "Device ID = $id")
+                    }
+                    parsed.connectionState?.let { state ->
+                        logTelemetry("DEVICE", "[STATE]", "Connection state = $state")
                     }
                 } else {
                     when {
