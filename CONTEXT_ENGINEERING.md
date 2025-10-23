@@ -5,7 +5,7 @@
 
 ## ⚙️ ACTIVE DEVELOPMENT CONTEXT
 **CURRENT_PHASE:** Phase 3.8 — Clairvoyant Workflow  
-**PHASE_OBJECTIVE:** Merge BLE telemetry + Assistant layers, refine contextual replies, and simplify UI for stability.  
+**PHASE_OBJECTIVE:** Merge BLE telemetry + Assistant layers, refine contextual replies, simplify UI for stability, and enable local diagnostic intelligence.  
 
 **PRIORITY_MILESTONES**
 | # | Milestone | Status | Notes |
@@ -18,6 +18,7 @@
 | 6 | Verify assistant-device status banner rendering | 🟡 In progress | |
 | 7 | Review BLE reconnect behaviour under idle conditions | ⏳ Todo | |
 | 8 | Filter unrelated system/BLE logs from assistant chat UI | 🟡 In progress | Added 10-24-2025 |
+| 9 | **Offline Assistant Diagnostics** | 🟡 In progress | Assistant interprets console logs and telemetry to explain what’s happening locally (e.g., connection attempts, missing data, stub detection, etc.) |
 
 ---
 
@@ -45,6 +46,7 @@ _(Codex appends short summaries per commit here)_
 | Date | Commit Summary | Status | Reviewed |
 |------|----------------|--------|-----------|
 | 2025-10-24 | Filtered BLE logs from chat UI | 🟡 Pending Review | — |
+| 2025-10-24 | Added Offline Assistant Diagnostic framework | 🟡 In Progress | — |
 
 ---
 
@@ -57,6 +59,8 @@ _(Codex appends short summaries per commit here)_
 - Queue HUD messages when BLE reconnects mid-response.  
 - Ensure chat adapter filters by `MessageSource.USER` and `MessageSource.ASSISTANT`.  
 - Separate BLE/system log flows from chat message flows.  
+- **Enable local diagnostic narration:** Assistant reads `console_log` to explain BLE/LLM status, connection failures, stub data, charging state, etc.  
+- **Store offline queries and replay answers once online.**  
 
 ### Phase Review Log
 | Date | Reviewed Item | Result | Notes |
@@ -67,7 +71,7 @@ _(Codex appends short summaries per commit here)_
 
 ## 🧾 PHASE SUMMARY (for reference)
 **Previous phase:** 3.7 — Assistant Brain Bootstrap (core LLM integration stable).  
-**Current phase:** 3.8 — Clairvoyant Workflow (BLE + LLM merge and UI refinement).  
+**Current phase:** 3.8 — Clairvoyant Workflow (BLE + LLM merge, UI refinement, offline diagnostic assistant).  
 **Next planned phase:** 4.0 — BLE Core Fusion (real telemetry and HUD sync).  
 
 ---
@@ -90,8 +94,8 @@ _(Codex appends short summaries per commit here)_
 ---
 
 ## 🧾 PROJECT RECAP
-**Goal:** Deliver a seamless, privacy-centric bridge between Even Realities G1 glasses and an intelligent assistant.  
-**Core Focus:** Integrate BLE telemetry, LLM reasoning, and HUD display into one stable Android app experience.  
+**Goal:** Deliver a seamless, privacy-centric bridge between the Even Realities G1 glasses and an intelligent assistant.  
+**Core Focus:** Integrate BLE telemetry, LLM reasoning, and HUD display into one stable Android app experience, with local diagnostic narration to assist troubleshooting even offline.  
 
 ---
 
