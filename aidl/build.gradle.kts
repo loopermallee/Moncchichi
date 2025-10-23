@@ -8,7 +8,7 @@ kotlin {
 }
 
 android {
-    namespace = "com.loopermallee.moncchichi"
+    namespace = "com.loopermallee.moncchichi.aidl"
     compileSdk = 35
 
     defaultConfig {

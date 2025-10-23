@@ -15,6 +15,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
+import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -73,7 +74,9 @@ class AssistantFragment : Fragment() {
     private lateinit var messageContainer: LinearLayout
     private lateinit var thinkingContainer: View
     private lateinit var thinkingText: TextView
+    private lateinit var typingIndicator: TextView
     private var thinkingJob: Job? = null
+    private var typingJob: Job? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -98,6 +101,7 @@ class AssistantFragment : Fragment() {
         thinkingContainer = view.findViewById(R.id.container_thinking)
         thinkingText = view.findViewById(R.id.text_thinking)
         thinkingText.background = createBubble(false)
+        typingIndicator = view.findViewById(R.id.text_typing_indicator)
 
         errorActionButton.setOnClickListener {
             val error = currentError ?: return@setOnClickListener
@@ -117,6 +121,10 @@ class AssistantFragment : Fragment() {
                 viewLifecycleOwner.lifecycleScope.launch { vm.post(AppEvent.AssistantAsk(text)) }
                 inputField.setText("")
             }
+        }
+
+        inputField.addTextChangedListener { text ->
+            setTypingIndicatorVisible(!text.isNullOrBlank())
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -174,6 +182,8 @@ class AssistantFragment : Fragment() {
         currentError = null
         thinkingJob?.cancel()
         thinkingJob = null
+        typingJob?.cancel()
+        typingJob = null
     }
 
     private fun renderMessages(history: List<ChatMessage>) {
@@ -192,22 +202,13 @@ class AssistantFragment : Fragment() {
         history.forEach { entry ->
             val headerText = when (entry.source) {
                 MessageSource.USER -> "You:"
-                MessageSource.ASSISTANT -> buildString {
-                    append("Assistant: ")
-                    append(
-                        when (entry.origin) {
-                            MessageOrigin.LLM -> "🟢 ChatGPT"
-                            MessageOrigin.OFFLINE -> "⚡ Offline"
-                            MessageOrigin.DEVICE -> "🟣 Device"
-                        }
-                    )
-                }
+                MessageSource.ASSISTANT -> assistantHeader(entry)
                 else -> entry.source.name + ":"
             }
 
             val header = TextView(requireContext()).apply {
                 text = headerText
-                setTextColor(ContextCompat.getColor(requireContext(), R.color.er_accent))
+                setTextColor(ContextCompat.getColor(requireContext(), R.color.er_text_secondary))
                 textSize = 12f
                 setPadding(horizontal, vertical / 2, horizontal, 0)
                 gravity = if (entry.source == MessageSource.USER) Gravity.END else Gravity.START
@@ -219,12 +220,7 @@ class AssistantFragment : Fragment() {
                 background = createBubble(entry.source == MessageSource.USER)
                 setPadding(horizontal, vertical, horizontal, vertical)
                 textSize = 14f
-                val textColor = if (entry.source == MessageSource.USER) {
-                    ContextCompat.getColor(requireContext(), R.color.er_background)
-                } else {
-                    ContextCompat.getColor(requireContext(), android.R.color.white)
-                }
-                setTextColor(textColor)
+                setTextColor(ContextCompat.getColor(requireContext(), R.color.er_text_primary))
             }
             val params = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -238,7 +234,7 @@ class AssistantFragment : Fragment() {
             val formattedTime = DateFormat.getTimeFormat(requireContext()).format(Date(entry.timestamp))
             val timestamp = TextView(requireContext()).apply {
                 text = formattedTime
-                setTextColor(ContextCompat.getColor(requireContext(), R.color.er_timestamp_text))
+                setTextColor(ContextCompat.getColor(requireContext(), R.color.er_text_secondary))
                 textSize = 10f
                 setPadding(horizontal, 4, horizontal, vertical)
             }
@@ -255,12 +251,14 @@ class AssistantFragment : Fragment() {
     }
 
     private fun createBubble(isUser: Boolean): GradientDrawable {
-        val colorRes = if (isUser) R.color.er_user_bubble else R.color.er_assistant_bubble
+        val colorRes = if (isUser) R.color.er_surface_alt else R.color.er_surface
         val color = ContextCompat.getColor(requireContext(), colorRes)
+        val stroke = ContextCompat.getColor(requireContext(), R.color.er_border)
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = resources.getDimension(R.dimen.assistant_bubble_radius)
             setColor(color)
+            setStroke(dpToPx(1f), stroke)
         }
     }
 
@@ -283,6 +281,54 @@ class AssistantFragment : Fragment() {
             thinkingJob = null
             thinkingText.text = ""
         }
+    }
+
+    private fun setTypingIndicatorVisible(show: Boolean) {
+        typingIndicator.isVisible = show
+        if (show) {
+            if (typingJob == null) {
+                typingJob = viewLifecycleOwner.lifecycleScope.launch {
+                    val frames = listOf(
+                        "User is typing",
+                        "User is typing.",
+                        "User is typing..",
+                        "User is typing..."
+                    )
+                    var index = 0
+                    while (isActive) {
+                        typingIndicator.text = frames[index % frames.size]
+                        index++
+                        delay(320)
+                    }
+                }
+            }
+        } else {
+            typingJob?.cancel()
+            typingJob = null
+            typingIndicator.text = ""
+        }
+    }
+
+    private fun assistantHeader(entry: ChatMessage): String {
+        val tags = mutableListOf<String>()
+        val trimmed = entry.text.trimStart()
+        if (trimmed.startsWith("🛑")) {
+            tags += "⚡ Offline"
+        }
+        when (entry.origin) {
+            MessageOrigin.LLM -> if (tags.isEmpty()) tags += "🟢 ChatGPT"
+            MessageOrigin.OFFLINE -> if ("⚡ Offline" !in tags) tags += "⚡ Offline"
+            MessageOrigin.DEVICE -> tags += "🟣 Device"
+        }
+        if (tags.isEmpty()) {
+            tags += "🟢 ChatGPT"
+        }
+        return "Assistant: ${tags.distinct().joinToString(separator = " · ")}"
+    }
+
+    private fun dpToPx(dp: Float): Int {
+        val density = resources.displayMetrics.density
+        return (dp * density + 0.5f).toInt()
     }
 
     private fun openAppSettings() {

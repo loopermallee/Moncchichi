@@ -9,6 +9,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import com.loopermallee.moncchichi.core.model.ChatMessage
+import com.loopermallee.moncchichi.core.model.MessageOrigin
 import com.loopermallee.moncchichi.core.model.MessageSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,7 +26,8 @@ data class AssistantEntry(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val ts: Long,
     @ColumnInfo(name = "role") val source: String,
-    val text: String
+    val text: String,
+    @ColumnInfo(name = "origin") val origin: String,
 )
 
 @Dao
@@ -46,7 +48,7 @@ interface MemoryDao {
     suspend fun clearConsole()
 }
 
-@Database(entities = [ConsoleLine::class, AssistantEntry::class], version = 2)
+@Database(entities = [ConsoleLine::class, AssistantEntry::class], version = 3)
 abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao
 }
@@ -58,13 +60,14 @@ class MemoryRepository(private val dao: MemoryDao) {
         }
     }
 
-    suspend fun addChatMessage(source: MessageSource, s: String) {
+    suspend fun addChatMessage(source: MessageSource, text: String, origin: MessageOrigin) {
         withContext(Dispatchers.IO) {
             dao.addAssistant(
                 AssistantEntry(
                     ts = System.currentTimeMillis(),
                     source = source.name,
-                    text = s
+                    text = text,
+                    origin = origin.name,
                 )
             )
         }
@@ -83,7 +86,9 @@ class MemoryRepository(private val dao: MemoryDao) {
             dao.lastAssistant(limit)
                 .mapNotNull { entry ->
                     runCatching { MessageSource.valueOf(entry.source) }.getOrNull()?.let { source ->
-                        ChatMessage(entry.text, source, entry.ts)
+                        val origin = runCatching { MessageOrigin.valueOf(entry.origin) }
+                            .getOrDefault(MessageOrigin.LLM)
+                        ChatMessage(entry.text, source, entry.ts, origin)
                     }
                 }
                 .reversed()

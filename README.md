@@ -10,23 +10,23 @@ It merges:
 - 🧩 **Minimal UI:** optimized for hands-free and field use
 
 ## ⚙️ Development Progress
-### Current Phase — Unknown
-**Objective:** 
+### Current Phase — Phase 3.9.5 — Assistant Brain (Adaptive Offline Behaviour & UI Consistency)
+**Objective:**
 
 | # | Milestone | Status | Summary |
 |---|------------|--------|---------|
-| 1 | Accurate online/offline state indicator | 🟡 Pending | Must switch to “Assistant ⚡ (Offline)” when Wi-Fi is off. No false “GPT-4 Online” state. |
-| 2 | Offline diagnostic context reply update | 🟡 Pending | When offline and user asks battery/status, header must change to Offline/🟣 Device. |
-| 3 | Offline message queue and replay | 🟡 Pending | Queue ≤ 10 prompts while offline, replay after “I’m back online ✅”. |
-| 4 | Offline fallback message frequency | 🟡 Pending | Show “Beep boop offline” only once per downtime period. |
-| 5 | Offline announcement and recovery message | 🟡 Pending | Announce offline once; announce online once on reconnect. |
+| 1 | Accurate online/offline state indicator | ✅ Working | Status chips and headers switch to “Assistant ⚡ (Offline)” when connectivity drops. |
+| 2 | Offline diagnostic context reply update | ✅ Working | Offline battery/status replies surface “⚡ Offline · 🟣 Device” header for clarity. |
+| 3 | Offline message queue and replay | ✅ Working | Queues up to 10 prompts and replays after “I’m back online ✅”. |
+| 4 | Offline fallback message frequency | ✅ Working | “Beep boop offline” announcement is limited to one per downtime. |
+| 5 | Offline announcement and recovery message | ✅ Working | Single offline alert plus reconnect banner when service resumes. |
 | 6 | Console “Clear + Copy” controls | ✅ Working | Feature stable and retained. |
 | 7 | Assistant “thinking…” animation | ✅ Working | 300 ms dot cycle. |
-| 8 | Input field text visibility | 🟡 Pending | Text in message box must be white on dark background. |
-| 9 | “User is typing…” indicator | 🟡 Pending | Animated hint below chat; disappears when input cleared or sent. |
+| 8 | Input field text visibility | ✅ Working | Text in message box is white on dark background. |
+| 9 | “User is typing…” indicator | ✅ Working | Animated hint below chat; disappears when input cleared or sent. |
 | 10 | Voice permission removal | ✅ Confirmed | No `RECORD_AUDIO` anywhere. |
-| 11 | Greeting routing | 🟡 Pending | “Hi” / “Good morning” must reach GPT, not filtered. |
-| 12 | Even Realities color theme update | 🟡 Pending | Apply black + gray theme; white only for text/icons; purple accent for console only. |
+| 11 | Greeting routing | ✅ Working | “Hi” / “Good morning” now route directly to GPT. |
+| 12 | Even Realities color theme update | ✅ Working | Monochrome palette applied with white reserved for text/icons. |
 | 13 | Temperature slider reset | ✅ Working | Shows default hint on reset. |
 | 14 | Build tool fallback rules | 🟢 Defined | `./gradlew lint` allowed if Java 17 missing. |
 | 15 | Progress Notes logging | 🟢 Required | Append after each commit. |

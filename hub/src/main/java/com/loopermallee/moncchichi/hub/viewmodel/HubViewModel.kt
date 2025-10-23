@@ -74,6 +74,7 @@ class HubViewModel(
     val uiError: StateFlow<UiError?> = _uiError.asStateFlow()
 
     private val offlineQueue = ArrayDeque<String>()
+    private var offlineAnnouncementShown = false
 
     init {
         val voiceEnabled = prefs.getBoolean(KEY_VOICE_ENABLED, true)
@@ -320,7 +321,7 @@ class HubViewModel(
             st.copy(assistant = assistantPane)
         }
         if (persist) {
-            viewModelScope.launch { memory.addChatMessage(source, adjustedText) }
+            viewModelScope.launch { memory.addChatMessage(source, adjustedText, origin) }
         }
     }
 
@@ -334,6 +335,17 @@ class HubViewModel(
         offlineQueue.addLast(trimmed)
     }
 
+    private fun maybeAnnounceOffline() {
+        if (offlineAnnouncementShown) return
+        offlineAnnouncementShown = true
+        appendChatMessage(
+            MessageSource.ASSISTANT,
+            "We are offline. Reverting back to fallback — Beep boop offline!",
+            forceOfflinePrefix = true,
+            origin = MessageOrigin.OFFLINE,
+        )
+    }
+
     private fun recordAssistantReply(
         text: String,
         offline: Boolean,
@@ -341,9 +353,13 @@ class HubViewModel(
         errorMessage: String? = null,
     ) {
         val origin = when {
-            offline -> MessageOrigin.OFFLINE
             text.contains("[Status]") || text.contains("Battery", ignoreCase = true) -> MessageOrigin.DEVICE
+            offline -> MessageOrigin.OFFLINE
             else -> MessageOrigin.LLM
+        }
+
+        if (offline) {
+            maybeAnnounceOffline()
         }
 
         appendChatMessage(
@@ -356,7 +372,7 @@ class HubViewModel(
         _state.update {
             it.copy(assistant = it.assistant.copy(isOffline = offline))
         }
-        updateAssistantStatus(offline, errorMessage)
+        updateAssistantStatus(offline, errorMessage, autoReport = !offline)
 
         if (!errorMessage.isNullOrBlank()) {
             _uiError.value = UiError("Assistant error", errorMessage, ErrorAction.NONE)
@@ -402,6 +418,11 @@ class HubViewModel(
         val missingKey = key.isNullOrBlank()
         val previous = _assistantConn.value
         val updated = when {
+            offline -> AssistantConnInfo(
+                state = AssistantConnState.FALLBACK,
+                model = null,
+                reason = error?.takeIf { it.isNotBlank() } ?: "No network connectivity",
+            )
             !error.isNullOrBlank() -> AssistantConnInfo(
                 state = AssistantConnState.ERROR,
                 model = null,
@@ -412,11 +433,6 @@ class HubViewModel(
                 model = null,
                 reason = "Disabled – add API key"
             )
-            offline -> AssistantConnInfo(
-                state = AssistantConnState.FALLBACK,
-                model = null,
-                reason = "Fallback mode"
-            )
             else -> AssistantConnInfo(
                 state = AssistantConnState.ONLINE,
                 model = prefs.getString("openai_model", ModelCatalog.defaultModel())?.ifBlank { null }
@@ -424,13 +440,18 @@ class HubViewModel(
             )
         }
         _assistantConn.value = updated
-        val stateChanged = previous.state != updated.state || previous.reason != updated.reason
+        val stateChanged =
+            previous.state != updated.state || previous.reason != updated.reason || previous.model != updated.model
 
-        if (
-            autoReport &&
-            stateChanged &&
-            (updated.state == AssistantConnState.OFFLINE || updated.state == AssistantConnState.FALLBACK)
-        ) {
+        val becameOfflineState =
+            updated.state == AssistantConnState.FALLBACK || updated.state == AssistantConnState.OFFLINE
+        val isFallbackOffline = updated.state == AssistantConnState.FALLBACK
+
+        if (offline && isFallbackOffline && !offlineAnnouncementShown) {
+            maybeAnnounceOffline()
+        }
+
+        if (autoReport && stateChanged && isFallbackOffline) {
             viewModelScope.launch {
                 val prompt = state.value.assistant.lastTranscript.orEmpty()
                 val report = OfflineAssistant.generateResponse(
@@ -450,6 +471,7 @@ class HubViewModel(
 
         val cameOnline = previous.state != AssistantConnState.ONLINE && updated.state == AssistantConnState.ONLINE
         if (cameOnline) {
+            offlineAnnouncementShown = false
             OfflineAssistant.resetSession()
             val queued = offlineQueue.toList()
             offlineQueue.clear()
