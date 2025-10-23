@@ -1,170 +1,165 @@
-# 🧠 Moncchichi Hub — Context Engineering Document  
-*(Shared operational memory between ChatGPT, Codex, and the user)*  
+🧠 Moncchichi Hub — Context Engineering Document
 
----
+(Shared operational memory between ChatGPT, Codex, and the user)
 
-## ⚙️ ACTIVE DEVELOPMENT CONTEXT  
-**CURRENT_PHASE:** Phase 3.9.5 — Assistant Brain (Adaptive Offline Behaviour & UI Consistency)  
-**PHASE_OBJECTIVE:**  
-Refine the assistant’s offline reliability, UI contrast, connection state feedback, and color consistency.  
-Ensure the assistant accurately reflects network status, queues and replays offline messages, and maintains clear visual distinction between online/offline states using the Even Realities **monochrome theme** (black + gray surfaces, white text/icons only).
+⸻
 
----
+⚙️ ACTIVE DEVELOPMENT CONTEXT
 
-## 🧩 CURRENT MILESTONES  
-| # | Milestone | Status | Notes |
-|---|------------|--------|-------|
-| 1 | Accurate online/offline state indicator | 🟡 Pending | Must switch to “Assistant ⚡ (Offline)” when Wi-Fi is off. No false “GPT-4 Online” state. |
-| 2 | Offline diagnostic context reply update | 🟡 Pending | When offline and user asks battery/status, header must change to Offline/🟣 Device. |
-| 3 | Offline message queue and replay | 🟡 Pending | Queue ≤ 10 prompts while offline, replay after “I’m back online ✅”. |
-| 4 | Offline fallback message frequency | 🟡 Pending | Show “Beep boop offline” only once per downtime period. |
-| 5 | Offline announcement and recovery message | 🟡 Pending | Announce offline once; announce online once on reconnect. |
-| 6 | Console “Clear + Copy” controls | ✅ Working | Feature stable and retained. |
-| 7 | Assistant “thinking…” animation | ✅ Working | 300 ms dot cycle. |
-| 8 | Input field text visibility | 🟡 Pending | Text in message box must be white on dark background. |
-| 9 | “User is typing…” indicator | 🟡 Pending | Animated hint below chat; disappears when input cleared or sent. |
-| 10 | Voice permission removal | ✅ Confirmed | No `RECORD_AUDIO` anywhere. |
-| 11 | Greeting routing | 🟡 Pending | “Hi” / “Good morning” must reach GPT, not filtered. |
-| 12 | Even Realities color theme update | 🟡 Pending | Apply black + gray theme; white only for text/icons; purple accent for console only. |
-| 13 | Temperature slider reset | ✅ Working | Shows default hint on reset. |
-| 14 | Build tool fallback rules | 🟢 Defined | `./gradlew lint` allowed if Java 17 missing. |
-| 15 | Progress Notes logging | 🟢 Required | Append after each commit. |
+CURRENT_PHASE: Phase 4.0 — BLE Core Fusion (Foundational Hardware Link)
+PHASE_OBJECTIVE:
+Establish live bidirectional communication between the Even Realities G1 glasses and the Moncchichi Hub app.
+Decode incoming BLE telemetry, interpret handshake and data packets, and allow the assistant to describe live connection, battery, and firmware information both online and offline.
+This phase lays the foundation for later phases that will send text to the G1 HUD and synchronize assistant feedback directly on the glasses.
 
----
+⸻
 
-## 🧠 CODEX IMPLEMENTATION GUIDELINES  
-*(Use this section as a permanent framework for how to interpret and act on context.)*
+🧩 CURRENT MILESTONES
 
-### 1️⃣  **Read and Segment the Context First**  
-Before coding, split this document into:  
-- **What to build** (active milestones)  
-- **What to skip** (future phases or PHASE 4 placeholders)  
-- **Design and testing expectations** (how success is measured).  
+#	Milestone	Status	Notes
+1	BLE telemetry handshake and live exchange	🟡 In progress	App receives and logs data from glasses (battery, case, firmware).
+2	Packet decoding and error handling	🟡 In progress	Define structure for BLE data frames and parse fields accurately.
+3	Assistant BLE awareness	🟡 Pending	Assistant describes BLE state or diagnostic issues (e.g. “RSSI low – move closer”).
+4	Console telemetry expansion	🟢 Planned	Add BLE signal quality, firmware version, and handshake logs to console.
+5	HUD message trigger stub	🟢 Planned	Create placeholder method to push 5-second assistant messages to HUD (550 × 150 px area).
+6	Diagnostic query support	🟢 Planned	Assistant answers “battery status” / “BLE connected?” from live data.
+7	UI monochrome theme retention	🟢 Ongoing	Keep black + gray surfaces, white text only; purple for console accent only.
+8	Voice and microphone routing	❌ Deferred	Moved to Phase 4.2 (voice integration).
+9	Firmware OTA update hooks	❌ Deferred	Future implementation after BLE stability.
 
-> Codex must not merge future-phase features unless explicitly stated.
 
----
+⸻
 
-### 2️⃣  **Expand on Ambiguity Before Coding**  
-If a directive spans multiple modules (e.g., voice removal or network listener), Codex should:  
-- Search all packages for references,  
-- Flag residual code with `//TODO Phase 4`, or remove if safe.  
+🧠 CODEX IMPLEMENTATION GUIDELINES
 
----
+(Persistent framework for interpretation and action)
 
-### 3️⃣  **Even Realities Monochrome Theme Specification**
+1️⃣ Segment Before Coding
 
-**Base Principle:**  
-The interface follows a **dark monochrome** design — **black and gray** surfaces with **white text only**.  
-White is used *solely* for readable text and key icons, never as a panel or button background.
+Break this document into:
+	•	What to build: active Phase 4.0 BLE tasks.
+	•	What to skip: HUD text sync and voice routines (reserved for later phases).
+	•	Verification: console log entries and assistant BLE responses.
 
-| Element | Color Code | Purpose |
-|----------|-------------|----------|
-| **Background (global)** | `#000000` | Root UI background |
-| **Surface / Card / Panel** | `#1A1A1A` | Cards, buttons, message bubbles, sliders |
-| **Divider / Border** | `#2A2A2A` | Section separators |
-| **Primary Text / Icons** | `#FFFFFF` | All readable text, chat input, headers |
-| **Secondary Text** | `#CCCCCC` | Hints, timestamps, placeholders |
-| **Disabled Text / Labels** | `#777777` | Non-interactive UI labels |
-| **Accent (Console only)** | `#A691F2` | Optional highlight for console/log areas only |
+Codex must not implement future-phase features without explicit instruction.
 
-Typography:  
-- **Headers:** 12 sp semi-bold white  
-- **Body:** 14 sp white  
-- **Timestamps:** 10 sp light gray  
+⸻
 
-> 🟢 Rule: Only text and essential icons may use white.  
-> 🟡 Never use white as a background for cards, buttons, or panels.  
-> 🟣 Purple accent limited to console/log sections only.
+2️⃣ BLE Telemetry Implementation Scope
+	•	Read raw packets from Even Realities G1.
+	•	Parse and store the following fields:
+• Glasses battery %
+• Case battery %
+• Firmware version and build string
+• RSSI / signal strength
+• Device ID and connection state
+	•	Display these values in console and assistant responses.
+	•	Log BLE keep-alive intervals and errors (e.g. timeout, CRC mismatch).
 
----
+⸻
 
-### 4️⃣  **Offline Behaviour Flow & Acceptance Examples**
+3️⃣ Assistant Integration Guidelines
+	•	Assistant responses should differentiate between:
+• 🟢 ChatGPT (LLM) – online responses.
+• 🟣 Device Diagnostic – offline or BLE-only responses.
+	•	Example phrasing: “Assistant 🟣 (Device Only): Battery 87 %, Firmware v2.13.”
+	•	Both online and offline assistants can reference telemetry data from the diagnostic repository.
 
-**Logic Overview:**  
-- On offline → announce once: `We are offline. Reverting back to fallback Beep boop!`  
-- Show diagnostic summary once per downtime.  
-- Queue ≤ 10 prompts for replay.  
-- On reconnect → insert “I’m back online ✅” then replay.
+⸻
 
-**Acceptance Samples:**  
-| User Prompt | Expected Response |
-|--------------|------------------|
-| “Battery status?” | `🔋 Glasses 85 %  💼 Case 92 %  📱 Phone 78 %` |
-| “Check Wi-Fi” | `📶 Wi-Fi Offline  ⚙️ API Check  🧠 LLM Fallback` |
-| “Hi” / “Good morning” | ChatGPT responds normally (should not be filtered). |
+4️⃣ HUD Stub Specification
+	•	Reserved HUD canvas: ≈ 550 × 150 px, green vector font render.
+	•	HUD trigger will temporarily accept plain text ≤ 90 chars.
+	•	When active, HUD displays assistant message for ≈ 5 s then restores previous HUD view.
+	•	Stub must be non-blocking and log trigger to console (e.g. [HUD] Flash: "Battery Full")
 
----
+⸻
 
-### 5️⃣  **Environment Fallback Rules**  
-If Java 17 or AGP 8.3+ is unavailable:  
+5️⃣ Console Enhancements
+	•	Add new console categories:
+• [BLE] for device link and telemetry logs
+• [DIAG] for assistant diagnostic replies
+	•	Allow copy + clear controls (retain Phase 3.9.5 UI).
+	•	Extend diagnostic summary to show: BLE state, signal quality, firmware version.
 
-./gradlew lint –no-daemon
+⸻
 
-Codex must record in Progress Notes:  
-`⚙️ Build skipped: Java 17 missing; lint completed successfully.`  
+6️⃣ Even Realities Monochrome Theme Retention
 
----
+Element	Color Code	Purpose
+Background (global)	#000000	Root UI background
+Surface / Panel	#1A1A1A	Cards and message bubbles
+Border / Divider	#2A2A2A	Section lines
+Primary Text	#FFFFFF	Readable text and icons
+Secondary Text	#CCCCCC	Hints / timestamps
+Disabled Labels	#777777	Inactive UI
+Accent (Console only)	#A691F2	Highlight for log areas only
 
-### 6️⃣  **Progress Notes Discipline**  
-Each patch must append concise entries like:  
+Typography: 12 sp headers, 14 sp body, 10 sp timestamp.
 
-[3.9.5-r1] Fixed offline state label and fallback message limit.
-[3.9.5-r2] White input text and “User is typing…” animation added.
-[3.9.5-r3] Applied black/gray UI and restricted white to text only.
+⸻
 
-Mark unfinished items as “🟡 Pending Review”.  
+7️⃣ Environment Fallback Rules
 
----
+If Java 17 or AGP 8.3+ is missing:
 
-### 7️⃣  **Output Validation Philosophy**
- • Visually verify online/offline labels and color contrast.  
- • Confirm queued prompt replay and announcement frequency.  
- • Ensure greetings route to LLM.  
- • Retain console and thinking animations.  
- • Do not add voice features until Phase 4.  
+./gradlew lint --no-daemon
 
----
+Codex must append to Progress Notes:
+⚙️ Build skipped: Java 17 missing; lint completed successfully.
 
-### 8️⃣  **When Uncertainty Exists**  
-If behaviour is unclear:  
- 1. Default to stable behaviour.  
- 2. Implement minimal safe fix.  
- 3. Document reasoning in Progress Notes.  
+⸻
 
----
+8️⃣ Progress Notes Discipline
 
-## 🧾 DESIGN SUMMARY  
-**Core Purpose:**  
-Deliver a stable assistant experience that accurately tracks connectivity, stores and replays offline messages, and uses a clean, dark monochrome Even Realities UI where only text and icons are white.
+Each patch must log concise entries:
 
----
+[4.0-r1] Initial BLE telemetry parser and console expansion.  
+[4.0-r2] Assistant BLE awareness added.  
+[4.0-r3] HUD flash stub created.  
 
-## ✅ EXIT CRITERIA (User Verification)  
+Mark unverified features as 🟡 Pending Review.
 
-| Test Scenario | Expected Behaviour |
-|----------------|-------------------|
-| Switch off Wi-Fi | Assistant header changes to “⚡ Offline”; fallback message appears once. |
-| Reconnect Wi-Fi | “I’m back online ✅” + queued prompts replayed. |
-| Ask battery offline | Shows compact icon summary only. |
-| Send “Hi” | LLM responds normally (confirmed delivery). |
-| Text input | Visible white text on dark background. |
-| Typing animation | “User is typing…” appears and disappears correctly. |
-| Console clear | ✅ Working. |
-| Theme | Only black and gray backgrounds; white for text/icons; purple for console accent only. |
-| Permissions | No `RECORD_AUDIO` present. |
+⸻
 
----
+9️⃣ Output Validation Philosophy
+	•	Confirm real-time BLE data appears in console.
+	•	Assistant accurately reflects BLE state online/offline.
+	•	HUD stub triggers visible in console only (no render yet).
+	•	UI retains monochrome theme (black + gray, white text).
 
-## 🔮 NEXT PHASE (Preview Only)
- • Phase 4.0 — BLE Core Fusion  
- • Add real telemetry and HUD feedback.  
- • Introduce speech from glasses microphone.  
+⸻
 
----
+🧾 DESIGN SUMMARY
 
-## 📄 PROGRESS NOTES  
+Core Purpose:
+Link the Even Realities G1 hardware to the Moncchichi Hub through live BLE telemetry, expand diagnostic visibility, and prepare for future HUD data display and assistant sync.
 
-(Codex appends here after each patch)  
+⸻
 
-[3.9.5-r1] Initial Adaptive Offline update – offline state accuracy and UI contrast.  
+✅ EXIT CRITERIA (User Verification)
+
+Test Scenario	Expected Behaviour
+Connect G1 glasses	Console shows handshake and battery data in real time.
+Ask assistant “battery status”	Assistant 🟣 (Device Only) reports live battery and firmware.
+Disconnect BLE	Assistant announces “device disconnected”; console logs event.
+Send HUD flash command	Console shows [HUD] Flash: "message"; no error thrown.
+Console UI	Retains black/gray theme, white text only.
+No RECORD_AUDIO	Confirmed absent.
+
+
+⸻
+
+🔮 NEXT PHASE (Preview Only)
+
+• Phase 4.1 — HUD Message Pipeline: Send assistant text to glasses display (550 × 150 px).
+• Phase 4.2 — Voice Input Routing: Integrate microphone and wake gesture control.
+• Phase 4.3 — Assistant Sync: Show assistant messages and live diagnostics on HUD.
+
+⸻
+
+📄 PROGRESS NOTES
+
+(Codex appends here after each patch)
+
+[4.0-r1] Initial BLE Core Fusion document – telemetry and HUD stub specification.
