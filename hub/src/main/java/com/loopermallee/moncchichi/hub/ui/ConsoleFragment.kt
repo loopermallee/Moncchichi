@@ -21,6 +21,7 @@ import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.handlers.SystemEventHandler
 import com.loopermallee.moncchichi.hub.util.LogFormatter
+import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
 import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
 import kotlinx.coroutines.flow.collectLatest
@@ -32,7 +33,6 @@ class ConsoleFragment : Fragment() {
         HubVmFactory(
             AppLocator.router,
             AppLocator.ble,
-            AppLocator.speech,
             AppLocator.llm,
             AppLocator.display,
             AppLocator.memory,
@@ -60,6 +60,7 @@ class ConsoleFragment : Fragment() {
         val scroller = view.findViewById<NestedScrollView>(R.id.scroll)
         val text = view.findViewById<TextView>(R.id.text_logs)
         val copyButton = view.findViewById<MaterialButton>(R.id.button_copy_console)
+        val clearButton = view.findViewById<MaterialButton>(R.id.button_clear_console)
 
         copyButton.setOnClickListener {
             val content = text.text?.toString().orEmpty()
@@ -70,6 +71,10 @@ class ConsoleFragment : Fragment() {
                 clipboard.setPrimaryClip(ClipData.newPlainText("Moncchichi Logs", content))
                 Toast.makeText(requireContext(), "Logs copied to clipboard ✅", Toast.LENGTH_SHORT).show()
             }
+        }
+
+        clearButton.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch { vm.post(AppEvent.ClearConsole) }
         }
 
         viewLifecycleOwner.lifecycleScope.launch {

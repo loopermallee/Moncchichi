@@ -10,4 +10,9 @@
     <color name="gray_800">#444444</color>
     <color name="red_500">#EF5350</color>
     <color name="orange_700">#FB8C00</color>
+    <color name="er_accent">#A691F2</color>
+    <color name="er_user_bubble">#5AFFC6</color>
+    <color name="er_assistant_bubble">#2A2335</color>
+    <color name="er_background">#1B1530</color>
+    <color name="er_timestamp_text">#B0AFC8</color>
 </resources>

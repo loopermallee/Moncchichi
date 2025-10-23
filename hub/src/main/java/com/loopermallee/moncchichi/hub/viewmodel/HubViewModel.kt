@@ -4,7 +4,6 @@ import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.loopermallee.moncchichi.core.errors.ErrorAction
-import com.loopermallee.moncchichi.core.errors.ErrorResolver
 import com.loopermallee.moncchichi.core.errors.UiError
 import com.loopermallee.moncchichi.core.llm.ModelCatalog
 import com.loopermallee.moncchichi.core.ui.state.AssistantConnInfo
@@ -30,7 +29,6 @@ import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
 import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
-import com.loopermallee.moncchichi.hub.tools.SpeechTool
 import com.loopermallee.moncchichi.hub.tools.TtsTool
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,11 +45,11 @@ import kotlin.math.max
 import kotlin.math.min
 
 private const val MAX_HISTORY = 60
+private const val MAX_OFFLINE_QUEUE = 10
 
 class HubViewModel(
     private val router: IntentRouter,
     private val ble: BleTool,
-    private val speech: SpeechTool,
     private val llm: LlmTool,
     private val display: DisplayTool,
     private val memory: MemoryRepository,
@@ -130,18 +128,21 @@ class HubViewModel(
             is AppEvent.SendBleCommand -> commandFlow(event.command)
             is AppEvent.UserSaid -> handleTranscript(event.transcript)
             is AppEvent.AssistantAsk -> assistantAsk(event.text)
-            AppEvent.AssistantStartListening -> startListeningFlow()
-            AppEvent.AssistantStopListening -> stopListeningFlow()
-            is AppEvent.AssistantVoiceToggle -> setVoiceEnabled(event.enabled)
             AppEvent.RequestRequiredPermissions -> {
                 perms.requestAll()
                 refreshPermissionsState()
             }
+            AppEvent.ClearConsole -> clearConsole()
         }
     }
 
     fun refreshPermissionsState() {
         _state.update { it.copy(permissionsOk = perms.areAllGranted()) }
+    }
+
+    private suspend fun clearConsole() {
+        memory.clearConsole()
+        _state.update { it.copy(consoleLines = emptyList()) }
     }
 
     private suspend fun startScanFlow() = hubLog("Scanning…") {
@@ -201,52 +202,22 @@ class HubViewModel(
         hubAddLog(summary)
     }
 
-    private suspend fun startListeningFlow() {
-        _state.update {
-            it.copy(assistant = it.assistant.copy(isListening = true, partialTranscript = null))
-        }
-        speech.startListening(
-            onPartial = { partial ->
-                viewModelScope.launch {
-                    _state.update {
-                        it.copy(assistant = it.assistant.copy(partialTranscript = partial))
-                    }
-                }
-            },
-            onFinal = { final ->
-                viewModelScope.launch {
-                    _state.update {
-                        it.copy(assistant = it.assistant.copy(isListening = false, partialTranscript = null))
-                    }
-                    if (final.isNotBlank()) {
-                        post(AppEvent.UserSaid(final))
-                    }
-                }
-            },
-            onError = { code ->
-                viewModelScope.launch { handleSpeechError(code) }
-            }
-        )
-    }
-
-    private suspend fun stopListeningFlow() {
-        speech.stopListening()
-        _state.update {
-            it.copy(assistant = it.assistant.copy(isListening = false, partialTranscript = null))
-        }
-    }
-
     private suspend fun handleTranscript(text: String) {
-        appendChatMessage(MessageSource.USER, text)
-        _state.update { it.copy(assistant = it.assistant.copy(isListening = false)) }
-        routeAndHandle(text)
+        assistantAsk(text)
     }
 
     private suspend fun assistantAsk(text: String) {
-        _state.update { it.copy(assistant = it.assistant.copy(isBusy = true)) }
+        _state.update {
+            it.copy(
+                assistant = it.assistant.copy(
+                    isBusy = true,
+                    isThinking = true,
+                )
+            )
+        }
         appendChatMessage(MessageSource.USER, text)
         routeAndHandle(text)
-        _state.update { it.copy(assistant = it.assistant.copy(isBusy = false)) }
+        _state.update { it.copy(assistant = it.assistant.copy(isBusy = false, isThinking = false)) }
     }
 
     private suspend fun routeAndHandle(text: String) {
@@ -343,7 +314,8 @@ class HubViewModel(
             val assistantPane = st.assistant.copy(
                 history = history,
                 lastTranscript = if (source == MessageSource.USER) text else st.assistant.lastTranscript,
-                lastResponse = if (source == MessageSource.ASSISTANT) adjustedText else st.assistant.lastResponse
+                lastResponse = if (source == MessageSource.ASSISTANT) adjustedText else st.assistant.lastResponse,
+                isThinking = if (source == MessageSource.ASSISTANT) false else st.assistant.isThinking,
             )
             st.copy(assistant = assistantPane)
         }
@@ -356,6 +328,9 @@ class HubViewModel(
         val trimmed = prompt.trim()
         if (trimmed.isEmpty()) return
         if (offlineQueue.contains(trimmed)) return
+        if (offlineQueue.size >= MAX_OFFLINE_QUEUE) {
+            offlineQueue.removeFirst()
+        }
         offlineQueue.addLast(trimmed)
     }
 
@@ -473,19 +448,17 @@ class HubViewModel(
             }
         }
 
-        if (updated.state == AssistantConnState.ONLINE && stateChanged && offlineQueue.isNotEmpty()) {
+        val cameOnline = previous.state != AssistantConnState.ONLINE && updated.state == AssistantConnState.ONLINE
+        if (cameOnline) {
+            OfflineAssistant.resetSession()
             val queued = offlineQueue.toList()
             offlineQueue.clear()
-            val header = buildString {
-                append("I’m back online ✅ — here’s what you asked earlier:")
-                queued.forEach { append("\n• ").append(it) }
-            }
             appendChatMessage(
                 MessageSource.ASSISTANT,
-                header,
+                "I’m back online ✅ and ready to continue.",
                 origin = MessageOrigin.LLM,
             )
-            queued.forEachIndexed { index, prompt ->
+            queued.take(MAX_OFFLINE_QUEUE).forEachIndexed { index, prompt ->
                 viewModelScope.launch {
                     if (index > 0) delay(400L * index)
                     post(AppEvent.AssistantAsk(prompt))
@@ -533,15 +506,6 @@ class HubViewModel(
         hubAddLog("[BLE] Bluetooth on – awaiting device connection")
     }
 
-    private suspend fun handleSpeechError(code: Int) {
-        val error = ErrorResolver.fromSpeech(code)
-        _state.update {
-            it.copy(assistant = it.assistant.copy(isListening = false, partialTranscript = null))
-        }
-        pushUiError(error, updateAssistant = true)
-        hubAddLog("[Speech] Error $code – ${error.title}")
-    }
-
     private fun pushUiError(error: UiError, updateAssistant: Boolean) {
         _uiError.value = error
         if (updateAssistant) {
@@ -584,15 +548,6 @@ class HubViewModel(
         }
 
     private fun timestamp(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-
-    private fun setVoiceEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_VOICE_ENABLED, enabled).apply()
-        _state.update { it.copy(assistant = it.assistant.copy(voiceEnabled = enabled)) }
-        if (!enabled) {
-            tts.stop()
-            _state.update { it.copy(assistant = it.assistant.copy(isSpeaking = false)) }
-        }
-    }
 
     companion object {
         private const val KEY_VOICE_ENABLED = "assistant_voice_enabled"

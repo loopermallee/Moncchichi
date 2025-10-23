@@ -9,6 +9,8 @@ import java.util.Locale
 
 object OfflineAssistant {
 
+    private var offlineIntroShown = false
+
     private enum class DiagnosticTopic {
         CONNECTION,
         INTERNET,
@@ -39,6 +41,13 @@ object OfflineAssistant {
         }
     }
 
+    private val directResponseTopics = setOf(
+        DiagnosticTopic.BATTERY,
+        DiagnosticTopic.STATUS,
+        DiagnosticTopic.GENERAL,
+        DiagnosticTopic.CONNECTION,
+    )
+
     suspend fun generateResponse(
         prompt: String,
         state: AppState,
@@ -49,68 +58,77 @@ object OfflineAssistant {
         val topic = DiagnosticTopic.fromPrompt(prompt)
         val insight = snapshot.insights
 
+        if (!state.assistant.isOffline) {
+            offlineIntroShown = false
+        }
+
+        val summary = ConsoleInterpreter.quickSummary(
+            snapshot.device.glassesBattery,
+            snapshot.device.caseBattery,
+            snapshot.network.label,
+            insight.network,
+            insight.api,
+            insight.llm,
+        )
+
+        val skipIntro = topic in directResponseTopics
+        val savedLine = prompt.takeIf { it.isNotBlank() }?.trim()?.let { "💾 Saved: \"$it\"" }
+        val queueLine = if (pendingQueries > 0) {
+            val suffix = if (pendingQueries > 1) "s" else ""
+            "🗂 $pendingQueries queued request$suffix"
+        } else {
+            null
+        }
+
+        val detailLines = mutableListOf<String>()
+        detailLines += "📡 ${insight.ble.readable("Bluetooth link")}"
+        if (!snapshot.network.isConnected || insight.network.state != ConsoleInterpreter.HealthState.GOOD) {
+            detailLines += "🌐 ${networkSummary(snapshot.network, insight.network)}"
+        }
+        if (insight.api.state != ConsoleInterpreter.HealthState.GOOD) {
+            detailLines += "⚙️ ${insight.api.readable("API key")}"
+        }
+        if (insight.llm.state != ConsoleInterpreter.HealthState.GOOD) {
+            detailLines += "🧠 ${insight.llm.readable("Assistant")}"
+        }
+
+        val deviceLines = when (topic) {
+            DiagnosticTopic.BATTERY, DiagnosticTopic.STATUS, DiagnosticTopic.GENERAL -> buildList {
+                add("🔋 Glasses: ${snapshot.device.glassesBattery?.let { "$it %" } ?: "unknown"}")
+                add("💼 Case: ${snapshot.device.caseBattery?.let { "$it %" } ?: "unknown"}")
+                snapshot.phoneBattery?.let { add("📱 Phone: $it %") }
+                if (snapshot.isPowerSaver) add("⚡ Phone power saver is ON")
+            }
+            DiagnosticTopic.FIRMWARE -> listOf(
+                "🛠 Firmware: ${snapshot.device.name?.let { "Awaiting firmware data for $it" } ?: "No firmware info yet"}"
+            )
+            else -> emptyList()
+        }
+
+        val notesLine = insight.notes.takeIf { it.isNotEmpty() }?.joinToString(" • ")?.let { "🗒 $it" }
+
+        val tipLine = when {
+            topic == DiagnosticTopic.API_KEY && insight.api.state != ConsoleInterpreter.HealthState.GOOD ->
+                "💡 Update your OpenAI key from Settings → Edit Key."
+            topic == DiagnosticTopic.CONNECTION && !snapshot.network.isConnected ->
+                "💡 Toggle Wi‑Fi or cellular data, then tap Retry once we're back online."
+            topic == DiagnosticTopic.INTERNET && insight.network.state != ConsoleInterpreter.HealthState.GOOD ->
+                "💡 Check your router or move closer to the access point."
+            else -> null
+        }
+
         buildString {
-            append("⚡ I'm offline right now but I'm still tracking things locally.\n")
-            if (prompt.isNotBlank()) {
-                append("→ I saved your question: \"")
-                append(prompt.trim())
-                append("\"\n")
-            } else {
-                append("→ I'll respond fully when I'm back online.\n")
+            append(summary)
+            if (!skipIntro && !offlineIntroShown) {
+                append("\n⚡ Offline fallback is active – I'll sync replies once I'm online.")
+                offlineIntroShown = true
             }
-            if (pendingQueries > 0) {
-                append("→ ${pendingQueries} pending request${if (pendingQueries > 1) "s" else ""} queued for replay.\n")
-            }
-            append('\n')
-            append("🔍 Here's what I can see right now:\n")
-
-            fun appendBullet(label: String, value: String) {
-                append("• ")
-                append(label)
-                append(':')
-                append(' ')
-                append(value)
-                append('\n')
-            }
-
-            val device = snapshot.device
-            val networkLabel = when (topic) {
-                DiagnosticTopic.INTERNET, DiagnosticTopic.CONNECTION -> "Network"
-                else -> "Network"
-            }
-            appendBullet(networkLabel, networkSummary(snapshot.network, insight.network))
-            appendBullet("Bluetooth", insight.ble.readable("Bluetooth link"))
-            appendBullet("API key", insight.api.readable("API key"))
-            appendBullet("LLM", insight.llm.readable("Assistant"))
-
-            when (topic) {
-                DiagnosticTopic.BATTERY, DiagnosticTopic.STATUS, DiagnosticTopic.GENERAL -> {
-                    val glasses = device.glassesBattery?.let { "$it%" } ?: "unknown"
-                    val case = device.caseBattery?.let { "$it%" } ?: "unknown"
-                    appendBullet("Glasses battery", glasses)
-                    appendBullet("Case battery", case)
-                    snapshot.phoneBattery?.let { appendBullet("Phone battery", "$it%") }
-                }
-                DiagnosticTopic.FIRMWARE -> {
-                    appendBullet("Firmware", device.name?.let { "Awaiting firmware data for $it" } ?: "No firmware info yet")
-                }
-                else -> Unit
-            }
-
-            val notes = insight.notes
-            if (notes.isNotEmpty()) {
-                append('\n')
-                append("🗒 Recent console notes:\n")
-                notes.forEach { append("• $it\n") }
-            }
-
-            if (topic == DiagnosticTopic.API_KEY && insight.api.state != ConsoleInterpreter.HealthState.GOOD) {
-                append('\n')
-                append("Tip: open Settings → Edit Key to update your OpenAI key.")
-            } else if (topic == DiagnosticTopic.CONNECTION && snapshot.network.isConnected.not()) {
-                append('\n')
-                append("Tip: toggle Wi‑Fi or cellular data, then tap Retry once we're back online.")
-            }
+            savedLine?.let { append("\n").append(it) }
+            queueLine?.let { append("\n").append(it) }
+            deviceLines.forEach { append("\n").append(it) }
+            detailLines.distinct().forEach { append("\n").append(it) }
+            notesLine?.let { append("\n").append(it) }
+            tipLine?.let { append("\n").append(it) }
         }.trimEnd()
     }
 
@@ -132,5 +150,9 @@ object OfflineAssistant {
                 }
             }
         }
+    }
+
+    fun resetSession() {
+        offlineIntroShown = false
     }
 }

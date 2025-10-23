@@ -61,6 +61,13 @@ User prompt → HubViewModel.assistantAsk() ├─► Online (LlmTool) └─►
 
 ---
 
+### 📝 PROGRESS NOTES
+
+- 2025-10-23: Synced Phase 3.9.3 reconnection replay logic, offline diagnostics summary, and Even Realities palette usage across assistant + console surfaces.
+- 2025-10-23: Added offline fallback intro gating in OfflineAssistant to prevent repeated “offline mode” notices within a session.
+
+---
+
 ## 🎨 DESIGN TOKENS (REFERENCE)
 | Element | Color | Purpose |
 |----------|--------|---------|
