@@ -1,190 +1,135 @@
-# 🧠 Moncchichi Hub — Context Engineering Document
-*(Shared operational memory between Codex, ChatGPT, and the user)*  
+Excellent — below is your fully updated CONTEXT_ENGINEERING.md for Codex to follow.
+It incorporates every feedback point you mentioned, and clearly tells Codex which files to modify, what logic to add/remove, and what to leave for Phase 4.
+It’s structured exactly how Codex expects: top context summary → implementation goals → file-specific change tasks → QA/exit criteria.
 
----
+⸻
 
-## ⚙️ ACTIVE DEVELOPMENT CONTEXT  
-**CURRENT_PHASE:** Phase 3.9.1 — Diagnostic & Refinement Pass  
-**PHASE_OBJECTIVE:** Finalize assistant reliability and diagnostic awareness.  
-Refine Settings UX (slider + key logic), clarify assistant message origins, unify Even Realities visual theme, and enable Offline Assistant to self-diagnose BLE + network + LLM state autonomously.
+🧠 Moncchichi Hub — Context Engineering (Updated for Phase 3 Completion)
 
----
+(Shared operational memory between ChatGPT, Codex, and Moncchichi developers)
 
-## 🧩 PRIORITY MILESTONES
-| # | Milestone | Status | Notes |
-|---|------------|--------|-------|
-| 1 | Lock and mask API key field after validation | 🟡 In progress | Greyed-out text box, “Edit Key” toggle |
-| 2 | Reset to Defaults clears key + restores temperature onboarding text | 🟡 In progress | Resets all OpenAI prefs |
-| 3 | Remove model dropdown → static GPT-4o-mini label | ✅ Complete | Simplified UI |
-| 4 | Implement refined temperature slider behaviour | ✅ Complete | Dynamic text after first move |
-| 5 | Expand Offline Assistant to diagnostic agent | 🟡 In progress | Access BLE + Network + System state |
-| 6 | Provenance label for each message (LLM / Offline / Device) | ✅ Complete | Headers above bubbles |
-| 7 | Distinguish Offline vs Fallback tone & colour in UI | 🟡 In progress | Orange vs Yellow accents |
-| 8 | Even Realities theme colour application | 🟡 In progress | Use `#A691F2` / `#272033` |
-| 9 | Improve scroll and bubble alignment | 🟡 Todo | Guarantee auto-scroll and header alignment |
-| 10 | Add timestamp below bubbles | ⏳ Todo | Small grey 10 sp font |
-| 11 | Offline query queue & resync reply | ⏳ Todo | Store in `MemoryRepository` |
-| 12 | BLE status → assistant conversion (device origin) | ⏳ Todo | BLE logs → chat |
-| 13 | Stability & threading cleanup | 🟡 In progress | Ensure main-thread UI updates |
+⸻
 
----
+⚙️ ACTIVE DEVELOPMENT CONTEXT
 
-## 🧭 INSTRUCTION TO CODEX  
+CURRENT_PHASE: Phase 3.9.2 — Final Assistant Brain Stabilization
+PHASE_OBJECTIVE:
+Refine all Assistant Brain (Phase 3.x) components based on user testing feedback:
+improve context awareness, simplify replies, polish UI/UX, and prepare clean hand-off to Phase 4 (BLE telemetry + voice via glasses).
 
-### 1️⃣ Settings Screen UX & Logic
-- Replace model dropdown with static label `GPT-4o-mini`.  
-- After successful API-key validation → grey-out field + show “🔒 Saved”; require **Edit Key** button to unlock.  
-- **Reset to Defaults** clears API key and restores temperature onboarding text.  
-- **Temperature Slider Flow:**  
-  - On load or reset → show default text `"Temperature controls how creative or precise the assistant’s answers are."`  
-  - On first user move → switch to dynamic description (`Precise🧠` → `Creative🌈`).  
-  - On reset → revert to default text and value 0.5.  
+⸻
 
-### 2️⃣ Assistant Chat UI Refinement
-- Add speaker headers above bubbles:  
-  - **You** (user)  
-  - **Assistant 🟢 (ChatGPT)** (online)  
-  - **Assistant ⚡ (Offline)** (diagnostic mode)  
-  - **Assistant 🟣 (Device Only 🛠)** (BLE origin)  
-- Align headers to speaker side; auto-scroll to last reply.  
-- Bubble colours: User `#66FFB2`, Assistant `#2A2335`, Text white.  
-- Optional timestamp below bubble (10 sp grey).  
+🎯 HIGH-LEVEL GOALS
+	1.	Make assistant conversations more natural and visually clear.
+	2.	Add reconnection detection and “I’m back online ✅” announcement.
+	3.	Expand offline queue → retain up to 10 pending messages.
+	4.	Summarize offline diagnostic replies with icons and compact layout.
+	5.	Add colon formatting (“You:” / “Assistant:”) and proper name + origin display.
+	6.	Add “typing / thinking…” indicator while awaiting LLM response.
+	7.	Add “Clear Console” icon beside Copy button.
+	8.	Remove all voice/microphone input features from the app.
+	9.	Tweak color palette for Even Realities consistency (user bubble contrast).
+	10.	Leave BLE telemetry (real values and keepalive auto-summary) to Phase 4.
 
-### 3️⃣ Offline Diagnostic Intelligence Expansion
-- Replace `generateDiagnostic()` → `generateResponse(prompt, state)`  
-  - Keyword parsing for *connection, internet, bluetooth, battery, firmware, api key, status*.  
-  - Pull real-time data from `AppState`, `DeviceInfo`, `ConnectivityManager`, system battery/network APIs.  
-  - Natural-tone summaries (e.g. “Internet down but Bluetooth ok”).  
-- Add `DiagnosticRepository.kt` to aggregate app + BLE + network + LLM status.  
-- On reconnect → assistant auto-responds: “I’m back online ✅ — here’s what you asked earlier …”.
+⸻
 
-### 4️⃣ Provenance Routing and Device Awareness
-- Extend `ChatMessage` with `origin = LLM / OFFLINE / DEVICE`.  
-- Any BLE-generated updates (labelled DEVICE).  
-- Route assistant chat via origin metadata to display proper header and icon.  
+🧩 FILES TO EDIT / CREATE
 
-### 5️⃣ Even Realities Visual Consistency
-- Replace all blue accents with violet `#A691F2`.  
-- Primary background `#272033`.  
-- Text contrast ensured for dark mode.  
-- Status-bar and cards follow same palette (assistant green on dark violet).  
+File	Action	Description
+hub/src/main/java/com/loopermallee/moncchichi/hub/viewmodel/HubViewModel.kt	Modify	• Add reconnection listener → trigger “I’m back online ✅” message and replay queued prompts.• Increase offline queue from 3→10.• When assistant goes ONLINE, prepend summary of queued questions.• Add assistantThinking state (Boolean) used by UI for typing indicator.
+hub/src/main/java/com/loopermallee/moncchichi/hub/assistant/OfflineAssistant.kt	Modify	• Summarize output (icons + short phrases).• If prompt topic == “device/troubleshoot/battery” → skip repeating “offline” paragraph, respond directly.• Show compact diagnostic line: “🔋 Glasses 85 %  📶 Wi-Fi Good  ⚙️ API OK”.
+core/src/main/java/com/loopermallee/moncchichi/core/utils/ConsoleInterpreter.kt	Modify	• Add method quickSummary() returning one-line icon string for OfflineAssistant.• Ensure battery / network / API icons available.
+hub/src/main/java/com/loopermallee/moncchichi/hub/ui/assistant/AssistantFragment.kt	Modify	• Add “thinking …” animation bubble when assistantThinking == true.• Add colons after speaker names.• Add icons beside header based on MessageOrigin (🟢 LLM, ⚡ Offline, 🟣 Device).• Add color tweak for user bubble (light Even Realities green variant).
+hub/src/main/java/com/loopermallee/moncchichi/hub/ui/ConsoleFragment.kt	Modify	• Add new Clear Console icon/button beside Copy.• On press → vm.clearConsole() → purge MemoryRepository lines + refresh view.
+hub/src/main/java/com/loopermallee/moncchichi/hub/viewmodel/AppEvent.kt	Modify	• Add ClearConsole event.
+hub/src/main/java/com/loopermallee/moncchichi/hub/viewmodel/HubViewModel.kt	Modify	• Handle ClearConsole by clearing Room logs.
+hub/src/main/res/layout/fragment_console.xml	Modify	• Add small trash-bin icon (MaterialIcon delete_outline) beside Copy button.
+hub/src/main/res/layout/fragment_assistant.xml	Modify	• Add subtle typing indicator (View or ProgressBar) under assistant chat area.
+hub/src/main/java/com/loopermallee/moncchichi/hub/ui/settings/SettingsFragment.kt	Modify	• Ensure temperature hint resets to default on reset.• Remove voice toggle and mic permissions related logic.
+AndroidManifest.xml (all modules)	Modify	• Remove RECORD_AUDIO permission.• Remove speech service entries if present.
+hub/src/main/java/com/loopermallee/moncchichi/hub/tools/SpeechTool.kt + SpeechToolImpl.kt	Delete / Deprecate	• Remove or stub out speech input functions (no mic).
 
-### 6️⃣ Stability and Threading Cleanup
-- Guarantee UI updates on Main thread.  
-- Cancel coroutines in `onCleared()`.  
-- Debounce duplicate error toasts (5 s window).  
 
----
+⸻
 
-## 🧩 CODEX TASK ZONE
-*(Codex updates these after each commit)*  
+🔄 ADDITIONAL IMPLEMENTATION DETAILS
 
-### Known Issues / Errors
-- [ ] Offline Assistant still returns generic “Previously we talked about…” text instead of diagnostic.  
-- [ ] BLE telemetry shows stub battery data (87 %) — verify real read.  
-- [ ] Settings Reset button not clearing API key completely.  
-- [ ] Timestamp alignment in chat bubbles inconsistent.  
+🧠 Assistant Thinking Animation
+	•	Introduce assistantThinking: Boolean in AppState.assistant.
+	•	When LLM request starts, set to true; when reply arrives, set to false.
+	•	UI shows 3 pulsing dots bubble until reply is displayed.
 
-### Progress Notes
-| Date | Commit Summary | Status | Reviewed |
-|------|----------------|--------|-----------|
-| 2025-10-25 | Added chat headers and message origins | ✅ Done | Pending Review |
-| 2025-10-25 | Offline Assistant expanded with state context | 🟡 In progress | — |
-| 2025-10-25 | Temperature slider onboarding restored | ✅ Done | — |
-| 2025-10-25 | API key lock UI implemented | 🟡 Testing | — |
+🌐 Auto Reconnect and Queued Messages
+	•	Monitor network state via ConnectivityManager.
+	•	When state changes to connected AND assistant was offline:
+	•	Post system reply: “I’m back online ✅ and ready to continue.”
+	•	Re-send up to 10 queued prompts from offlineQueue.
+	•	Clear queue after successful replay.
 
----
+⚡ Offline Diagnostics Refinement
+	•	When prompt topic ∈ {battery, charge, troubleshoot, status}:
+→ skip intro lines about being offline.
+	•	Add icons and compact layout (one line summary then optional detail).
+Example:
 
-## 🧠 CHATGPT REVIEW ZONE  
+🔋 Glasses 87 %  |  💼 Case 93 %  |  📶 Wi-Fi Good  |  🧠 LLM Offline
 
-### Solutions / Ideas
-- Introduce `DiagnosticRepository` as non-blocking coroutine collector.  
-- Cache last diagnostic report for re-use when offline chat continues.  
-- Add auto-reconnect poll every 20 s with status toast.  
-- Maintain user query queue for resend on online resume.  
 
-### Phase Review Log
-| Date | Reviewed Item | Result | Notes |
-|------|----------------|--------|-------|
-| — | — | — | — |
+	•	Use ConsoleInterpreter.quickSummary() for this one-liner.
 
----
+💬 Header Formatting
+	•	“You:” and “Assistant:” labels use Even Realities accent #A691F2.
+	•	Add icon beside Assistant name based on origin:
+	•	🟢 = ChatGPT (LLM)
+	•	⚡ = Offline mode
+	•	🟣 = Device/Telemetry
 
-## 🧾 PHASE SUMMARY  
-**Previous Phase:** 3.8 — Clairvoyant Workflow (BLE + LLM merge)  
-**Current Phase:** 3.9.1 — Diagnostic & Refinement Pass  
-**Next Planned Phase:** 4.0 — BLE Core Fusion (Real telemetry stream + HUD sync)  
+🧹 Console Enhancement
+	•	Add trash-bin icon (top-right or beside Copy).
+	•	vm.clearConsole() clears memory.consoleLines and updates UI.
 
----
+🎨 Color Tuning
+	•	User bubble → #5AFFC6 (soft mint green).
+	•	Assistant bubble → #2A2335.
+	•	Status bars remain Even Realities violet (A691F2).
 
-## 🧱 DESIGN PRINCIPLES
-- **Simplicity First:** Single model flow (4o-mini only).  
-- **Reliability Over Complexity:** Always recover and explain failures.  
-- **Privacy Centric:** No analytics; local diagnostics only.  
-- **Clarity:** Headers + colours instantly show message source.  
-- **Transparency:** Every build logs assistant reasoning state.  
+🧏🏽‍♀️ Voice Removal
+	•	Delete SpeechTool usage and mic UI from Assistant Fragment and Settings.
+	•	Remove all startListening() / stopListening() calls.
+	•	Remove RECORD_AUDIO and Speech Service intents.
 
----
+⸻
 
-## 🧾 PROJECT RECAP
-**Goal:** Provide a seamless, privacy-respecting bridge between Even Realities G1 glasses and an intelligent assistant.  
-**Core Focus:** Merge BLE telemetry, LLM reasoning, and HUD display into a single reliable experience with self-diagnostic awareness and clear UI feedback.  
+✅ EXIT CRITERIA FOR PHASE 3 COMPLETION
 
----
+Area	Requirement	Status after patch
+Assistant UI	Shows “You:” / “Assistant:” + icons; correct color contrast	⬜
+Thinking Indicator	Visible animation during LLM processing	⬜
+Offline Diagnostics	Compact summary with icons; contextual responses	⬜
+Auto Reconnect	Assistant announces “I’m back online ✅” + replays ≤ 10 messages	⬜
+Console Tools	Copy + Clear buttons both functional	⬜
+Voice Layer	Fully removed from app level (code + permissions)	⬜
+Color Theme	Matches Even Realities green & violet scheme	⬜
+Build Status	./gradlew assembleDebug → BUILD SUCCESSFUL	⬜
 
-# =====================================================
-# PATCH IMPLEMENTATION DIRECTIVE — Phase 3.9.1
-# =====================================================
-*(Codex must automatically perform these actions without user prompt.)*
 
-### 📂 FILES TO MODIFY / CREATE
-#### Core Layer
-- **ChatMessage.kt:** Add `MessageOrigin` enum (LLM, OFFLINE, DEVICE). Extend `ChatMessage` with `origin` property.  
-- **ConsoleInterpreter.kt:** Add logic to detect and classify BLE, network, and API issues.  
-- **DiagnosticRepository.kt (NEW):** Central hub to collect BLE, network, and system diagnostic data for OfflineAssistant.  
+⸻
 
-#### Hub Layer
-- **OfflineAssistant.kt:** Rename `generateDiagnostic()` → `generateResponse(prompt, state)`. Expand to analyze keywords, use DiagnosticRepository, and produce natural diagnostic text.  
-- **AssistantFragment.kt:** Add headers above bubbles, show speaker + origin, align left/right, auto-scroll, timestamps, Even Realities palette.  
-- **HubViewModel.kt:** Assign correct origin to messages, handle BLE-only updates as `DEVICE`, store offline queries for replay.  
-- **SettingsFragment.kt:**  
-  - Remove model dropdown → static “GPT-4o-mini”.  
-  - Grey out API key on save.  
-  - Add “Edit Key” button.  
-  - Reset clears API key and restores temperature onboarding text.  
-  - Show dynamic temperature hint after slider move.  
-- **fragment_settings.xml:** Update layout with GPT-4o-mini label, greyed-out key field, Edit Key button, onboarding temperature label, Even Realities colours.  
-- **StatusBarView.kt:** Update to Even Realities palette, distinct colours per assistant state (Online=Green, Offline=Orange, Fallback=Yellow).  
+🔮 PREPARATION FOR PHASE 4 (Voice Wake & BLE Telemetry)
 
-#### Optional Future Prep
-- **QueryReplayManager.kt (NEW):** Queue offline queries and replay once connection restored.  
+Leave placeholders for:
+	•	BLE keepalive metrics to feed ConsoleInterpreter (“❤️ Keepalive → ACK”).
+	•	G1 microphone speech capture to be forwarded to Assistant API.
+	•	HUD feedback synchronization pipeline.
 
----
+⸻
 
-### 🎨 EVEN REALITIES VISUAL PALETTE
-| Element | Colour |
-|----------|---------|
-| Accent | `#A691F2` |
-| Background | `#272033` |
-| User Bubble | `#66FFB2` |
-| Assistant Bubble | `#2A2335` |
-| Offline Accent | `#FFB84D` |
-| Text | `#FFFFFF` |
+✅ Instruction for Codex:
+Implement all changes above exactly as specified in the listed files.
+Use existing Even Realities color theme (#A691F2 / #2A2335 / #5AFFC6).
+Ensure the build compiles without Kotlin errors and passes Phase 3 exit criteria.
 
-Rounded corners 10dp. Use Material3 flat surface cards.
+⸻
 
----
-
-### ✅ EXIT CRITERIA
-1. API key locks on validation and clears on reset.  
-2. Temperature onboarding text restored correctly.  
-3. Offline Assistant provides contextual diagnostics.  
-4. Chat headers show correct origin and colour scheme.  
-5. BLE DEVICE-origin messages labeled properly.  
-6. Theme consistency verified across UI.  
-7. No redundant logs in chat.  
-8. App stable between offline/online transitions.
-
----
-
-*End of Phase 3.9.1 — Codex must read, plan, and execute all above changes autonomously before next phase increment.*
+Would you like me to produce the exact diff patch format (like the previous ones) for Codex to apply directly?
+That version would include concrete code blocks and insertion lines for each file.
