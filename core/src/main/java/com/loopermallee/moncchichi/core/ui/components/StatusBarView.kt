@@ -5,6 +5,7 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.util.AttributeSet
 import android.view.View
@@ -44,81 +45,70 @@ class StatusBarView @JvmOverloads constructor(
     }
 
     fun render(assistant: AssistantConnInfo, device: DeviceConnInfo) {
-        when (assistant.state) {
+        val (assistantTitle, assistantSubtitle, assistantStroke) = when (assistant.state) {
             AssistantConnState.ONLINE -> {
-                val modelLabel = assistant.model ?: "GPT"
-                setChip(
-                    assistantCard,
-                    assistantText,
-                    label = "🟢 Online • $modelLabel",
-                    textColor = COLOR_ASSISTANT_ON,
-                    backgroundColor = COLOR_ASSISTANT_ON_BG
-                )
-            }
-            AssistantConnState.OFFLINE -> {
-                val message = assistant.reason?.takeIf { it.isNotBlank() }?.let { "⚡ Offline • $it" }
-                    ?: "⚡ Offline Mode"
-                setChip(
-                    assistantCard,
-                    assistantText,
-                    label = message,
-                    textColor = COLOR_ASSISTANT_OFF,
-                    backgroundColor = COLOR_ASSISTANT_OFF_BG
+                val modelLabel = assistant.model?.ifBlank { null } ?: "GPT"
+                Triple(
+                    "Assistant • $modelLabel",
+                    "Online",
+                    COLOR_BORDER_DEFAULT,
                 )
             }
             AssistantConnState.FALLBACK -> {
-                val message = assistant.reason?.takeIf { it.isNotBlank() }?.let { "🟠 Fallback • $it" }
-                    ?: "🟠 Offline Fallback"
-                setChip(
-                    assistantCard,
-                    assistantText,
-                    label = message,
-                    textColor = COLOR_ASSISTANT_FALLBACK,
-                    backgroundColor = COLOR_ASSISTANT_FALLBACK_BG
+                Triple(
+                    "Assistant ⚡ (Offline)",
+                    assistant.reason?.takeIf { it.isNotBlank() } ?: "Waiting for connection…",
+                    COLOR_BORDER_HIGHLIGHT,
+                )
+            }
+            AssistantConnState.OFFLINE -> {
+                Triple(
+                    "Assistant ⚡ (Offline)",
+                    assistant.reason?.takeIf { it.isNotBlank() } ?: "Setup required",
+                    COLOR_BORDER_HIGHLIGHT,
                 )
             }
             AssistantConnState.ERROR -> {
-                val reason = assistant.reason ?: "check API key or network"
-                setChip(
-                    assistantCard,
-                    assistantText,
-                    label = "❌ Error – $reason",
-                    textColor = COLOR_ASSISTANT_ERROR,
-                    backgroundColor = COLOR_ASSISTANT_ERROR_BG
+                Triple(
+                    "Assistant ⚠ Error",
+                    assistant.reason?.takeIf { it.isNotBlank() } ?: "Check API key or network",
+                    COLOR_BORDER_ALERT,
                 )
             }
         }
+        setChip(
+            assistantCard,
+            assistantText,
+            assistantTitle,
+            assistantSubtitle,
+            assistantStroke,
+        )
 
         when (device.state) {
             DeviceConnState.CONNECTED -> {
-                val header = buildString {
-                    append("🟢 Connected")
-                    device.deviceName?.takeIf { it.isNotBlank() }?.let { append(" • ").append(it) }
-                    device.deviceId?.takeIf { it.isNotBlank() }?.let { append(" (").append(it).append(')') }
-                    device.firmware?.takeIf { it.isNotBlank() }?.let { append(" FW ").append(it) }
-                }.ifBlank { "🟢 Connected" }
-                val footer = buildList {
+                val name = device.deviceName?.takeIf { it.isNotBlank() } ?: "G1 Glasses"
+                val parts = buildList {
                     device.batteryPct?.let { add("Glasses ${it}%") }
                     device.caseBatteryPct?.let { add("Case ${it}%") }
-                }.takeIf { it.isNotEmpty() }?.joinToString(separator = " • ")?.let { "🔋 $it" }
-                val label: CharSequence = if (footer.isNullOrBlank()) {
-                    header
-                } else {
-                    SpannableStringBuilder(header).apply {
-                        append('\n')
-                        val start = length
-                        append(footer)
-                        setSpan(RelativeSizeSpan(0.85f), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    }
                 }
-                setChip(deviceCard, deviceText, label, COLOR_DEVICE_ON, COLOR_DEVICE_ON_BG)
+                val subtitle = when {
+                    parts.isEmpty() -> device.deviceId?.takeIf { it.isNotBlank() }
+                    else -> "🔋 ${parts.joinToString(" • ")}"
+                }
+                setChip(
+                    deviceCard,
+                    deviceText,
+                    "Device • $name",
+                    subtitle,
+                    COLOR_BORDER_DEFAULT,
+                )
             }
             DeviceConnState.DISCONNECTED -> setChip(
                 deviceCard,
                 deviceText,
-                label = "🚫 No device connected",
-                textColor = COLOR_DEVICE_OFF,
-                backgroundColor = COLOR_DEVICE_OFF_BG
+                "Device ⚠ Not connected",
+                "Start scan to pair",
+                COLOR_BORDER_ALERT,
             )
         }
     }
@@ -127,10 +117,15 @@ class StatusBarView @JvmOverloads constructor(
         val card = MaterialCardView(context)
         card.radius = dpToPx(10f).toFloat()
         card.cardElevation = 0f
-        card.strokeWidth = 0
+        card.setCardBackgroundColor(ColorStateList.valueOf(COLOR_SURFACE))
+        card.setStrokeColor(ColorStateList.valueOf(COLOR_BORDER_DEFAULT))
+        card.strokeWidth = dpToPx(1f)
+        card.useCompatPadding = false
         val text = TextView(context)
         text.setPadding(dpToPx(10f))
         text.textSize = 14f
+        text.setTextColor(COLOR_TEXT_PRIMARY)
+        text.setLineSpacing(0f, 1.05f)
         card.addView(text)
         return card
     }
@@ -138,14 +133,25 @@ class StatusBarView @JvmOverloads constructor(
     private fun setChip(
         card: MaterialCardView,
         text: TextView,
-        label: CharSequence,
-        textColor: Int,
-        backgroundColor: Int
+        title: String,
+        subtitle: String?,
+        strokeColor: Int,
     ) {
-        card.setCardBackgroundColor(ColorStateList.valueOf(backgroundColor))
-        text.setTextColor(textColor)
+        card.setStrokeColor(ColorStateList.valueOf(strokeColor))
+        val label = buildLabel(title, subtitle)
         text.text = label
-        text.contentDescription = label
+        text.contentDescription = subtitle?.let { "$title. $it" } ?: title
+    }
+
+    private fun buildLabel(title: String, subtitle: String?): CharSequence {
+        if (subtitle.isNullOrBlank()) return title
+        return SpannableStringBuilder(title).apply {
+            append('\n')
+            val start = length
+            append(subtitle)
+            setSpan(RelativeSizeSpan(0.85f), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(ForegroundColorSpan(COLOR_TEXT_SECONDARY), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
     }
 
     private fun dpToPx(dp: Float): Int {
@@ -154,18 +160,11 @@ class StatusBarView @JvmOverloads constructor(
     }
 
     companion object {
-        private val COLOR_ASSISTANT_ON = Color.parseColor("#66FFB2")
-        private val COLOR_ASSISTANT_ON_BG = Color.parseColor("#1E2B24")
-        private val COLOR_ASSISTANT_OFF = Color.parseColor("#FFB84D")
-        private val COLOR_ASSISTANT_OFF_BG = Color.parseColor("#3A2A14")
-        private val COLOR_ASSISTANT_FALLBACK = Color.parseColor("#FFCE54")
-        private val COLOR_ASSISTANT_FALLBACK_BG = Color.parseColor("#3A3214")
-        private val COLOR_ASSISTANT_ERROR = Color.parseColor("#FF6B6B")
-        private val COLOR_ASSISTANT_ERROR_BG = Color.parseColor("#2A1E1E")
-
-        private val COLOR_DEVICE_ON = Color.parseColor("#A691F2")
-        private val COLOR_DEVICE_ON_BG = Color.parseColor("#2A2335")
-        private val COLOR_DEVICE_OFF = Color.parseColor("#FF8A65")
-        private val COLOR_DEVICE_OFF_BG = Color.parseColor("#3B2626")
+        private val COLOR_SURFACE = Color.parseColor("#1A1A1A")
+        private val COLOR_BORDER_DEFAULT = Color.parseColor("#2A2A2A")
+        private val COLOR_BORDER_HIGHLIGHT = Color.parseColor("#353535")
+        private val COLOR_BORDER_ALERT = Color.parseColor("#3F3F3F")
+        private val COLOR_TEXT_PRIMARY = Color.parseColor("#FFFFFF")
+        private val COLOR_TEXT_SECONDARY = Color.parseColor("#CCCCCC")
     }
 }

@@ -51,6 +51,19 @@ class IntentRouter {
             return Route.BLE_DEBUG
         }
 
+        if (
+            listOf(
+                "hi",
+                "hello",
+                "hey",
+                "good morning",
+                "good afternoon",
+                "good evening"
+            ).any { t.startsWith(it) }
+        ) {
+            return Route.AI_ASSISTANT
+        }
+
         if (listOf("what", "how", "why", "who", "where", "summarize", "explain").any { t.startsWith(it) }) {
             return Route.AI_ASSISTANT
         }
