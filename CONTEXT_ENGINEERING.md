@@ -1,8 +1,3 @@
-Perfect — here’s your updated Context Engineering Document for the Moncchichi Hub project, now upgraded to Phase 3.9.1.
-This version merges the speaker-label system and provenance indicators (ChatGPT / Offline / Device) into the current phase so Codex can implement them directly.
-
-⸻
-
 🧠 Moncchichi Hub — Context Engineering Document
 
 (Shared operational memory between Codex, ChatGPT and the user)
