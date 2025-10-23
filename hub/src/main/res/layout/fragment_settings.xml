@@ -2,7 +2,8 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#272033">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -21,7 +22,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
             android:text="Assistant Configuration"
-            android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6" />
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6"
+            android:textColor="#A691F2" />
 
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/layout_api_key"
@@ -31,7 +33,10 @@
             android:hint="OpenAI API Key (sk-proj-…)"
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             app:hintAnimationEnabled="true"
-            app:hintEnabled="true">
+            app:hintEnabled="true"
+            app:boxStrokeColor="#A691F2"
+            app:boxStrokeWidth="2dp"
+            app:helperTextEnabled="true">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/input_api_key"
@@ -39,33 +44,59 @@
                 android:layout_height="wrap_content"
                 android:hint="Paste your OpenAI API key"
                 android:inputType="textPassword"
-                android:singleLine="true" />
+                android:singleLine="true"
+                android:textColorHint="#7C74A8"
+                android:textColor="#FFFFFF" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <com.google.android.material.textfield.TextInputLayout
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/button_edit_key"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Edit Key"
+                android:textColor="#A691F2" />
+        </LinearLayout>
+
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
-            android:hint="Model"
-            app:boxBackgroundColor="?attr/colorSurface"
-            app:boxBackgroundMode="filled"
-            app:boxCornerRadiusBottomEnd="8dp"
-            app:boxCornerRadiusBottomStart="8dp"
-            app:boxCornerRadiusTopEnd="8dp"
-            app:boxCornerRadiusTopStart="8dp"
-            app:endIconMode="dropdown_menu">
+            app:cardBackgroundColor="#2A2335"
+            app:cardCornerRadius="12dp"
+            app:strokeColor="#A691F2"
+            app:strokeWidth="1dp">
 
-            <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                android:id="@+id/modelDropdown"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:focusable="false"
-                android:gravity="center_horizontal"
-                android:inputType="none"
-                android:singleLine="true"
-                android:textAlignment="center" />
-        </com.google.android.material.textfield.TextInputLayout>
+                android:orientation="vertical"
+                android:padding="@dimen/assistant_spacing">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Model"
+                    android:textColor="#A691F2"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/text_model_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="GPT-4o-mini"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <TextView
             android:id="@+id/text_temperature_value"
@@ -74,7 +105,8 @@
             android:layout_marginTop="@dimen/assistant_spacing"
             android:gravity="center"
             android:text="Temperature: 0.5"
-            android:textAppearance="@style/TextAppearance.MaterialComponents.Body1" />
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Body1"
+            android:textColor="#FFFFFF" />
 
         <com.google.android.material.slider.Slider
             android:id="@+id/temperatureSlider"
@@ -83,7 +115,10 @@
             android:value="0.5"
             android:valueFrom="0.0"
             android:valueTo="1.0"
-            app:labelBehavior="gone" />
+            app:labelBehavior="gone"
+            app:thumbTint="#A691F2"
+            app:trackColorActive="#A691F2"
+            app:trackColorInactive="#4C3D78" />
 
         <TextView
             android:id="@+id/text_temperature_hint"
@@ -92,14 +127,16 @@
             android:layout_marginTop="4dp"
             android:gravity="center"
             android:text="Lower = precise • Higher = creative"
-            android:textColor="?android:textColorSecondary" />
+            android:textColor="#B0AFC8" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/button_save"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
-            android:text="Save API Settings" />
+            android:backgroundTint="#A691F2"
+            android:text="Save API Settings"
+            android:textColor="#272033" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/button_reset"
@@ -107,7 +144,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Reset to defaults" />
+            android:text="Reset to defaults"
+            android:textColor="#A691F2" />
 
         <TextView
             android:id="@+id/text_status"
@@ -115,14 +153,16 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
             android:text="Speech ready"
-            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
+            android:textColor="#FFFFFF" />
 
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/switch_voice"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/assistant_spacing"
-            android:text="Speak responses on HUD" />
+            android:text="Speak responses on HUD"
+            android:textColor="#FFFFFF" />
 
     </LinearLayout>
 </ScrollView>

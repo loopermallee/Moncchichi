@@ -39,6 +39,8 @@ import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import android.text.format.DateFormat
+import java.util.Date
 
 class AssistantFragment : Fragment() {
 
@@ -52,7 +54,8 @@ class AssistantFragment : Fragment() {
             AppLocator.memory,
             AppLocator.perms,
             AppLocator.tts,
-            AppLocator.prefs
+            AppLocator.prefs,
+            AppLocator.diagnostics,
         )
     }
 
@@ -213,6 +216,7 @@ class AssistantFragment : Fragment() {
                 setTextColor(Color.parseColor("#A691F2"))
                 textSize = 12f
                 setPadding(horizontal, vertical / 2, horizontal, 0)
+                gravity = if (entry.source == MessageSource.USER) Gravity.END else Gravity.START
             }
             messageContainer.addView(header)
 
@@ -230,6 +234,21 @@ class AssistantFragment : Fragment() {
                 gravity = if (entry.source == MessageSource.USER) Gravity.END else Gravity.START
             }
             messageContainer.addView(bubble, params)
+
+            val formattedTime = DateFormat.getTimeFormat(requireContext()).format(Date(entry.timestamp))
+            val timestamp = TextView(requireContext()).apply {
+                text = formattedTime
+                setTextColor(Color.parseColor("#B0AFC8"))
+                textSize = 10f
+                setPadding(horizontal, 4, horizontal, vertical)
+            }
+            val timeParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = if (entry.source == MessageSource.USER) Gravity.END else Gravity.START
+            }
+            messageContainer.addView(timestamp, timeParams)
         }
         messageContainer.tag = signature
         scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
