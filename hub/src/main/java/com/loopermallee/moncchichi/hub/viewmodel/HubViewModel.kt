@@ -16,6 +16,7 @@ import com.loopermallee.moncchichi.core.model.MessageOrigin
 import com.loopermallee.moncchichi.core.model.MessageSource
 import com.loopermallee.moncchichi.hub.assistant.OfflineAssistant
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
+import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
 import com.loopermallee.moncchichi.hub.handlers.AiAssistHandler
 import com.loopermallee.moncchichi.hub.handlers.BleCommandHandler
 import com.loopermallee.moncchichi.hub.handlers.BleDebugHandler
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
@@ -55,7 +57,8 @@ class HubViewModel(
     private val memory: MemoryRepository,
     private val perms: PermissionTool,
     private val tts: TtsTool,
-    private val prefs: SharedPreferences
+    private val prefs: SharedPreferences,
+    private val diagnostics: DiagnosticRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AppState())
@@ -71,6 +74,8 @@ class HubViewModel(
 
     private val _uiError = MutableStateFlow<UiError?>(null)
     val uiError: StateFlow<UiError?> = _uiError.asStateFlow()
+
+    private val offlineQueue = ArrayDeque<String>()
 
     init {
         val voiceEnabled = prefs.getBoolean(KEY_VOICE_ENABLED, true)
@@ -245,11 +250,13 @@ class HubViewModel(
     }
 
     private suspend fun routeAndHandle(text: String) {
-        val respond: (String, Boolean, Boolean, String?) -> Unit = { response, offline, speak, error ->
-            if (response.isNotBlank()) {
-                recordAssistantReply(response, offline, speak, error)
+        // Use the stable 4-parameter responder to maintain compatibility with existing handlers.
+        val respond: (String, Boolean, Boolean, String?) -> Unit =
+            { response, offline, speak, error ->
+                if (response.isNotBlank()) {
+                    recordAssistantReply(response, offline, speak, error)
+                }
             }
-        }
         when (router.route(text)) {
             Route.DEVICE_STATUS -> DeviceStatusHandler.run(
                 ble,
@@ -267,7 +274,22 @@ class HubViewModel(
                 buildContext(),
                 llm,
                 display,
-                onAssistant = { reply -> respond(reply.text, !reply.isOnline, true, reply.errorMessage) },
+                onAssistant = { reply ->
+                    if (reply.isOnline) {
+                        respond(reply.text, false, true, reply.errorMessage)
+                    } else {
+                        enqueueOfflinePrompt(text)
+                        viewModelScope.launch {
+                            val diagnostic = OfflineAssistant.generateResponse(
+                                prompt = text,
+                                state = state.value,
+                                diagnostics = diagnostics,
+                                pendingQueries = offlineQueue.size,
+                            )
+                            respond(diagnostic, true, true, reply.errorMessage)
+                        }
+                    }
+                },
                 log = ::hubAddLog
             )
             Route.TRANSIT -> TransitHandler.run(text, display, { respond(it, false, true, null) }, ::hubAddLog)
@@ -330,7 +352,19 @@ class HubViewModel(
         }
     }
 
-    private fun recordAssistantReply(text: String, offline: Boolean, speak: Boolean, errorMessage: String? = null) {
+    private fun enqueueOfflinePrompt(prompt: String) {
+        val trimmed = prompt.trim()
+        if (trimmed.isEmpty()) return
+        if (offlineQueue.contains(trimmed)) return
+        offlineQueue.addLast(trimmed)
+    }
+
+    private fun recordAssistantReply(
+        text: String,
+        offline: Boolean,
+        speak: Boolean,
+        errorMessage: String? = null,
+    ) {
         val origin = when {
             offline -> MessageOrigin.OFFLINE
             text.contains("[Status]") || text.contains("Battery", ignoreCase = true) -> MessageOrigin.DEVICE
@@ -388,7 +422,7 @@ class HubViewModel(
         updateAssistantStatus(offline, error = null)
     }
 
-    private fun updateAssistantStatus(offline: Boolean, error: String?) {
+    private fun updateAssistantStatus(offline: Boolean, error: String?, autoReport: Boolean = true) {
         val key = prefs.getString("openai_api_key", null)
         val missingKey = key.isNullOrBlank()
         val previous = _assistantConn.value
@@ -415,17 +449,47 @@ class HubViewModel(
             )
         }
         _assistantConn.value = updated
+        val stateChanged = previous.state != updated.state || previous.reason != updated.reason
+
         if (
-            (updated.state == AssistantConnState.OFFLINE || updated.state == AssistantConnState.FALLBACK) &&
-            (previous.state != updated.state || previous.reason != updated.reason)
+            autoReport &&
+            stateChanged &&
+            (updated.state == AssistantConnState.OFFLINE || updated.state == AssistantConnState.FALLBACK)
         ) {
             viewModelScope.launch {
-                val report = OfflineAssistant.generateDiagnostic(memory, state.value)
+                val prompt = state.value.assistant.lastTranscript.orEmpty()
+                val report = OfflineAssistant.generateResponse(
+                    prompt = prompt,
+                    state = state.value,
+                    diagnostics = diagnostics,
+                    pendingQueries = offlineQueue.size,
+                )
                 appendChatMessage(
                     MessageSource.ASSISTANT,
                     report,
                     origin = MessageOrigin.OFFLINE,
+                    forceOfflinePrefix = true,
                 )
+            }
+        }
+
+        if (updated.state == AssistantConnState.ONLINE && stateChanged && offlineQueue.isNotEmpty()) {
+            val queued = offlineQueue.toList()
+            offlineQueue.clear()
+            val header = buildString {
+                append("I’m back online ✅ — here’s what you asked earlier:")
+                queued.forEach { append("\n• ").append(it) }
+            }
+            appendChatMessage(
+                MessageSource.ASSISTANT,
+                header,
+                origin = MessageOrigin.LLM,
+            )
+            queued.forEachIndexed { index, prompt ->
+                viewModelScope.launch {
+                    if (index > 0) delay(400L * index)
+                    post(AppEvent.AssistantAsk(prompt))
+                }
             }
         }
     }

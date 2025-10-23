@@ -11,6 +11,7 @@ import com.loopermallee.moncchichi.hub.tools.PermissionTool
 import com.loopermallee.moncchichi.hub.tools.SpeechTool
 import com.loopermallee.moncchichi.hub.tools.TtsTool
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
+import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
 
 class HubVmFactory(
     private val router: IntentRouter,
@@ -19,6 +20,7 @@ class HubVmFactory(
     private val llm: LlmTool,
     private val display: DisplayTool,
     private val memory: MemoryRepository,
+    private val diagnostics: DiagnosticRepository,
     private val perms: PermissionTool,
     private val tts: TtsTool,
     private val prefs: SharedPreferences
@@ -26,6 +28,17 @@ class HubVmFactory(
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(HubViewModel::class.java))
         @Suppress("UNCHECKED_CAST")
-        return HubViewModel(router, ble, speech, llm, display, memory, perms, tts, prefs) as T
+        return HubViewModel(
+            router,
+            ble,
+            speech,
+            llm,
+            display,
+            memory,
+            perms,
+            tts,
+            prefs,
+            diagnostics,
+        ) as T
     }
 }

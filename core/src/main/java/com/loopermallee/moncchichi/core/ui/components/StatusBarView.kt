@@ -73,8 +73,8 @@ class StatusBarView @JvmOverloads constructor(
                     assistantCard,
                     assistantText,
                     label = message,
-                    textColor = COLOR_ASSISTANT_OFF,
-                    backgroundColor = COLOR_ASSISTANT_OFF_BG
+                    textColor = COLOR_ASSISTANT_FALLBACK,
+                    backgroundColor = COLOR_ASSISTANT_FALLBACK_BG
                 )
             }
             AssistantConnState.ERROR -> {
@@ -155,15 +155,17 @@ class StatusBarView @JvmOverloads constructor(
 
     companion object {
         private val COLOR_ASSISTANT_ON = Color.parseColor("#66FFB2")
-        private val COLOR_ASSISTANT_ON_BG = Color.parseColor("#14271C")
+        private val COLOR_ASSISTANT_ON_BG = Color.parseColor("#1E2B24")
         private val COLOR_ASSISTANT_OFF = Color.parseColor("#FFB84D")
-        private val COLOR_ASSISTANT_OFF_BG = Color.parseColor("#2A2315")
+        private val COLOR_ASSISTANT_OFF_BG = Color.parseColor("#3A2A14")
+        private val COLOR_ASSISTANT_FALLBACK = Color.parseColor("#FFCE54")
+        private val COLOR_ASSISTANT_FALLBACK_BG = Color.parseColor("#3A3214")
         private val COLOR_ASSISTANT_ERROR = Color.parseColor("#FF6B6B")
         private val COLOR_ASSISTANT_ERROR_BG = Color.parseColor("#2A1E1E")
 
         private val COLOR_DEVICE_ON = Color.parseColor("#A691F2")
-        private val COLOR_DEVICE_ON_BG = Color.parseColor("#272033")
+        private val COLOR_DEVICE_ON_BG = Color.parseColor("#2A2335")
         private val COLOR_DEVICE_OFF = Color.parseColor("#FF8A65")
-        private val COLOR_DEVICE_OFF_BG = Color.parseColor("#2E1F1F")
+        private val COLOR_DEVICE_OFF_BG = Color.parseColor("#3B2626")
     }
 }

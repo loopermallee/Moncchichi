@@ -36,6 +36,7 @@ class ConsoleFragment : Fragment() {
             AppLocator.llm,
             AppLocator.display,
             AppLocator.memory,
+            AppLocator.diagnostics,
             AppLocator.perms,
             AppLocator.tts,
             AppLocator.prefs

@@ -6,6 +6,7 @@ import androidx.preference.PreferenceManager
 import androidx.room.Room
 import com.loopermallee.moncchichi.hub.data.db.MemoryDb
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
+import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
 import com.loopermallee.moncchichi.hub.router.IntentRouter
 import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
@@ -39,6 +40,8 @@ object AppLocator {
         private set
     lateinit var prefs: SharedPreferences
         private set
+    lateinit var diagnostics: DiagnosticRepository
+        private set
 
     private var initialized = false
 
@@ -58,6 +61,7 @@ object AppLocator {
         display = DisplayToolImpl(appCtx)
         perms = PermissionToolImpl(appCtx)
         tts = TtsToolImpl(appCtx)
+        diagnostics = DiagnosticRepository(appCtx, memory)
         initialized = true
     }
 }
