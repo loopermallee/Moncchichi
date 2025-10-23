@@ -12,8 +12,15 @@ enum class MessageSource {
     SYSTEM,
 }
 
+enum class MessageOrigin {
+    LLM,
+    OFFLINE,
+    DEVICE,
+}
+
 data class ChatMessage(
     val text: String,
     val source: MessageSource,
     val timestamp: Long,
+    val origin: MessageOrigin = MessageOrigin.LLM,
 )

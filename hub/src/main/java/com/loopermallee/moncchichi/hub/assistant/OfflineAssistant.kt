@@ -14,13 +14,15 @@ object OfflineAssistant {
             val device = state.device
 
             buildString {
-                append("🛑 Assistant (Offline):\n")
-                append("→ Glasses Battery: ${device.glassesBattery ?: "N/A"}%\n")
-                append("→ Case Battery: ${device.caseBattery ?: "N/A"}%\n")
+                append("⚡ I'm offline right now but I’m still listening.\n")
+                append("→ I’ve saved your last question and will reply once I'm back online.\n\n")
+                append("🔍 Here's what I can see locally:\n")
+                append("• Glasses Battery: ${device.glassesBattery ?: "N/A"}%\n")
+                append("• Case Battery: ${device.caseBattery ?: "N/A"}%\n")
                 if (summary.isEmpty()) {
-                    append("→ No recent console activity detected.\n")
+                    append("• No recent console activity detected.\n")
                 } else {
-                    summary.forEach { append("→ $it\n") }
+                    summary.forEach { append("• $it\n") }
                 }
             }
         }
