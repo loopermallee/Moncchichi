@@ -1,6 +1,6 @@
 package com.loopermallee.moncchichi.hub.assistant
 
-import com.loopermallee.moncchichi.core.utils.ConsoleInterpreter
+import com.loopermallee.moncchichi.hub.console.ConsoleInterpreter
 import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
 import com.loopermallee.moncchichi.hub.viewmodel.AppState
 import kotlinx.coroutines.Dispatchers
