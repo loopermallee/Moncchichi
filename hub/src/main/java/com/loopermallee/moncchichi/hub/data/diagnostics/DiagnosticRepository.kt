@@ -5,7 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.PowerManager
-import com.loopermallee.moncchichi.core.utils.ConsoleInterpreter
+import com.loopermallee.moncchichi.hub.console.ConsoleInterpreter
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.viewmodel.AppState
 import com.loopermallee.moncchichi.hub.viewmodel.DeviceInfo

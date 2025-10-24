@@ -1,0 +1,133 @@
+package com.loopermallee.moncchichi.hub.data.telemetry
+
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import java.util.Locale
+import kotlin.math.min
+
+/**
+ * Aggregates BLE telemetry packets (battery %, uptime, RSSI) emitted by [MoncchichiBleService].
+ */
+class BleTelemetryRepository(
+    private val logger: (String) -> Unit = {},
+) {
+
+    data class LensTelemetry(
+        val batteryPercent: Int? = null,
+        val caseBatteryPercent: Int? = null,
+        val lastUpdated: Long? = null,
+    )
+
+    data class Snapshot(
+        val left: LensTelemetry = LensTelemetry(),
+        val right: LensTelemetry = LensTelemetry(),
+        val uptimeSeconds: Long? = null,
+        val lastLens: MoncchichiBleService.Lens? = null,
+        val lastFrameHex: String? = null,
+    )
+
+    private val _snapshot = MutableStateFlow(Snapshot())
+    val snapshot: StateFlow<Snapshot> = _snapshot.asStateFlow()
+
+    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 32)
+    val events: SharedFlow<String> = _events.asSharedFlow()
+
+    fun reset() {
+        _snapshot.value = Snapshot()
+    }
+
+    fun onFrame(lens: MoncchichiBleService.Lens, frame: ByteArray) {
+        if (frame.isEmpty()) return
+        when (frame.first().toInt() and 0xFF) {
+            BATTERY_OPCODE -> handleBattery(lens, frame)
+            UPTIME_OPCODE -> handleUptime(lens, frame)
+            else -> logRaw(lens, frame)
+        }
+    }
+
+    private fun handleBattery(lens: MoncchichiBleService.Lens, frame: ByteArray) {
+        val primary = frame.getOrNull(2)?.toInt()?.takeIf { it in 0..100 }
+        val case = frame.getOrNull(3)?.toInt()?.takeIf { it in 0..100 }
+        if (primary == null && case == null) {
+            logRaw(lens, frame)
+            return
+        }
+        val timestamp = System.currentTimeMillis()
+        _snapshot.update { current ->
+            val updatedLens = current.lens(lens).copy(
+                batteryPercent = primary ?: current.lens(lens).batteryPercent,
+                caseBatteryPercent = case ?: current.lens(lens).caseBatteryPercent,
+                lastUpdated = timestamp,
+            )
+            current.updateLens(lens, updatedLens).copy(
+                lastLens = lens,
+                lastFrameHex = frame.toHex(),
+            )
+        }
+        val mainLabel = primary?.let { "$it%" } ?: "?"
+        val caseLabel = case?.let { "$it%" } ?: "?"
+        _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} battery=$mainLabel case=$caseLabel")
+    }
+
+    private fun handleUptime(lens: MoncchichiBleService.Lens, frame: ByteArray) {
+        val uptime = parseLittleEndianUInt(frame, start = 2, length = min(4, frame.size - 2))
+        if (uptime == null) {
+            logRaw(lens, frame)
+            return
+        }
+        _snapshot.update { current ->
+            current.copy(
+                uptimeSeconds = uptime,
+                lastLens = lens,
+                lastFrameHex = frame.toHex(),
+            )
+        }
+        _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} uptime=${uptime}s")
+    }
+
+    private fun logRaw(lens: MoncchichiBleService.Lens, frame: ByteArray) {
+        val hex = frame.toHex()
+        logger("[BLE][RAW] ${lens.name}: $hex")
+        _snapshot.update { current ->
+            current.copy(lastLens = lens, lastFrameHex = hex)
+        }
+    }
+
+    private fun Snapshot.lens(lens: MoncchichiBleService.Lens): LensTelemetry = when (lens) {
+        MoncchichiBleService.Lens.LEFT -> left
+        MoncchichiBleService.Lens.RIGHT -> right
+    }
+
+    private fun Snapshot.updateLens(
+        lens: MoncchichiBleService.Lens,
+        telemetry: LensTelemetry,
+    ): Snapshot = when (lens) {
+        MoncchichiBleService.Lens.LEFT -> copy(left = telemetry)
+        MoncchichiBleService.Lens.RIGHT -> copy(right = telemetry)
+    }
+
+    private fun parseLittleEndianUInt(frame: ByteArray, start: Int, length: Int): Long? {
+        if (start >= frame.size || length <= 0) return null
+        var value = 0L
+        for (index in 0 until length) {
+            val byte = frame.getOrNull(start + index)?.toLong() ?: return null
+            value = value or ((byte and 0xFF) shl (8 * index))
+        }
+        return value
+    }
+
+    private fun ByteArray.toHex(): String = joinToString(separator = "") { byte ->
+        ((byte.toInt() and 0xFF).toString(16)).padStart(2, '0')
+    }
+
+    companion object {
+        private const val BATTERY_OPCODE = 0x2C
+        private const val UPTIME_OPCODE = 0x37
+    }
+}
