@@ -4,9 +4,12 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.preference.PreferenceManager
 import androidx.room.Room
+import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.hub.data.db.MemoryDb
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.router.IntentRouter
 import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
@@ -14,10 +17,14 @@ import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
 import com.loopermallee.moncchichi.hub.tools.TtsTool
 import com.loopermallee.moncchichi.hub.tools.impl.BleToolImpl
+import com.loopermallee.moncchichi.hub.tools.impl.BleToolLiveImpl
 import com.loopermallee.moncchichi.hub.tools.impl.DisplayToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.LlmToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.PermissionToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.TtsToolImpl
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 object AppLocator {
     lateinit var memory: MemoryRepository
@@ -40,6 +47,11 @@ object AppLocator {
         private set
 
     private var initialized = false
+    private const val useLiveBle: Boolean = true
+    private lateinit var appScope: CoroutineScope
+    private lateinit var bleService: MoncchichiBleService
+    private lateinit var bleTelemetry: BleTelemetryRepository
+    private lateinit var bleScanner: BluetoothScanner
 
     fun init(ctx: Context) {
         if (initialized) return
@@ -51,7 +63,15 @@ object AppLocator {
             .build()
         memory = MemoryRepository(db.dao())
         router = IntentRouter()
-        ble = BleToolImpl(appCtx)
+        appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        ble = if (useLiveBle) {
+            bleScanner = BluetoothScanner(appCtx)
+            bleService = MoncchichiBleService(appCtx, appScope)
+            bleTelemetry = BleTelemetryRepository()
+            BleToolLiveImpl(appCtx, bleService, bleTelemetry, bleScanner, appScope)
+        } else {
+            BleToolImpl(appCtx)
+        }
         llm = LlmToolImpl(appCtx)
         display = DisplayToolImpl(appCtx)
         perms = PermissionToolImpl(appCtx)

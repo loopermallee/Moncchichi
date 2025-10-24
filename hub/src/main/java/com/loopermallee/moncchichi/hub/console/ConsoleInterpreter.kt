@@ -38,6 +38,21 @@ object ConsoleInterpreter {
         var apiStatus = ChannelStatus(HealthState.UNKNOWN)
         var llmStatus = ChannelStatus(HealthState.UNKNOWN)
 
+        recent.lastOrNull { it.contains("firmware=", ignoreCase = true) }?.let { line ->
+            val summary = line.substringAfter("firmware=").trim()
+            if (summary.isNotEmpty()) {
+                notes += "Firmware $summary"
+            }
+        }
+        recent.lastOrNull {
+            it.contains("battery=", ignoreCase = true) && it.contains("case=", ignoreCase = true)
+        }?.let { line ->
+            val detail = line.substringAfter("[DIAG]", "").trim()
+            if (detail.isNotEmpty()) {
+                notes += "Battery update • $detail"
+            }
+        }
+
         val hasBleAck = recent.any { it.contains("ACK", ignoreCase = true) && it.contains("C9", ignoreCase = true) }
         val hasHeartbeat = recent.any { it.contains("Keepalive", ignoreCase = true) && it.contains("❤️") }
         val hasReconnect = recent.any { it.contains("Reconnecting", ignoreCase = true) }

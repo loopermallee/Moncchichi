@@ -18,7 +18,7 @@ import kotlin.math.min
 import kotlin.text.Charsets
 
 /**
- * Aggregates BLE telemetry packets (battery %, uptime, RSSI) emitted by [MoncchichiBleService].
+ * Aggregates BLE telemetry packets (battery %, uptime, firmware, RSSI) emitted by [MoncchichiBleService].
  */
 class BleTelemetryRepository(
     private val logger: (String) -> Unit = {},
@@ -28,6 +28,7 @@ class BleTelemetryRepository(
         val batteryPercent: Int? = null,
         val caseBatteryPercent: Int? = null,
         val lastUpdated: Long? = null,
+        val rssi: Int? = null,
     )
 
     data class Snapshot(
@@ -51,6 +52,7 @@ class BleTelemetryRepository(
 
     fun reset() {
         _snapshot.value = Snapshot()
+        _events.tryEmit("[BLE][DIAG] telemetry reset")
     }
 
     fun bindToService(service: MoncchichiBleService, scope: CoroutineScope) {
@@ -68,15 +70,15 @@ class BleTelemetryRepository(
                     reset()
                 }
                 lastConnected = connected
+                mergeRssi(MoncchichiBleService.Lens.LEFT, state.left.rssi)
+                mergeRssi(MoncchichiBleService.Lens.RIGHT, state.right.rssi)
             }
         }
     }
 
     fun unbind() {
-        frameJob?.cancel()
-        frameJob = null
-        stateJob?.cancel()
-        stateJob = null
+        frameJob?.cancel(); frameJob = null
+        stateJob?.cancel(); stateJob = null
         lastConnected = false
     }
 
@@ -98,16 +100,16 @@ class BleTelemetryRepository(
             return
         }
         val timestamp = System.currentTimeMillis()
+        val hex = frame.toHex()
         _snapshot.update { current ->
-            val updatedLens = current.lens(lens).copy(
-                batteryPercent = primary ?: current.lens(lens).batteryPercent,
-                caseBatteryPercent = case ?: current.lens(lens).caseBatteryPercent,
+            val existing = current.lens(lens)
+            val updatedLens = existing.copy(
+                batteryPercent = primary ?: existing.batteryPercent,
+                caseBatteryPercent = case ?: existing.caseBatteryPercent,
                 lastUpdated = timestamp,
             )
-            current.updateLens(lens, updatedLens).copy(
-                lastLens = lens,
-                lastFrameHex = frame.toHex(),
-            )
+            val next = if (updatedLens == existing) current else current.updateLens(lens, updatedLens)
+            next.withFrame(lens, hex)
         }
         val mainLabel = primary?.let { "$it%" } ?: "?"
         val caseLabel = case?.let { "$it%" } ?: "?"
@@ -120,12 +122,13 @@ class BleTelemetryRepository(
             logRaw(lens, frame)
             return
         }
+        val hex = frame.toHex()
         _snapshot.update { current ->
-            current.copy(
-                uptimeSeconds = uptime,
-                lastLens = lens,
-                lastFrameHex = frame.toHex(),
-            )
+            if (current.uptimeSeconds == uptime && current.lastLens == lens && current.lastFrameHex == hex) {
+                current
+            } else {
+                current.copy(uptimeSeconds = uptime).withFrame(lens, hex)
+            }
         }
         _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} uptime=${uptime}s")
     }
@@ -135,27 +138,34 @@ class BleTelemetryRepository(
             logRaw(lens, frame)
             return
         }
-        val version = frame.copyOfRange(2, frame.size).toString(Charsets.UTF_8).trim()
-        if (version.isEmpty()) {
-            logRaw(lens, frame)
-            return
-        }
+        val raw = frame.copyOfRange(2, frame.size)
+        val decoded = runCatching { raw.toString(Charsets.UTF_8).trim() }.getOrNull().orEmpty()
+        val version = if (decoded.isBlank()) raw.toHex() else decoded
+        val hex = frame.toHex()
         _snapshot.update { current ->
-            current.copy(
-                firmwareVersion = version,
-                lastLens = lens,
-                lastFrameHex = frame.toHex(),
-            )
+            if (current.firmwareVersion == version && current.lastLens == lens && current.lastFrameHex == hex) {
+                current
+            } else {
+                current.copy(firmwareVersion = version).withFrame(lens, hex)
+            }
         }
-        val lensLabel = lens.name.lowercase(Locale.US)
-        _events.tryEmit("[DIAG] ${lensLabel} firmware=${version}")
+        _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} firmware=$version")
     }
 
     private fun logRaw(lens: MoncchichiBleService.Lens, frame: ByteArray) {
         val hex = frame.toHex()
         logger("[BLE][RAW] ${lens.name}: $hex")
+        _snapshot.update { current -> current.withFrame(lens, hex) }
+    }
+
+    private fun mergeRssi(lens: MoncchichiBleService.Lens, newValue: Int?) {
         _snapshot.update { current ->
-            current.copy(lastLens = lens, lastFrameHex = hex)
+            val existing = current.lens(lens)
+            if (existing.rssi == newValue) {
+                current
+            } else {
+                current.updateLens(lens, existing.copy(rssi = newValue))
+            }
         }
     }
 
@@ -170,6 +180,14 @@ class BleTelemetryRepository(
     ): Snapshot = when (lens) {
         MoncchichiBleService.Lens.LEFT -> copy(left = telemetry)
         MoncchichiBleService.Lens.RIGHT -> copy(right = telemetry)
+    }
+
+    private fun Snapshot.withFrame(lens: MoncchichiBleService.Lens, hex: String): Snapshot {
+        return if (lastLens == lens && lastFrameHex == hex) {
+            this
+        } else {
+            copy(lastLens = lens, lastFrameHex = hex)
+        }
     }
 
     private fun parseLittleEndianUInt(frame: ByteArray, start: Int, length: Int): Long? {
