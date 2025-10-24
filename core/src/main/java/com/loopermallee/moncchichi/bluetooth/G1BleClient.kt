@@ -45,7 +45,12 @@ class G1BleClient(
         val rssi: Int? = null,
     )
 
-    private val uartClient = G1BleUartClient(context, device, logger::i, scope)
+    private val uartClient = G1BleUartClient(
+        context,
+        device,
+        { message -> logger.i(label, "[BLE] $message") },
+        scope,
+    )
     private val ackSignals = Channel<Unit>(capacity = Channel.CONFLATED)
     private val _ackEvents = MutableSharedFlow<Long>(extraBufferCapacity = 8)
     val ackEvents: SharedFlow<Long> = _ackEvents.asSharedFlow()

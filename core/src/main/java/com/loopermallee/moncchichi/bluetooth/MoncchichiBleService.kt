@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -222,7 +223,7 @@ class MoncchichiBleService(
     }
 
     private suspend fun heartbeatLoop() {
-        while (isActive) {
+        while (coroutineContext.isActive) {
             val records = ALL_LENSES.mapNotNull { lens ->
                 clientRecords[lens]?.takeIf { it.clientState().isConnected }
             }
