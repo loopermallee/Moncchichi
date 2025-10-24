@@ -1,15 +1,21 @@
 package com.loopermallee.moncchichi.hub.data.telemetry
 
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.min
+import kotlin.text.Charsets
 
 /**
  * Aggregates BLE telemetry packets (battery %, uptime, RSSI) emitted by [MoncchichiBleService].
@@ -30,6 +36,7 @@ class BleTelemetryRepository(
         val uptimeSeconds: Long? = null,
         val lastLens: MoncchichiBleService.Lens? = null,
         val lastFrameHex: String? = null,
+        val firmwareVersion: String? = null,
     )
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -38,8 +45,39 @@ class BleTelemetryRepository(
     private val _events = MutableSharedFlow<String>(extraBufferCapacity = 32)
     val events: SharedFlow<String> = _events.asSharedFlow()
 
+    private var frameJob: Job? = null
+    private var stateJob: Job? = null
+    private var lastConnected = false
+
     fun reset() {
         _snapshot.value = Snapshot()
+    }
+
+    fun bindToService(service: MoncchichiBleService, scope: CoroutineScope) {
+        unbind()
+        lastConnected = service.state.value.left.isConnected || service.state.value.right.isConnected
+        frameJob = scope.launch {
+            service.incoming.collect { frame ->
+                onFrame(frame.lens, frame.payload)
+            }
+        }
+        stateJob = scope.launch {
+            service.state.collectLatest { state ->
+                val connected = state.left.isConnected || state.right.isConnected
+                if (!connected && lastConnected) {
+                    reset()
+                }
+                lastConnected = connected
+            }
+        }
+    }
+
+    fun unbind() {
+        frameJob?.cancel()
+        frameJob = null
+        stateJob?.cancel()
+        stateJob = null
+        lastConnected = false
     }
 
     fun onFrame(lens: MoncchichiBleService.Lens, frame: ByteArray) {
@@ -47,6 +85,7 @@ class BleTelemetryRepository(
         when (frame.first().toInt() and 0xFF) {
             BATTERY_OPCODE -> handleBattery(lens, frame)
             UPTIME_OPCODE -> handleUptime(lens, frame)
+            FIRMWARE_OPCODE -> handleFirmware(lens, frame)
             else -> logRaw(lens, frame)
         }
     }
@@ -91,6 +130,27 @@ class BleTelemetryRepository(
         _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} uptime=${uptime}s")
     }
 
+    private fun handleFirmware(lens: MoncchichiBleService.Lens, frame: ByteArray) {
+        if (frame.size <= 2) {
+            logRaw(lens, frame)
+            return
+        }
+        val version = frame.copyOfRange(2, frame.size).toString(Charsets.UTF_8).trim()
+        if (version.isEmpty()) {
+            logRaw(lens, frame)
+            return
+        }
+        _snapshot.update { current ->
+            current.copy(
+                firmwareVersion = version,
+                lastLens = lens,
+                lastFrameHex = frame.toHex(),
+            )
+        }
+        val lensLabel = lens.name.lowercase(Locale.US)
+        _events.tryEmit("[DIAG] ${lensLabel} firmware=${version}")
+    }
+
     private fun logRaw(lens: MoncchichiBleService.Lens, frame: ByteArray) {
         val hex = frame.toHex()
         logger("[BLE][RAW] ${lens.name}: $hex")
@@ -129,5 +189,6 @@ class BleTelemetryRepository(
     companion object {
         private const val BATTERY_OPCODE = 0x2C
         private const val UPTIME_OPCODE = 0x37
+        private const val FIRMWARE_OPCODE = 0x11
     }
 }

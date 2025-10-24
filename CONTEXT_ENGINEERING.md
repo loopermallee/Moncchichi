@@ -21,7 +21,7 @@ Maintain Even Realities monochrome theme and offline-first principles from Phase
 #	Milestone	Wave	Status	Notes
 1	Dual-lens BLE connection (L + R)	1	🟢 Implemented / 🟡 Pending User Confirmation	MoncchichiBleService and G1BleClient handle dual Gatt sessions and per-lens state.
 2	Bidirectional communication (App ↔ Glasses)	1	🟢 Implemented / 🟡 Pending User Confirmation	ACK-aware send pipeline with mutex locking and 5 ms stagger between lenses.
-3	BLE telemetry (battery %, firmware, RSSI)	1	🟢 Partially Implemented / 🟡 Pending User Confirmation	BleTelemetryRepository captures 0x2C/0x37 frames → battery & uptime. Firmware opcode still pending.
+3	BLE telemetry (battery %, firmware, RSSI)	1	🟢 Implemented / 🟡 Pending User Confirmation	BleTelemetryRepository captures 0x2C/0x37/0x11 frames → battery, uptime, firmware snapshots with auto-reset on disconnect.
 4	Heartbeat (keepalive every 30 s)	1	🟢 Implemented / 🟡 Pending User Confirmation	Automatic seq-based heartbeat loop per lens (0x25 ↔ 0x25 0x04 ACK).
 5	HUD messaging API	2	⚫ Not Started	Next wave feature (add sendHudMessage & display feedback).
 6	Event decoding (touch, case open)	2	⚫ Not Started	Reserved for Phase 4.1.
@@ -40,7 +40,7 @@ Maintain Even Realities monochrome theme and offline-first principles from Phase
 Wave 1 includes:
 	•	MoncchichiBleService.kt – dual Gatt sessions & heartbeat loop.
 	•	G1BleClient.kt – per-lens ACK tracking & sequenced send.
-	•	BleTelemetryRepository.kt – battery / uptime parsing framework.
+	•	BleTelemetryRepository.kt – battery / uptime / firmware parsing + service binding.
 	•	BleStatusView.kt – monochrome status UI with left/right lens state.
 	•	ConsoleInterpreter.kt – diagnostic summary for assistant.
 
@@ -56,17 +56,17 @@ MoncchichiBleService
 	•	Serial send queue prevents RF collision (5 ms stagger).
 	•	Heartbeat loop auto-reconnects and marks lens “degraded” on ACK failure.
 
-⚠️ Firmware opcode and case telemetry to be added in next revision.
+✅ Firmware opcode + case telemetry handled via BleTelemetryRepository 4.0-r1b update.
 
 ⸻
 
 3️⃣ Telemetry Repository (Status – Delivered / Partial)
 
 BleTelemetryRepository
-	•	Handles battery (0x2C) and uptime (0x37) frames.
-	•	Stores left/right telemetry snapshots + last ACK timestamp.
-	•	Exposes StateFlow<Snapshot> to UI and assistant.
-	•	Missing firmware opcode parsing (⚠️ pending for Wave 1b).
+	•	Handles battery (0x2C), uptime (0x37), and firmware (0x11) frames.
+	•	Stores left/right telemetry snapshots + last ACK timestamp with firmware version.
+	•	Exposes StateFlow<Snapshot> to UI and assistant + bind/unbind helpers to MoncchichiBleService.
+	•	Auto-resets telemetry when both lenses disconnect to avoid stale data.
 
 ⸻
 
@@ -119,7 +119,8 @@ Ack timeout	Console logs “ACK timeout” + degraded flag.
 File	Purpose
 core/bluetooth/G1BleClient.kt	Per-lens ACK tracking and sequenced writes ( new ).
 core/bluetooth/MoncchichiBleService.kt	Dual-lens BLE manager + heartbeat ( new ).
-hub/data/telemetry/BleTelemetryRepository.kt	Aggregates 0x2C/0x37 packets → telemetry ( new ).
+hub/data/telemetry/BleTelemetryRepository.kt	Aggregates 0x2C/0x37/0x11 packets → telemetry + service binding ( updated ).
+hub/bluetooth/G1Protocol.kt	Packet helpers for battery, firmware, ping, brightness, reboot ( updated ).
 hub/console/ConsoleInterpreter.kt	Analyzes console logs → health summary ( new ).
 hub/ui/components/BleStatusView.kt	Monochrome BLE status UI ( new ).
 hub/data/diagnostics/DiagnosticRepository.kt	Ref updated to new ConsoleInterpreter path.
@@ -128,14 +129,12 @@ hub/assistant/OfflineAssistant.kt	Ref updated to new ConsoleInterpreter path.
 
 ⸻
 
-9️⃣ Known Gaps / Next Patch Objectives (Wave 1b)
+9️⃣ Known Gaps / Next Patch Objectives (Wave 1c)
 
-Area	Task	Planned Action
-Firmware telemetry	0x11 opcode parsing	Extend BleTelemetryRepository to capture firmware version.
-Case battery telemetry	Incomplete	Map frame byte[3] → caseBatteryPercent.
-Reset on disconnect	Missing	Invoke repo.reset() when both lenses disconnected.
-Command builder expansion	Partial	Add G1Packets helpers for PING / BRIGHTNESS / REBOOT.
-Telemetry flow integration	Pending	Wire live flow into Hub UI via AppLocator scope.
+Area	Task	Status / Planned Action
+Telemetry UI wiring	Connect repository snapshot flow to Hub UI widgets	🟡 Pending — bindToService helper ready; needs AppLocator scope hook.
+Console + BLE alignment	Surface firmware + case telemetry in diagnostics console	🟡 Pending — extend ConsoleInterpreter summaries.
+HUD messaging API	Wave 2 scope	Revisit once telemetry wiring confirmed.
 
 
 ⸻
@@ -143,11 +142,11 @@ Telemetry flow integration	Pending	Wire live flow into Hub UI via AppLocator sco
 🧾 PROGRESS NOTES
 
 [4.0-r1] ✅ Wave 1 foundations: dual-lens BLE service, ack-aware client, telemetry repository, and monochrome status UI.
-[4.0-r1b] 🟡 Planned: firmware telemetry, disconnect reset, extended command builders.
+[4.0-r1b] ✅ Firmware telemetry parsing, disconnect resets, ping/brightness/reboot helpers shipped.
 
 
 ⸻
 
 ✅ Summary:
-Wave 1 core architecture is now in place but awaiting user validation for connectivity and ACK timing.
-Next patch ( **4.0-r1b **) will finalize telemetry coverage and reset logic before advancing to Wave 2 (HUD + Diagnostics visuals).
+Firmware telemetry + reboot/brightness tooling shipped in 4.0-r1b; user validation of BLE timing remains outstanding.
+Next patch ( **4.0-r1c** ) will wire telemetry snapshot flows into the Hub UI before advancing to Wave 2 (HUD + Diagnostics visuals).

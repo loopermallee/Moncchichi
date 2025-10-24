@@ -3,6 +3,7 @@ package com.loopermallee.moncchichi.bluetooth
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
+import kotlin.text.Charsets
 
 /**
  * Minimal G1 protocol helpers used by the in-app Data Console.
@@ -42,6 +43,9 @@ object G1Packets {
         return buffer.array()
     }
 
+    private const val OP_PING: Byte = 0x01
+    private const val OP_BRIGHTNESS: Byte = 0x05
+    private const val OP_REBOOT: Byte = 0x06
     private const val OP_BATTERY: Byte = 0x10
     private const val OP_FIRMWARE: Byte = 0x11
     private const val OP_TEXT_PAGE: Byte = 0x30
@@ -49,6 +53,27 @@ object G1Packets {
     fun batteryQuery(): ByteArray = frame(OP_BATTERY)
     fun firmwareQuery(): ByteArray = frame(OP_FIRMWARE)
     fun textPageUtf8(text: String): ByteArray = frame(OP_TEXT_PAGE, text.toByteArray(Charsets.UTF_8))
+
+    fun ping(): ByteArray = frame(OP_PING)
+
+    fun brightness(level: Int, target: BrightnessTarget = BrightnessTarget.BOTH): ByteArray {
+        val clamped = level.coerceIn(0, 100)
+        val payload = byteArrayOf(target.mask, clamped.toByte())
+        return frame(OP_BRIGHTNESS, payload)
+    }
+
+    fun reboot(mode: RebootMode = RebootMode.NORMAL): ByteArray = frame(OP_REBOOT, byteArrayOf(mode.code))
+
+    enum class BrightnessTarget(val mask: Byte) {
+        BOTH(0x03),
+        LEFT(0x01),
+        RIGHT(0x02),
+    }
+
+    enum class RebootMode(val code: Byte) {
+        NORMAL(0x00),
+        SAFE(0x01),
+    }
 }
 
 sealed class G1Inbound {
