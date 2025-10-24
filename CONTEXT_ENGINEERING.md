@@ -6,273 +6,148 @@
 
 ⚙️ ACTIVE DEVELOPMENT CONTEXT
 
-CURRENT_PHASE: Phase 4.0 rev 3 — BLE Core Fusion (Full Bidirectional Communication & HUD Bridge)
+CURRENT_PHASE: Phase 4.0 rev 3 — BLE Core Fusion (Wave 1 Foundations)
 
 PHASE OBJECTIVE:
-Rebuild the BLE stack to support dual-lens (Even Realities G1 left + right) glasses with fast, fault-tolerant, and ack-based bidirectional communication.
-All telemetry, diagnostics, and HUD messages must travel in ≤ 2 seconds with retry logic and 5 ms chunk pacing.
-Follow a staged rollout (Wave 1 → 2 → 3) with stability as the core principle.
-Maintain the Even Realities monochrome theme and offline-first behaviour from Phase 3.
+Build the Even Realities G1 dual-lens BLE foundation with full ACK-based sequencing, parallel telemetry channels, and heartbeat synchronization.
+All telemetry, diagnostics, and HUD messages must travel in ≤ 2 seconds with 5 ms chunk pacing and 3× retry logic.
+This Wave focuses only on connectivity, ack tracking, and telemetry parsing — no HUD or assistant logic yet.
+Maintain Even Realities monochrome theme and offline-first principles from Phase 3.
 
 ⸻
 
 🧩 CURRENT MILESTONES (Sequenced by Wave)
 
 #	Milestone	Wave	Status	Notes
-1	Dual-lens BLE connection (L + R)	1	🟡 Pending	Service manages two Gatt clients; parallel notify channels.
-2	Bidirectional communication (App ↔ Glasses)	1	🟡 Pending	Full TX/RX pipeline with ack sequencing + chunking (251 MTU).
-3	BLE telemetry (battery %, firmware, RSSI)	1	🟡 Pending	0x2C battery / 0x37 uptime parsed → DiagnosticRepository.
-4	Heartbeat (keepalive every 30 s)	1	🟡 Pending	0x25 ↔ 0x25 0x04 ack + auto-reconnect logic.
-5	HUD messaging API	2	🟡 Pending	sendHudMessage() broadcasts to both lenses + console [HUD] log.
-6	Event decoding (touch, case open)	2	🟡 Pending	Handle 0xF5-series unsolicited events in RX parser.
-7	Diagnostic console integration	2	🟡 Pending	[BLE]/[HUD]/[DIAG] tags with seq + ack tracking.
-8	Assistant diagnostic bridge	3	🟡 Pending	Assistant 🟣 (Device Only) replies from telemetry context.
-9	Monochrome theme consistency	—	🟢 Defined	Black + gray surfaces, white text/icons only.
-10	Documentation + progress notes	—	🟢 Required	Append each commit (e.g., [4.0-r1]).
+1	Dual-lens BLE connection (L + R)	1	🟢 Implemented / 🟡 Pending User Confirmation	MoncchichiBleService and G1BleClient handle dual Gatt sessions and per-lens state.
+2	Bidirectional communication (App ↔ Glasses)	1	🟢 Implemented / 🟡 Pending User Confirmation	ACK-aware send pipeline with mutex locking and 5 ms stagger between lenses.
+3	BLE telemetry (battery %, firmware, RSSI)	1	🟢 Partially Implemented / 🟡 Pending User Confirmation	BleTelemetryRepository captures 0x2C/0x37 frames → battery & uptime. Firmware opcode still pending.
+4	Heartbeat (keepalive every 30 s)	1	🟢 Implemented / 🟡 Pending User Confirmation	Automatic seq-based heartbeat loop per lens (0x25 ↔ 0x25 0x04 ACK).
+5	HUD messaging API	2	⚫ Not Started	Next wave feature (add sendHudMessage & display feedback).
+6	Event decoding (touch, case open)	2	⚫ Not Started	Reserved for Phase 4.1.
+7	Diagnostic console integration	2	🟢 Partially Implemented / 🟡 Pending User Confirmation	New ConsoleInterpreter added — interprets BLE logs and assistant health state.
+8	Assistant diagnostic bridge	3	⚫ Not Started	Deferred to Wave 3.
+9	Monochrome theme consistency	—	🟢 Implemented	BleStatusView uses black/gray surface + white text/icons + status colors.
+10	Documentation + progress notes	—	🟢 Updated	[4.0-r1] Wave 1 foundations committed in progress-notes.md.
 
 
 ⸻
 
-🧠 CODEX IMPLEMENTATION GUIDELINES
+🧠 CODEX IMPLEMENTATION GUIDELINES (Wave 1)
 
-1️⃣ Context Segmentation and Wave Principle
+1️⃣ Context Scope
 
-Build in three waves — each must compile and pass acceptance before advancing.
+Wave 1 includes:
+	•	MoncchichiBleService.kt – dual Gatt sessions & heartbeat loop.
+	•	G1BleClient.kt – per-lens ACK tracking & sequenced send.
+	•	BleTelemetryRepository.kt – battery / uptime parsing framework.
+	•	BleStatusView.kt – monochrome status UI with left/right lens state.
+	•	ConsoleInterpreter.kt – diagnostic summary for assistant.
 
-Wave	Scope	Goal
-Wave 1	Connectivity + Telemetry Core (1 → 4)	Stable dual-lens BLE stack with ack-based I/O.
-Wave 2	HUD + Events + Diagnostics (5 → 7)	Interactive feedback and debug visibility.
-Wave 3	Assistant Bridge (8)	Contextual telemetry responses from assistant.
-
-⸻
-
-2️⃣ BLE SERVICE ARCHITECTURE
-
-MoncchichiBleService – Even Realities Pattern
-
-• Persistent foreground service managing Left and Right Gatt sessions.
-• Two coroutine channels (leftGatt, rightGatt) share a serial write queue.
-• Each write awaits ack (0xC9) before the next enqueues.
-• RX notifications decoded asynchronously → Flow/LiveData to Hub.
-• Heartbeat thread monitors seq ack and auto-reconnects.
-• No AIDL IPC; direct service binding for performance.
-
-If Java 17 / AGP 8.3+ unavailable: ./gradlew lint --no-daemon.
+Next Wave will extend these modules with HUD + events support.
 
 ⸻
 
-3️⃣ Service and Characteristics
+2️⃣ BLE Service Architecture (Status – Delivered)
 
-Role	UUID	Notes
-Primary Service	6e400001-b5a3-f393-e0a9-e50e24dcca9e	Nordic UART Service
-TX (write → glasses)	6e400002-b5a3-f393-e0a9-e50e24dcca9e	Commands → glasses
-RX (notify ← glasses)	6e400003-b5a3-f393-e0a9-e50e24dcca9e	Telemetry + events ← glasses
+MoncchichiBleService
+	•	Manages both Left and Right lens Gatt connections.
+	•	Each client (G1BleClient) handles ack sequencing and RSSI monitoring.
+	•	Serial send queue prevents RF collision (5 ms stagger).
+	•	Heartbeat loop auto-reconnects and marks lens “degraded” on ACK failure.
 
-Each lens advertises individually → both must connect.
-
-⸻
-
-4️⃣ Outbound Commands (App → Glasses)
-
-Action	Command	Description
-Display Text	0x4E	UTF-8 ≤ 200 B chunks (ack per chunk).
-Display Image	0x15	Bitmap 194 B + CRC.
-Clear HUD	0x18	Resets display.
-Battery Query	0x2C 01	Returns battery %.
-Uptime Query	0x37	Seconds since boot.
-Heartbeat	0x25 	Keepalive → expect 0x25 0x04 ack.
-Set MTU	0x4D 0xFB	Negotiate 251 bytes.
-Reboot	0x23 0x72	Soft reboot (no response).
-
-🧩 Write Rules
-• MTU = 251 bytes → payload ≤ 200 B.
-• 5 ms delay between chunks.
-• Await 0xC9 ACK before next write.
-• Auto-retry ×3 → mark DEGRADED.
+⚠️ Firmware opcode and case telemetry to be added in next revision.
 
 ⸻
 
-5️⃣ Inbound Responses (Glasses → App)
+3️⃣ Telemetry Repository (Status – Delivered / Partial)
 
-• Replies echo command + status + payload.
-• Unsolicited events start with 0xF5 (touch/wear).
-
-when(firstByte) {
-    0x2C -> handleBattery()
-    0x37 -> handleUptime()
-    0xF5 -> handleEvent()
-    else -> logRawPacket()
-}
-
+BleTelemetryRepository
+	•	Handles battery (0x2C) and uptime (0x37) frames.
+	•	Stores left/right telemetry snapshots + last ACK timestamp.
+	•	Exposes StateFlow<Snapshot> to UI and assistant.
+	•	Missing firmware opcode parsing (⚠️ pending for Wave 1b).
 
 ⸻
 
-6️⃣ Bidirectional Data Flow Cycle
+4️⃣ Console Interpreter (Status – Delivered)
 
-App → TX.write(command)
-        ↓
-Left + Right Glasses process
-        ↓
-RX.notify(response)
-        ↓
-App → parse → DiagnosticRepository → Console + Assistant
-
-• Writes serialized to avoid RF collision.
-• RX async notify callbacks.
-• HUD broadcast to both lenses (5 ms offset).
-• Telemetry stored locally for offline assistant.
+ConsoleInterpreter
+	•	Parses recent logs → health summary ( BLE / network / API / LLM ).
+	•	Detects timeouts, ACK failures, and rate-limit events.
+	•	Supports assistant text summary and emoji overview.
 
 ⸻
 
-7️⃣ Heartbeat and Connection Stability
+5️⃣ UI – Monochrome BLE Status View (Status – Delivered)
 
-• Send 0x25 <seq> every 15–30 s.
-• Expect 0x25 0x04; on timeout → reconnect.
-• Per-lens seq IDs for ack validation.
-• Console sample: [BLE] ❤️ Keepalive ACK L=42 R=42.
-
-⸻
-
-8️⃣ Telemetry Repository
-
-• Track battery %, firmware, RSSI, case state, link quality.
-• Expose Flow to Assistant + Diagnostics.
-
-Assistant 🟣 (Device Only): Battery 87 % • Firmware v2.13 • RSSI -55 dBm
+BleStatusView
+	•	Visual indicator for Left / Right lens status (Good / Degraded / Disconnected).
+	•	Shows RSSI + last ACK timestamp.
+	•	Strict Even Realities palette ( black #000000 , gray #1A1A1A , white #FFFFFF ).
 
 ⸻
 
-9️⃣ HUD Messaging (Enhanced Stub)
-
-suspend fun sendHudMessage(text: String, durationMs: Int = 5000) {
-    clearHud()
-    for (lens in connectedLenses) {
-        lens.writeCommand(0x4E, text)
-        delay(5)
-    }
-    delay(durationMs)
-    restoreDefaultHud()
-}
-
-Flashes message then restores default HUD (status/time/weather).
-
-⸻
-
-🔄 Reliability & Timing Matrix
+6️⃣ Reliability Matrix (Wave 1 Baseline)
 
 Constraint	Guideline
 Chunk delay	≈ 5 ms
 Ack expectation	0xC9 before next command
-Retry policy	3× then DEGRADED
+Retry policy	3× then mark degraded
 Heartbeat interval	30 s
 Round-trip goal	≤ 2 s
+Connection timeout	20 s per lens
 
 
 ⸻
 
-🔍 Console and Diagnostics Tags
+7️⃣ Wave 1 Acceptance Tests (Pending User Validation)
 
-Tag	Meaning
-[BLE]	Connection/command state
-[DIAG]	Telemetry summary
-[HUD]	Display events
-
-All logs → MemoryRepository; assistant may summarize issues.
-
-⸻
-
-🎨 Even Realities Monochrome Theme
-
-Element	Color	Purpose
-Background	#000000	Root
-Surface/Card	#1A1A1A	Dialogs + bubbles
-Border	#2A2A2A	Dividers
-Text/Icon	#FFFFFF	Primary
-Text (Secondary)	#CCCCCC	Hints
-Disabled	#777777	Labels
-Accent (Console)	#A691F2	Log highlight
-
-Typography → Header 12 sp white semi-bold • Body 14 sp white • Timestamp 10 sp gray.
-
-⸻
-
-🧭 Comparative Rationale
-
-Aspect	Phase 4 (old)	Phase 4 rev 3 (new)
-BLE Topology	Single Gatt	Dual Gatt + Service
-MTU/Chunk	20 B fixed	251 B negotiated
-Heartbeat	No seq	Seq + ack tracking
-Telemetry	Ad-hoc	0x2C/0x37 framework
-HUD	Single target	Broadcast both lenses
-Console	Basic	Tagged seq/ack logging
-Reconnect	Manual	Auto service retry
-Latency	≈ 4 s avg	≤ 2 s avg
+Scenario	Expected Behaviour
+Connect L + R	🟢 Status “Connected L/R” appears in UI (BleStatusView).
+Heartbeat loop	Console → [BLE] ❤️ Keepalive ACK.
+Battery query	[DIAG] left/right battery=% in logs.
+Disconnect one lens	UI shows ⚠️ Degraded status.
+Reconnect	Status resets to 🟢 Connected.
+Ack timeout	Console logs “ACK timeout” + degraded flag.
 
 
 ⸻
 
-🔬 Acceptance Tests
-
-Scenario	Expected Result
-Dual connection	Status 🟢 Connected L/R
-Battery query	Console → [BLE] Battery 92 % Case 89 %
-Heartbeat timeout	[BLE] Timeout – Reconnecting
-Touchpad tap	[BLE] Event 0xF5 17 (Tap Right)
-HUD message	[HUD] Flash: “Connected” both lenses
-Ack sequence	[BLE] ACK C9 seq=42
-Offline mode	Assistant 🟣 (Device Only) summarizes telemetry
-
-
-⸻
-
-🔧 FILES TO IMPLEMENT / MODIFY
+8️⃣ Files Implemented in This Wave
 
 File	Purpose
-core/bluetooth/MoncchichiBleService.kt	Dual-Gatt manager, heartbeat, reconnect
-core/bluetooth/G1BleClient.kt	UART write/notify, MTU negotiation
-hub/data/telemetry/BleTelemetryRepository.kt	Packet parser → battery/firmware
-hub/assistant/DiagnosticRepository.kt	Assistant telemetry bridge
-hub/console/ConsoleInterpreter.kt	Seq/ack log summaries
-hub/ui/components/BleStatusView.kt	🟢/🟡/🔴 RSSI indicator
+core/bluetooth/G1BleClient.kt	Per-lens ACK tracking and sequenced writes ( new ).
+core/bluetooth/MoncchichiBleService.kt	Dual-lens BLE manager + heartbeat ( new ).
+hub/data/telemetry/BleTelemetryRepository.kt	Aggregates 0x2C/0x37 packets → telemetry ( new ).
+hub/console/ConsoleInterpreter.kt	Analyzes console logs → health summary ( new ).
+hub/ui/components/BleStatusView.kt	Monochrome BLE status UI ( new ).
+hub/data/diagnostics/DiagnosticRepository.kt	Ref updated to new ConsoleInterpreter path.
+hub/assistant/OfflineAssistant.kt	Ref updated to new ConsoleInterpreter path.
 
 
 ⸻
 
-✅ EXIT CRITERIA (User Verification)
+9️⃣ Known Gaps / Next Patch Objectives (Wave 1b)
 
-Test	Expected Behaviour
-Dual connection	🟢 Connected (L/R shown)
-Battery query	Accurate % update each poll
-Connection loss	Auto-reconnect after heartbeat miss
-HUD flash	Visible 5 s then restore baseline
-Touch gesture	Logged + assistant callable
-Console log	[BLE]/[DIAG]/[HUD] visible
-Theme	Monochrome (black/gray bg, white text/icons)
-Latency	≤ 2 s round-trip
-Stability	No crash / no stale Gatt locks
+Area	Task	Planned Action
+Firmware telemetry	0x11 opcode parsing	Extend BleTelemetryRepository to capture firmware version.
+Case battery telemetry	Incomplete	Map frame byte[3] → caseBatteryPercent.
+Reset on disconnect	Missing	Invoke repo.reset() when both lenses disconnected.
+Command builder expansion	Partial	Add G1Packets helpers for PING / BRIGHTNESS / REBOOT.
+Telemetry flow integration	Pending	Wire live flow into Hub UI via AppLocator scope.
 
 
 ⸻
 
-🔮 NEXT PHASE (PREVIEW)
+🧾 PROGRESS NOTES
 
-Phase 4.1 — HUD Visual & Gesture Pipeline
-• Render assistant text on HUD.
-• Hold-gesture + wake-word (left pad activation).
-• Firmware version telemetry reporting.
+[4.0-r1] ✅ Wave 1 foundations: dual-lens BLE service, ack-aware client, telemetry repository, and monochrome status UI.
+[4.0-r1b] 🟡 Planned: firmware telemetry, disconnect reset, extended command builders.
 
-Phase 4.2 — Voice & Microphone Bridge
-• Integrate microphone input for assistant queries.
-• Low-latency speech path + TTS loopback.
 
 ⸻
 
-📄 PROGRESS NOTES
-
-(Codex appends after each patch)
-
-[4.0-r1] Wave 1/M1 – Dual Gatt sessions; status L/R; reconnect.
-[4.0-r2] Wave 1/M2 – MTU 251, chunking + ack sequencing.
-[4.0-r3] Wave 1/M3 – Telemetry 0x2C/0x37 → Diagnostics.
-[4.0-r4] Wave 1/M4 – Heartbeat seq/ack + auto-reconnect.
-[4.0-r5] Wave 2/M5 – HUD
+✅ Summary:
+Wave 1 core architecture is now in place but awaiting user validation for connectivity and ACK timing.
+Next patch ( **4.0-r1b **) will finalize telemetry coverage and reset logic before advancing to Wave 2 (HUD + Diagnostics visuals).
