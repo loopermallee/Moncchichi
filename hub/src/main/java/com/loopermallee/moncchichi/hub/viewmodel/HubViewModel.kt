@@ -58,6 +58,7 @@ class HubViewModel(
     private val prefs: SharedPreferences,
     private val diagnostics: DiagnosticRepository,
 ) : ViewModel() {
+    private var lastTelemetryDigest: String? = null
 
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -198,6 +199,7 @@ class HubViewModel(
         _state.update { it.copy(device = DeviceInfo()) }
         updateDeviceStatus(state.value.device)
         hubAddLog("Disconnected")
+        lastTelemetryDigest = null
     }
 
     private suspend fun commandFlow(command: String) = hubLog("Cmd: $command") {
@@ -227,8 +229,10 @@ class HubViewModel(
             firmware?.let { add("FW $it") }
             signal?.let { add("Signal ${it} dBm") }
         }
-        if (parts.isNotEmpty()) {
-            hubAddLog("[BLE] Telemetry • ${parts.joinToString(" • ")}")
+        val digest = parts.joinToString(separator = " | ")
+        if (digest.isNotEmpty() && digest != lastTelemetryDigest) {
+            hubAddLog("[BLE] Telemetry • $digest")
+            lastTelemetryDigest = digest
         }
     }
 
