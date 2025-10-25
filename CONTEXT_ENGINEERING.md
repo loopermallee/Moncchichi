@@ -1,8 +1,3 @@
-Excellent — here’s the updated Context Engineering Document, now expanded with the new pairing & communication logic, diagnostic insights from both left and right lenses, and a summary of the current issue state (to be discussed further with Codex before final patch decisions).
-
-
----
-
 🧠 Moncchichi Hub — Context Engineering Document
 
 (Shared operational memory between ChatGPT, Codex, and the user)
