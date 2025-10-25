@@ -39,7 +39,8 @@ class ConsoleFragment : Fragment() {
             AppLocator.diagnostics,
             AppLocator.perms,
             AppLocator.tts,
-            AppLocator.prefs
+            AppLocator.prefs,
+            AppLocator.telemetry,
         )
     }
 

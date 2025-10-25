@@ -41,6 +41,8 @@ object AppLocator {
         private set
     lateinit var tts: TtsTool
         private set
+    lateinit var telemetry: BleTelemetryRepository
+        private set
     lateinit var prefs: SharedPreferences
         private set
     lateinit var diagnostics: DiagnosticRepository
@@ -50,7 +52,6 @@ object AppLocator {
     private const val useLiveBle: Boolean = true
     private lateinit var appScope: CoroutineScope
     private lateinit var bleService: MoncchichiBleService
-    private lateinit var bleTelemetry: BleTelemetryRepository
     private lateinit var bleScanner: BluetoothScanner
 
     fun init(ctx: Context) {
@@ -64,11 +65,11 @@ object AppLocator {
         memory = MemoryRepository(db.dao())
         router = IntentRouter()
         appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        telemetry = BleTelemetryRepository()
         ble = if (useLiveBle) {
             bleScanner = BluetoothScanner(appCtx)
             bleService = MoncchichiBleService(appCtx, appScope)
-            bleTelemetry = BleTelemetryRepository()
-            BleToolLiveImpl(appCtx, bleService, bleTelemetry, bleScanner, appScope)
+            BleToolLiveImpl(appCtx, bleService, telemetry, bleScanner, appScope)
         } else {
             BleToolImpl(appCtx)
         }
