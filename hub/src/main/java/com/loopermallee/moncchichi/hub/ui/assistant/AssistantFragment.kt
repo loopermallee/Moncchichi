@@ -58,6 +58,7 @@ class AssistantFragment : Fragment() {
             AppLocator.perms,
             AppLocator.tts,
             AppLocator.prefs,
+            AppLocator.telemetry,
         )
     }
 

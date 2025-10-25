@@ -3,6 +3,7 @@ package com.loopermallee.moncchichi.hub.viewmodel
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.core.errors.ErrorAction
 import com.loopermallee.moncchichi.core.errors.UiError
 import com.loopermallee.moncchichi.core.llm.ModelCatalog
@@ -16,6 +17,7 @@ import com.loopermallee.moncchichi.core.model.MessageSource
 import com.loopermallee.moncchichi.hub.assistant.OfflineAssistant
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.handlers.AiAssistHandler
 import com.loopermallee.moncchichi.hub.handlers.BleCommandHandler
 import com.loopermallee.moncchichi.hub.handlers.BleDebugHandler
@@ -57,6 +59,7 @@ class HubViewModel(
     private val tts: TtsTool,
     private val prefs: SharedPreferences,
     private val diagnostics: DiagnosticRepository,
+    private val telemetry: BleTelemetryRepository,
 ) : ViewModel() {
     private var lastTelemetryDigest: String? = null
 
@@ -103,6 +106,20 @@ class HubViewModel(
                         )
                     )
                 }
+            }
+        }
+        viewModelScope.launch {
+            telemetry.uartText.collect { line ->
+                val lensTag = if (line.lens == Lens.LEFT) "L" else "R"
+                val msg = line.text
+                val category = when {
+                    msg.startsWith("+i", true) -> "SYSTEM"
+                    msg.startsWith("ver", true) || msg.contains("DeviceID", true) -> "TELEMETRY"
+                    msg.equals("OK", true) -> "COMMAND"
+                    msg.startsWith("ERR", true) -> "ERROR"
+                    else -> "BLE"
+                }
+                hubAddLog("[BLE][$category][$lensTag] $msg")
             }
         }
         viewModelScope.launch {

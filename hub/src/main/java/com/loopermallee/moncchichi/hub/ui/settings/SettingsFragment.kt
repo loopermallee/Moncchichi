@@ -44,6 +44,7 @@ class SettingsFragment : Fragment() {
             AppLocator.perms,
             AppLocator.tts,
             AppLocator.prefs,
+            AppLocator.telemetry,
         )
     }
 

@@ -37,7 +37,8 @@ class HubFragment : Fragment() {
             AppLocator.diagnostics,
             AppLocator.perms,
             AppLocator.tts,
-            AppLocator.prefs
+            AppLocator.prefs,
+            AppLocator.telemetry,
         )
     }
 
