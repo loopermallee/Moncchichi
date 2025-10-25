@@ -53,4 +53,6 @@ dependencies {
     implementation(libs.material)
     implementation(libs.coroutines.android)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    testImplementation(kotlin("test"))
 }

@@ -21,6 +21,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -152,16 +154,28 @@ class G1BleClient(
 
     fun lastAckTimestamp(): Long = lastAckTimestamp.get()
 
-    private fun ByteArray.detectAck(): Boolean {
-        if (isEmpty()) return false
-        for (byte in this) {
-            val value = byte.toInt() and 0xFF
-            if (value == 0xC9 || value == 0x04) {
+    private fun tt(): String = "[${Thread.currentThread().name}]"
+}
+
+internal fun ByteArray.detectAck(): Boolean {
+    if (size >= 2) {
+        for (index in 0 until size - 1) {
+            val first = this[index].toInt() and 0xFF
+            val second = this[index + 1].toInt() and 0xFF
+            if ((first == 0xC9 && second == 0x04) || (first == 0x04 && second == 0xCA)) {
                 return true
             }
         }
-        return false
     }
 
-    private fun tt(): String = "[${Thread.currentThread().name}]"
+    val decoded = runCatching {
+        Charsets.UTF_8
+            .newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(this))
+            .toString()
+    }.getOrNull()
+
+    return decoded?.trim()?.equals("ok", ignoreCase = true) == true
 }
