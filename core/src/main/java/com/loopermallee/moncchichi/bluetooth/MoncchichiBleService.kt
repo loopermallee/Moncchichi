@@ -279,7 +279,7 @@ class MoncchichiBleService(
         private const val COMMAND_RETRY_COUNT = 3
         private const val COMMAND_RETRY_DELAY_MS = 150L
         private const val CHANNEL_STAGGER_DELAY_MS = 5L
-        private const val HEARTBEAT_INTERVAL_MS = 30_000L
+        private const val HEARTBEAT_INTERVAL_MS = 10_000L
         private val ALL_LENSES = Lens.values()
     }
 }
