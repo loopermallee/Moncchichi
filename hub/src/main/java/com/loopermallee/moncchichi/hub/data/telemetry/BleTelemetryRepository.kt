@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.regex.Pattern
 import kotlin.math.min
 import kotlin.text.Charsets
 
@@ -39,6 +40,7 @@ class BleTelemetryRepository(
         val lastLens: Lens? = null,
         val lastFrameHex: String? = null,
         val firmwareVersion: String? = null,
+        val notes: String? = null,
     )
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -51,6 +53,15 @@ class BleTelemetryRepository(
     val uartText: SharedFlow<UartLine> = _uartText.asSharedFlow()
 
     data class UartLine(val lens: Lens, val text: String)
+
+    private val versionRegex = Pattern.compile(
+        "ver\\s+([0-9]+\\.[0-9]+\\.[0-9]+).*?(DeviceID|DeviceId|DevId)\\s+(\\d+)",
+        Pattern.CASE_INSENSITIVE
+    )
+    private val buildRegex = Pattern.compile(
+        "net\\s+build\\s+time\\s*:\\s*(.+?)(?:,|$)",
+        Pattern.CASE_INSENSITIVE
+    )
 
     private var frameJob: Job? = null
     private var stateJob: Job? = null
@@ -212,7 +223,32 @@ class BleTelemetryRepository(
         text.lines()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .forEach { line -> _uartText.tryEmit(UartLine(lens, line)) }
+            .forEach { line ->
+                parseTextMetadata(line)
+                _uartText.tryEmit(UartLine(lens, line))
+            }
+    }
+
+    private fun parseTextMetadata(line: String) {
+        _snapshot.update { current ->
+            var firmware = current.firmwareVersion
+            var notes = current.notes
+            val versionMatch = versionRegex.matcher(line)
+            if (versionMatch.find()) {
+                firmware = versionMatch.group(1)
+                notes = "DeviceID ${versionMatch.group(3)}"
+            } else {
+                val buildMatch = buildRegex.matcher(line)
+                if (buildMatch.find()) {
+                    notes = "Build ${buildMatch.group(1)}"
+                }
+            }
+            if (firmware != current.firmwareVersion || notes != current.notes) {
+                current.copy(firmwareVersion = firmware, notes = notes)
+            } else {
+                current
+            }
+        }
     }
 
     private fun parseLittleEndianUInt(frame: ByteArray, start: Int, length: Int): Long? {

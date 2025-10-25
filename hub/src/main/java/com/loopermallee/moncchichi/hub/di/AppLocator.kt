@@ -69,6 +69,7 @@ object AppLocator {
         ble = if (useLiveBle) {
             bleScanner = BluetoothScanner(appCtx)
             bleService = MoncchichiBleService(appCtx, appScope)
+            telemetry.bindToService(bleService, appScope)
             BleToolLiveImpl(appCtx, bleService, telemetry, bleScanner, appScope)
         } else {
             BleToolImpl(appCtx)

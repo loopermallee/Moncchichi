@@ -34,10 +34,6 @@ class BleToolLiveImpl(
     private var scanJob: Job? = null
     private var lastConnectedMac: String? = null
 
-    init {
-        telemetry.bindToService(service, appScope)
-    }
-
     override suspend fun scanDevices(onFound: (ScanResult) -> Unit) {
         scanJob?.cancel()
         seen.clear()
@@ -105,12 +101,8 @@ class BleToolLiveImpl(
                 add(Manifest.permission.BLUETOOTH)
                 add(Manifest.permission.BLUETOOTH_ADMIN)
             }
-            // ✅ Align with PermissionToolImpl and PermissionsActivity:
-            // Always request ACCESS_FINE_LOCATION on all API levels, add coarse for pre-Q.
+            // Align with PermissionToolImpl and PermissionsActivity: always request FINE.
             add(Manifest.permission.ACCESS_FINE_LOCATION)
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            }
         }
         return perms.filter {
             ContextCompat.checkSelfPermission(appContext, it) != PackageManager.PERMISSION_GRANTED
