@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.nio.charset.StandardCharsets
 
 /**
  * Robust Nordic UART (NUS) client for Even G1 smart glasses.
@@ -51,6 +52,10 @@ class G1BleUartClient(
     private var rxChar: BluetoothGattCharacteristic? = null
     private var txChar: BluetoothGattCharacteristic? = null
 
+    /** Feature flag for diagnostic warm-up after notifications arm. */
+    private val enableWarmup: Boolean = false
+    @Volatile private var warmupSentOnce: Boolean = false
+
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val incoming: SharedFlow<ByteArray> = _incoming
 
@@ -76,6 +81,8 @@ class G1BleUartClient(
     }
 
     fun close() {
+        warmupSentOnce = false
+        notifyArmed.set(false)
         try {
             gatt?.close()
         } catch (_: Throwable) {
@@ -83,10 +90,17 @@ class G1BleUartClient(
         gatt = null
         rxChar = null
         txChar = null
-        notifyArmed.set(false)
         connecting.set(false)
         _connectionState.value = ConnectionState.DISCONNECTED
         _rssi.value = null
+    }
+
+    private fun maybeSendWarmupAfterNotifyArmed() {
+        if (!enableWarmup) return
+        if (!notifyArmed.get() || warmupSentOnce) return
+        val wrote = write("ver\n".toByteArray(StandardCharsets.UTF_8), withResponse = false)
+        warmupSentOnce = wrote
+        logger("[BLE][NUS] warm-up 'ver\\n' sent=$wrote")
     }
 
     fun write(bytes: ByteArray, withResponse: Boolean = false): Boolean {
@@ -124,6 +138,8 @@ class G1BleUartClient(
                     g.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
+                    warmupSentOnce = false
+                    notifyArmed.set(false)
                     _connectionState.value = ConnectionState.DISCONNECTED
                     close()
                 }
@@ -171,8 +187,16 @@ class G1BleUartClient(
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
             if (d.uuid == CCCD && d.characteristic.uuid == NUS_TX) {
                 logger("[SERVICE][CCCD] Write status=$status value=${d.value?.toHex()}")
-                if (status == BluetoothGatt.GATT_SUCCESS) notifyArmed.set(true)
+                val armed = status == BluetoothGatt.GATT_SUCCESS
+                notifyArmed.set(armed)
+                if (armed) {
+                    maybeSendWarmupAfterNotifyArmed()
+                }
             }
+        }
+
+        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            logger("[BLE][MTU] onMtuChanged mtu=$mtu status=$status")
         }
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
