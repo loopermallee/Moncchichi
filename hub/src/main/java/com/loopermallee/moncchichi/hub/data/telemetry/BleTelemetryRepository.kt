@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 import java.util.regex.Pattern
 import kotlin.math.min
@@ -67,9 +68,13 @@ class BleTelemetryRepository(
     private var stateJob: Job? = null
     private var lastConnected = false
 
+    private val leftBuffer = ByteArrayOutputStream()
+    private val rightBuffer = ByteArrayOutputStream()
+
     fun reset() {
         _snapshot.value = Snapshot()
         _events.tryEmit("[BLE][DIAG] telemetry reset")
+        clearBuffers()
     }
 
     fun bindToService(service: MoncchichiBleService, scope: CoroutineScope) {
@@ -97,16 +102,24 @@ class BleTelemetryRepository(
         frameJob?.cancel(); frameJob = null
         stateJob?.cancel(); stateJob = null
         lastConnected = false
+        clearBuffers()
     }
 
     fun onFrame(lens: Lens, frame: ByteArray) {
         if (frame.isEmpty()) return
-        maybeEmitUtf8(lens, frame)
         when (frame.first().toInt() and 0xFF) {
             BATTERY_OPCODE -> handleBattery(lens, frame)
             UPTIME_OPCODE -> handleUptime(lens, frame)
             FIRMWARE_OPCODE -> handleFirmware(lens, frame)
-            else -> logRaw(lens, frame)
+            else -> {
+                val emittedDirect = maybeEmitUtf8(lens, frame)
+                if (!emittedDirect) {
+                    val emittedBuffered = maybeAssembleUtf8Buffered(lens, frame)
+                    if (!emittedBuffered) {
+                        logRaw(lens, frame)
+                    }
+                }
+            }
         }
     }
 
@@ -208,25 +221,69 @@ class BleTelemetryRepository(
         }
     }
 
-    private fun maybeEmitUtf8(lens: Lens, frame: ByteArray) {
-        if (frame.isEmpty()) return
+    private fun maybeEmitUtf8(lens: Lens, frame: ByteArray): Boolean {
         val first = frame.first().toInt() and 0xFF
-        if (first == BATTERY_OPCODE || first == UPTIME_OPCODE || first == FIRMWARE_OPCODE) return
-        if (frame.size > 64) return
-        val printable = frame.all { byte ->
-            val unsigned = byte.toInt() and 0xFF
-            unsigned == 0x0A || unsigned == 0x0D || unsigned in 0x20..0x7E
-        }
-        if (!printable) return
+        if (first == BATTERY_OPCODE || first == UPTIME_OPCODE || first == FIRMWARE_OPCODE) return false
+        if (frame.size > 64) return false
+        val printable = frame.all { byte -> byte.toInt().isAsciiOrCrlf() }
+        if (!printable) return false
         val text = runCatching { frame.toString(Charsets.UTF_8).trim() }.getOrNull()
-        if (text.isNullOrBlank()) return
-        text.lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .forEach { line ->
-                parseTextMetadata(line)
-                _uartText.tryEmit(UartLine(lens, line))
+        if (text.isNullOrBlank()) return false
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.isEmpty()) return false
+        lines.forEach { line ->
+            parseTextMetadata(line)
+            _uartText.tryEmit(UartLine(lens, line))
+        }
+        return true
+    }
+
+    private fun maybeAssembleUtf8Buffered(lens: Lens, frame: ByteArray): Boolean {
+        val buffer = if (lens == Lens.LEFT) leftBuffer else rightBuffer
+        if (!frame.all { byte -> byte.toInt().isAsciiOrCrlf() }) {
+            buffer.reset()
+            return false
+        }
+        if (buffer.size() + frame.size > 64) {
+            buffer.reset()
+            return false
+        }
+        buffer.write(frame)
+        val accumulated = buffer.toByteArray().toString(Charsets.UTF_8)
+        val parts = accumulated.split("\r", "\n")
+        if (parts.isEmpty()) return false
+        val hasTerminator = accumulated.endsWith("\n") || accumulated.endsWith("\r")
+        var emitted = false
+        parts.forEachIndexed { index, raw ->
+            val trimmed = raw.trim()
+            val isLast = index == parts.lastIndex
+            if (isLast && !hasTerminator) {
+                buffer.reset()
+                if (raw.isNotEmpty()) {
+                    buffer.write(raw.toByteArray(Charsets.UTF_8))
+                }
+            } else {
+                if (trimmed.isNotEmpty()) {
+                    parseTextMetadata(trimmed)
+                    _uartText.tryEmit(UartLine(lens, trimmed))
+                    emitted = true
+                }
+                if (isLast) {
+                    buffer.reset()
+                }
             }
+        }
+        return emitted
+    }
+
+    private fun clearBuffers() {
+        leftBuffer.reset()
+        rightBuffer.reset()
+    }
+
+    private fun Int.isAsciiOrCrlf(): Boolean {
+        val unsigned = this and 0xFF
+        return unsigned == 0x0A || unsigned == 0x0D || unsigned in 0x20..0x7E
     }
 
     private fun parseTextMetadata(line: String) {
