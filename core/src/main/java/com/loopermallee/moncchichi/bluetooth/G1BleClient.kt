@@ -1,7 +1,11 @@
 package com.loopermallee.moncchichi.bluetooth
 
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothDevice.ACTION_BOND_STATE_CHANGED
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +47,7 @@ class G1BleClient(
     data class State(
         val status: ConnectionState = ConnectionState.DISCONNECTED,
         val rssi: Int? = null,
+        val bonded: Boolean = false,
     )
 
     private val uartClient = G1BleUartClient(
@@ -56,12 +61,16 @@ class G1BleClient(
     val ackEvents: SharedFlow<Long> = _ackEvents.asSharedFlow()
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val incoming: SharedFlow<ByteArray> = _incoming.asSharedFlow()
-    private val _state = MutableStateFlow(State())
+    private val _state = MutableStateFlow(
+        State(bonded = device.bondState == BluetoothDevice.BOND_BONDED)
+    )
     val state: StateFlow<State> = _state.asStateFlow()
 
     private val writeMutex = Mutex()
     private var monitorJob: Job? = null
     private var rssiJob: Job? = null
+    private var bondReceiver: BroadcastReceiver? = null
+    private var connectionInitiated = false
 
     private val lastAckTimestamp = AtomicLong(0L)
 
@@ -96,7 +105,17 @@ class G1BleClient(
             }
         }
 
-        uartClient.connect()
+        connectionInitiated = false
+        registerBondReceiverIfNeeded()
+        updateBondState(device.bondState)
+        when (device.bondState) {
+            BluetoothDevice.BOND_BONDED -> maybeStartGattConnection()
+            BluetoothDevice.BOND_NONE -> {
+                val bonded = device.createBond()
+                logger.i(label, "${tt()} Initiating bond=${bonded}")
+            }
+            BluetoothDevice.BOND_BONDING -> logger.i(label, "${tt()} Awaiting ongoing bond")
+        }
     }
 
     fun close() {
@@ -104,9 +123,14 @@ class G1BleClient(
         rssiJob?.cancel()
         monitorJob = null
         rssiJob = null
+        unregisterBondReceiver()
+        connectionInitiated = false
         ackSignals.trySend(Unit) // unblock waiters before closing
         uartClient.close()
-        _state.value = State(status = ConnectionState.DISCONNECTED)
+        _state.value = State(
+            status = ConnectionState.DISCONNECTED,
+            bonded = device.bondState == BluetoothDevice.BOND_BONDED,
+        )
     }
 
     suspend fun awaitConnected(timeoutMs: Long): Boolean {
@@ -164,4 +188,40 @@ class G1BleClient(
     }
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
+
+    private fun registerBondReceiverIfNeeded() {
+        if (bondReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != ACTION_BOND_STATE_CHANGED) return
+                val changedDevice = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                if (changedDevice?.address != device.address) return
+                val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
+                logger.i(label, "${tt()} Bond state changed=$bondState")
+                updateBondState(bondState)
+                if (bondState == BluetoothDevice.BOND_BONDED) {
+                    maybeStartGattConnection()
+                }
+            }
+        }
+        context.registerReceiver(receiver, IntentFilter(ACTION_BOND_STATE_CHANGED))
+        bondReceiver = receiver
+    }
+
+    private fun unregisterBondReceiver() {
+        bondReceiver?.let {
+            runCatching { context.unregisterReceiver(it) }
+        }
+        bondReceiver = null
+    }
+
+    private fun maybeStartGattConnection() {
+        if (connectionInitiated) return
+        connectionInitiated = true
+        uartClient.connect()
+    }
+
+    private fun updateBondState(state: Int) {
+        _state.value = _state.value.copy(bonded = state == BluetoothDevice.BOND_BONDED)
+    }
 }
