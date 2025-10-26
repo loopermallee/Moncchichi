@@ -19,7 +19,7 @@ import java.net.URL
 import java.util.Locale
 
 private const val OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-private const val DEFAULT_SYSTEM_PROMPT = """
+private val DEFAULT_SYSTEM_PROMPT = """
 You are Moncchichi Assistant supporting people wearing G1 smart glasses.
 Keep replies conversational, empathetic, and easy to act on.
 Reference device telemetry or network state when it helps the person understand what to do next.
