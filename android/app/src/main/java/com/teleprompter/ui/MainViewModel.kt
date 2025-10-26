@@ -9,7 +9,8 @@ import kotlinx.coroutines.flow.update
 
 enum class ServiceStatus {
     DISCONNECTED,
-    LOOKING,
+    CONNECTING,
+    CONNECTED,
     READY,
     DISPLAYING,
     PAUSED
@@ -27,11 +28,14 @@ data class GlassesSummary(
 )
 
 data class ServiceUiState(
-    val status: ServiceStatus = ServiceStatus.LOOKING,
+    val status: ServiceStatus = ServiceStatus.CONNECTING,
     val connectedGlasses: List<GlassesSummary> = emptyList(),
     val currentText: String = DEFAULT_DISPLAY_TEXT,
     val scrollSpeed: Float = G1Glasses.DEFAULT_SCROLL_SPEED,
-    val lastUpdatedEpochMillis: Long? = null
+    val lastUpdatedEpochMillis: Long? = null,
+    val snackbarMessage: String? = null,
+    val persistentErrorMessage: String? = null,
+    val isRetryVisible: Boolean = false
 ) {
     companion object {
         const val DEFAULT_DISPLAY_TEXT = "Welcome to Moncchichi Hub"
@@ -44,7 +48,19 @@ class MainViewModel : ViewModel() {
 
     fun setServiceStatus(status: ServiceStatus) {
         _uiState.update { current ->
-            current.copy(status = status)
+            current.copy(
+                status = status,
+                persistentErrorMessage = if (status == ServiceStatus.DISCONNECTED) {
+                    current.persistentErrorMessage
+                } else {
+                    null
+                },
+                isRetryVisible = if (status == ServiceStatus.DISCONNECTED) {
+                    current.isRetryVisible
+                } else {
+                    false
+                }
+            )
         }
     }
 
@@ -75,7 +91,9 @@ class MainViewModel : ViewModel() {
                 connectedGlasses = listOf(summary),
                 currentText = displayText,
                 scrollSpeed = glasses.scrollSpeed,
-                lastUpdatedEpochMillis = System.currentTimeMillis()
+                lastUpdatedEpochMillis = System.currentTimeMillis(),
+                persistentErrorMessage = null,
+                isRetryVisible = false
             )
         }
     }
@@ -84,18 +102,64 @@ class MainViewModel : ViewModel() {
         _uiState.update { current ->
             current.copy(
                 connectedGlasses = emptyList(),
-                lastUpdatedEpochMillis = System.currentTimeMillis()
+                lastUpdatedEpochMillis = System.currentTimeMillis(),
+                persistentErrorMessage = null,
+                isRetryVisible = false
             )
         }
     }
 
-    fun markServiceDisconnected() {
+    fun markServiceDisconnected(
+        reason: String? = null,
+        showRetry: Boolean = true
+    ) {
+        _uiState.update { current ->
+            val message = reason ?: if (showRetry) {
+                "Display service disconnected."
+            } else {
+                null
+            }
+
+            current.copy(
+                status = ServiceStatus.DISCONNECTED,
+                connectedGlasses = emptyList(),
+                lastUpdatedEpochMillis = System.currentTimeMillis(),
+                snackbarMessage = message,
+                persistentErrorMessage = if (showRetry) {
+                    "Display service disconnected. Tap retry to reconnect."
+                } else {
+                    null
+                },
+                isRetryVisible = showRetry
+            )
+        }
+    }
+
+    fun onServiceBindFailed() {
         _uiState.update { current ->
             current.copy(
                 status = ServiceStatus.DISCONNECTED,
                 connectedGlasses = emptyList(),
-                lastUpdatedEpochMillis = System.currentTimeMillis()
+                snackbarMessage = "Failed to bind to display service.",
+                persistentErrorMessage = "Unable to connect to the display service. Tap retry to try again.",
+                isRetryVisible = true
             )
+        }
+    }
+
+    fun showSnackbar(message: String) {
+        _uiState.update { current ->
+            current.copy(snackbarMessage = message)
+        }
+    }
+
+    fun onSnackbarShown() {
+        _uiState.update { current ->
+            if (current.snackbarMessage == null) {
+                current
+            } else {
+                current.copy(snackbarMessage = null)
+            }
         }
     }
 

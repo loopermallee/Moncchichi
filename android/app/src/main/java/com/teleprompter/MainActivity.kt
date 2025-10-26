@@ -31,9 +31,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -62,7 +66,7 @@ class MainActivity : ComponentActivity() {
             displayService = IG1DisplayService.Stub.asInterface(binder)
             isServiceBound = true
             Log.d(TAG, "Display service connected")
-            viewModel.setServiceStatus(ServiceStatus.READY)
+            viewModel.setServiceStatus(ServiceStatus.CONNECTED)
             refreshGlassesInfo()
         }
 
@@ -70,30 +74,34 @@ class MainActivity : ComponentActivity() {
             displayService = null
             isServiceBound = false
             Log.d(TAG, "Display service disconnected")
-            viewModel.markServiceDisconnected()
+            viewModel.markServiceDisconnected(
+                reason = "Display service disconnected: ${'$'}{name.className}"
+            )
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        viewModel.setServiceStatus(ServiceStatus.LOOKING)
+        viewModel.setServiceStatus(ServiceStatus.CONNECTING)
         setContent {
             MoncchichiHubTheme {
                 val uiState by viewModel.uiState.collectAsState()
+                val snackbarHostState = remember { SnackbarHostState() }
                 MainScreen(
                     uiState = uiState,
+                    snackbarHostState = snackbarHostState,
+                    onSnackbarShown = viewModel::onSnackbarShown,
                     onRefresh = ::refreshGlassesInfo,
                     onStartDisplay = ::startDisplay,
                     onPauseDisplay = ::pauseDisplay,
                     onResumeDisplay = ::resumeDisplay,
-                    onStopDisplay = ::stopDisplay
+                    onStopDisplay = ::stopDisplay,
+                    onRetryConnection = ::retryServiceConnection
                 )
             }
         }
 
-        Intent(this, G1DisplayService::class.java).also {
-            bindService(it, displayServiceConnection, Context.BIND_AUTO_CREATE)
-        }
+        attemptBindDisplayService()
     }
 
     override fun onResume() {
@@ -112,7 +120,7 @@ class MainActivity : ComponentActivity() {
             isServiceBound = false
         }
         displayService = null
-        viewModel.markServiceDisconnected()
+        viewModel.markServiceDisconnected(showRetry = false)
         super.onDestroy()
     }
 
@@ -124,7 +132,7 @@ class MainActivity : ComponentActivity() {
                 viewModel.updateFromGlasses(info)
             } else {
                 viewModel.clearConnectedGlasses()
-                viewModel.setServiceStatus(ServiceStatus.READY)
+                viewModel.setServiceStatus(ServiceStatus.CONNECTED)
             }
         } catch (exception: RemoteException) {
             Log.e(TAG, "Unable to fetch glasses info", exception)
@@ -165,6 +173,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun attemptBindDisplayService() {
+        if (isServiceBound) {
+            return
+        }
+        viewModel.setServiceStatus(ServiceStatus.CONNECTING)
+        val intent = Intent(this, G1DisplayService::class.java)
+        val bound = bindService(intent, displayServiceConnection, Context.BIND_AUTO_CREATE)
+        if (!bound) {
+            Log.e(TAG, "Failed to bind to display service")
+            viewModel.onServiceBindFailed()
+        }
+    }
+
+    private fun retryServiceConnection() {
+        if (isServiceBound) {
+            viewModel.showSnackbar("Display service is already connected.")
+            return
+        }
+        attemptBindDisplayService()
+    }
+
     companion object {
         private const val TAG = "MainActivity"
     }
@@ -173,38 +202,69 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MainScreen(
     uiState: ServiceUiState,
+    snackbarHostState: SnackbarHostState,
+    onSnackbarShown: () -> Unit,
     onRefresh: () -> Unit,
     onStartDisplay: () -> Unit,
     onPauseDisplay: () -> Unit,
     onResumeDisplay: () -> Unit,
-    onStopDisplay: () -> Unit
+    onStopDisplay: () -> Unit,
+    onRetryConnection: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        Column(
+    val controlsEnabled = remember(uiState.status) {
+        uiState.status == ServiceStatus.READY ||
+            uiState.status == ServiceStatus.DISPLAYING ||
+            uiState.status == ServiceStatus.PAUSED
+    }
+
+    LaunchedEffect(uiState.snackbarMessage) {
+        uiState.snackbarMessage?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            onSnackbarShown()
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { innerPadding ->
+        Surface(
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+                .fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
         ) {
-            Text(
-                text = "G1 Display Service",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            StatusCard(uiState = uiState, onRefresh = onRefresh)
-            GlassesCard(uiState.connectedGlasses)
-            ActionsCard(
-                status = uiState.status,
-                onStartDisplay = onStartDisplay,
-                onPauseDisplay = onPauseDisplay,
-                onResumeDisplay = onResumeDisplay,
-                onStopDisplay = onStopDisplay,
-                onRefresh = onRefresh
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(innerPadding)
+                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                Text(
+                    text = "G1 Display Service",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                uiState.persistentErrorMessage?.let { message ->
+                    ErrorBanner(message = message)
+                }
+                StatusCard(
+                    uiState = uiState,
+                    onRefresh = onRefresh,
+                    onRetryConnection = onRetryConnection,
+                    isRetryEnabled = uiState.status != ServiceStatus.CONNECTING
+                )
+                GlassesCard(uiState.connectedGlasses)
+                ActionsCard(
+                    status = uiState.status,
+                    onStartDisplay = onStartDisplay,
+                    onPauseDisplay = onPauseDisplay,
+                    onResumeDisplay = onResumeDisplay,
+                    onStopDisplay = onStopDisplay,
+                    onRefresh = onRefresh,
+                    controlsEnabled = controlsEnabled
+                )
+            }
         }
     }
 }
@@ -212,7 +272,9 @@ private fun MainScreen(
 @Composable
 private fun StatusCard(
     uiState: ServiceUiState,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onRetryConnection: () -> Unit,
+    isRetryEnabled: Boolean
 ) {
     val statusLabel = remember(uiState.status) { statusLabel(uiState.status) }
     val lastUpdatedText = remember(uiState.lastUpdatedEpochMillis) {
@@ -253,12 +315,30 @@ private fun StatusCard(
                     )
                 }
             }
+            if (uiState.status == ServiceStatus.CONNECTING) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
             lastUpdatedText?.let { updated ->
                 Text(
                     text = "Last updated $updated",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            val showRetryButton = remember(uiState.status, uiState.isRetryVisible) {
+                uiState.isRetryVisible ||
+                    uiState.status == ServiceStatus.DISCONNECTED ||
+                    uiState.status == ServiceStatus.CONNECTING ||
+                    uiState.status == ServiceStatus.CONNECTED
+            }
+            if (showRetryButton) {
+                FilledTonalButton(
+                    onClick = onRetryConnection,
+                    enabled = isRetryEnabled,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Retry connection")
+                }
             }
         }
     }
@@ -366,12 +446,17 @@ private fun ActionsCard(
     onPauseDisplay: () -> Unit,
     onResumeDisplay: () -> Unit,
     onStopDisplay: () -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    controlsEnabled: Boolean
 ) {
-    val canStart = status == ServiceStatus.READY || status == ServiceStatus.PAUSED
-    val canPause = status == ServiceStatus.DISPLAYING
-    val canResume = status == ServiceStatus.PAUSED
-    val canStop = status != ServiceStatus.DISCONNECTED && status != ServiceStatus.LOOKING
+    val canStart = controlsEnabled && (status == ServiceStatus.READY || status == ServiceStatus.PAUSED)
+    val canPause = controlsEnabled && status == ServiceStatus.DISPLAYING
+    val canResume = controlsEnabled && status == ServiceStatus.PAUSED
+    val canStop = controlsEnabled && (
+        status == ServiceStatus.READY ||
+            status == ServiceStatus.DISPLAYING ||
+            status == ServiceStatus.PAUSED
+    )
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -428,9 +513,25 @@ private fun ActionsCard(
     }
 }
 
+@Composable
+private fun ErrorBanner(message: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            modifier = Modifier.padding(20.dp)
+        )
+    }
+}
+
 private fun statusLabel(status: ServiceStatus): String = when (status) {
     ServiceStatus.DISCONNECTED -> "Disconnected"
-    ServiceStatus.LOOKING -> "Looking for service"
+    ServiceStatus.CONNECTING -> "Connecting…"
+    ServiceStatus.CONNECTED -> "Connected"
     ServiceStatus.READY -> "Ready"
     ServiceStatus.DISPLAYING -> "Displaying"
     ServiceStatus.PAUSED -> "Paused"
@@ -438,7 +539,8 @@ private fun statusLabel(status: ServiceStatus): String = when (status) {
 
 private fun statusSupportingText(status: ServiceStatus): String = when (status) {
     ServiceStatus.DISCONNECTED -> "Reconnect glasses to resume control."
-    ServiceStatus.LOOKING -> "Searching for the G1 display service and connected glasses."
+    ServiceStatus.CONNECTING -> "Establishing a connection to the G1 display service."
+    ServiceStatus.CONNECTED -> "Connection established. Waiting for the service to report readiness."
     ServiceStatus.READY -> "Glasses are connected and ready for commands."
     ServiceStatus.DISPLAYING -> "Content is currently streaming to the glasses."
     ServiceStatus.PAUSED -> "Display is paused and can be resumed at any time."
