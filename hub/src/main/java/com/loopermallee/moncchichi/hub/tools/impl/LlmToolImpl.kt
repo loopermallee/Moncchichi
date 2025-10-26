@@ -16,10 +16,16 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 private const val OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-private const val DEFAULT_SYSTEM_PROMPT =
-    "You are Moncchichi Assistant integrated with G1 smart glasses. Respond naturally and briefly."
+private val DEFAULT_SYSTEM_PROMPT = """
+You are Moncchichi Assistant supporting people wearing G1 smart glasses.
+Keep replies conversational, empathetic, and easy to act on.
+Reference device telemetry or network state when it helps the person understand what to do next.
+Be concise and avoid overloading them with numbers unless they ask for specifics.
+If something looks wrong, acknowledge it kindly and suggest the next gentle step.
+""".trimIndent()
 private val DEFAULT_MODEL = ModelCatalog.defaultModel()
 
 class LlmToolImpl(private val context: Context) : LlmTool {
@@ -36,11 +42,12 @@ class LlmToolImpl(private val context: Context) : LlmTool {
                 errorMessage = "OpenAI API key missing"
             )
         }
-        if (!isNetworkAvailable()) {
+        val activeMode = if (isNetworkAvailable()) "online" else "offline"
+        if (activeMode != "online") {
             return LlmFallback.respond(prompt, context).copy(errorMessage = "No network connectivity")
         }
 
-        return runCatching { queryOpenAi(prompt, context, key) }
+        return runCatching { queryOpenAi(prompt, context, key, activeMode) }
             .getOrElse { throwable ->
                 LlmFallback.respond(prompt, context).copy(errorMessage = readableError(throwable))
             }
@@ -49,16 +56,14 @@ class LlmToolImpl(private val context: Context) : LlmTool {
     private suspend fun queryOpenAi(
         prompt: String,
         history: List<LlmTool.Message>,
-        apiKey: String
+        apiKey: String,
+        activeMode: String,
     ): LlmTool.Reply = withContext(Dispatchers.IO) {
         val messagesJson = JSONArray().apply {
-            val hasSystem = history.any { it.role == LlmTool.Role.SYSTEM }
-            if (!hasSystem) {
-                put(JSONObject().apply {
-                    put("role", "system")
-                    put("content", DEFAULT_SYSTEM_PROMPT)
-                })
-            }
+            put(JSONObject().apply {
+                put("role", "system")
+                put("content", buildSystemPrompt(activeMode, history))
+            })
             history.forEach { message ->
                 put(JSONObject().apply {
                     put("role", message.role.asApiRole())
@@ -147,6 +152,41 @@ class LlmToolImpl(private val context: Context) : LlmTool {
         return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+    private fun buildSystemPrompt(activeMode: String, history: List<LlmTool.Message>): String {
+        val modeLabel = activeMode.replaceFirstChar { char ->
+            if (char.isLowerCase()) char.titlecase(Locale.getDefault()) else char.toString()
+        }
+        val snippets = history
+            .filter { it.role != LlmTool.Role.SYSTEM }
+            .takeLast(4)
+            .joinToString(separator = "\n") { message ->
+                val roleLabel = when (message.role) {
+                    LlmTool.Role.USER -> "User"
+                    LlmTool.Role.ASSISTANT -> "Assistant"
+                    LlmTool.Role.SYSTEM -> "System"
+                }
+                val cleaned = message.content
+                    .replace("\n", " ")
+                    .trim()
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { text -> if (text.length > 180) text.take(177) + "…" else text }
+                    ?: "(no content)"
+                "• $roleLabel: $cleaned"
+            }
+            .ifBlank { "• No prior context provided." }
+
+        return buildString {
+            append(DEFAULT_SYSTEM_PROMPT)
+            append('\n')
+            append('\n')
+            append("Active assistant mode: $modeLabel.")
+            append('\n')
+            append("Recent context:")
+            append('\n')
+            append(snippets)
+        }.trim()
     }
 
     init {

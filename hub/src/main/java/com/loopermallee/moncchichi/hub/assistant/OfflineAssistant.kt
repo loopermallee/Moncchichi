@@ -62,47 +62,46 @@ object OfflineAssistant {
             offlineIntroShown = false
         }
 
-        val summary = ConsoleInterpreter.quickSummary(
-            snapshot.device.glassesBattery,
-            snapshot.device.caseBattery,
-            snapshot.network.label,
-            insight.network,
-            insight.api,
-            insight.llm,
-        )
-
         val skipIntro = topic in directResponseTopics
-        val savedLine = prompt.takeIf { it.isNotBlank() }?.trim()?.let { "💾 Saved: \"$it\"" }
-        val queueLine = if (pendingQueries > 0) {
-            val suffix = if (pendingQueries > 1) "s" else ""
-            "🗂 $pendingQueries queued request$suffix"
-        } else {
-            null
+        val savedSentence = prompt
+            .takeIf { it.isNotBlank() }
+            ?.trim()
+            ?.replace("\n", " ")
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { "I saved \u201c$it\u201d so I can give you a full answer once I'm back online." }
+
+        val queueSentence = when (pendingQueries) {
+            0 -> null
+            1 -> "I have one request queued to send as soon as we're connected again."
+            else -> "I have $pendingQueries requests queued to send as soon as we're connected again."
         }
 
-        val detailLines = mutableListOf<String>()
-        detailLines += "📡 ${insight.ble.readable("Bluetooth link")}"
-        if (!snapshot.network.isConnected || insight.network.state != ConsoleInterpreter.HealthState.GOOD) {
-            detailLines += "🌐 ${networkSummary(snapshot.network, insight.network)}"
-        }
-        if (insight.api.state != ConsoleInterpreter.HealthState.GOOD) {
-            detailLines += "⚙️ ${insight.api.readable("API key")}"
-        }
-        if (insight.llm.state != ConsoleInterpreter.HealthState.GOOD) {
-            detailLines += "🧠 ${insight.llm.readable("Assistant")}"
-        }
+        val friendlyIntro = "While I’m offline, here’s what I can tell you…"
+        val shouldShowSyncReminder = !skipIntro && !offlineIntroShown
 
-        val deviceLines = when (topic) {
+        val batterySentence = joinClauses(
+            prefix = "Your ",
+            parts = buildList {
+                snapshot.device.glassesBattery?.let { add("glasses battery is at $it%") }
+                snapshot.device.caseBattery?.let { add("case battery shows $it%") }
+            }
+        )
+        val networkSentence = networkSummary(snapshot.network, insight.network)
+        val bluetoothSentence = friendlyStatus("Bluetooth link", insight.ble)
+        val apiSentence = friendlyStatus("API key", insight.api)
+        val assistantSentence = friendlyStatus("Assistant service", insight.llm)
+
+        val deviceSentences = when (topic) {
             DiagnosticTopic.BATTERY, DiagnosticTopic.STATUS, DiagnosticTopic.GENERAL -> buildList {
-                add("🔋 Glasses: ${snapshot.device.glassesBattery?.let { "$it %" } ?: "unknown"}")
-                add("💼 Case: ${snapshot.device.caseBattery?.let { "$it %" } ?: "unknown"}")
-                add("🛠 Firmware: ${snapshot.device.firmwareVersion ?: "unknown"}")
-                add("📶 Signal: ${snapshot.device.signalRssi?.let { "${it} dBm" } ?: "unknown"}")
-                snapshot.phoneBattery?.let { add("📱 Phone: $it %") }
-                if (snapshot.isPowerSaver) add("⚡ Phone power saver is ON")
+                snapshot.device.firmwareVersion?.let { add("Firmware version reads $it.") }
+                snapshot.device.signalRssi?.let { add("Signal strength is ${it} dBm.") }
+                snapshot.device.connectionState?.let { add("Device state reports $it.") }
+                snapshot.phoneBattery?.let { add("Your phone battery is at $it%.") }
+                if (snapshot.isPowerSaver) add("Phone power saver mode is on.")
             }
             DiagnosticTopic.FIRMWARE -> listOf(
-                "🛠 Firmware: ${snapshot.device.firmwareVersion ?: "No firmware info yet"}"
+                snapshot.device.firmwareVersion?.let { "Current firmware version is $it." }
+                    ?: "I don't have firmware details yet."
             )
             else -> emptyList()
         }
@@ -118,9 +117,9 @@ object OfflineAssistant {
             if (parts.isNotEmpty()) "Assistant 🟣 (Device Only): ${parts.joinToString(", ")}" else null
         } else null
 
-        val notesLine = insight.notes.takeIf { it.isNotEmpty() }?.joinToString(" • ")?.let { "🗒 $it" }
+        val notesSentence = combineNotes(insight.notes)
 
-        val tipLine = when {
+        val tipSentence = when {
             topic == DiagnosticTopic.API_KEY && insight.api.state != ConsoleInterpreter.HealthState.GOOD ->
                 "💡 Update your OpenAI key from Settings → Edit Key."
             topic == DiagnosticTopic.CONNECTION && !snapshot.network.isConnected ->
@@ -130,41 +129,124 @@ object OfflineAssistant {
             else -> null
         }
 
-        buildString {
-            telemetryHeadline?.let { append(it).append('\n') }
-            append(summary)
-            if (!skipIntro && !offlineIntroShown) {
-                append("\n⚡ Offline fallback is active – I'll sync replies once I'm online.")
-                offlineIntroShown = true
+        if (shouldShowSyncReminder) {
+            offlineIntroShown = true
+        }
+
+        val bodyLines = buildList {
+            add(friendlyIntro)
+            if (shouldShowSyncReminder) {
+                add("I'll sync any detailed answers as soon as I'm back online.")
             }
-            savedLine?.let { append("\n").append(it) }
-            queueLine?.let { append("\n").append(it) }
-            deviceLines.forEach { append("\n").append(it) }
-            detailLines.distinct().forEach { append("\n").append(it) }
-            notesLine?.let { append("\n").append(it) }
-            tipLine?.let { append("\n").append(it) }
+            batterySentence?.let(::add)
+            add(networkSentence)
+            add(bluetoothSentence)
+            add(apiSentence)
+            add(assistantSentence)
+            savedSentence?.let(::add)
+            queueSentence?.let(::add)
+            addAll(deviceSentences)
+            notesSentence?.let(::add)
+            tipSentence?.let(::add)
+        }.filter { it.isNotBlank() }
+
+        buildString {
+            if (telemetryHeadline != null) {
+                append(telemetryHeadline)
+                if (bodyLines.isNotEmpty()) {
+                    append('\n')
+                }
+            }
+            append(bodyLines.joinToString(separator = "\n"))
         }.trimEnd()
+
     }
 
     private fun networkSummary(
         report: DiagnosticRepository.NetworkReport,
         channel: ConsoleInterpreter.ChannelStatus,
     ): String {
-        return if (!report.isConnected) {
-            channel.readable("Network")
+        val label = if (report.isConnected) {
+            report.transports.joinToString(" + ").ifBlank { "network" }
         } else {
-            buildString {
-                append(report.label)
-                if (channel.state == ConsoleInterpreter.HealthState.DEGRADED) {
-                    append(" – ")
-                    append(channel.detail ?: "degraded")
-                }
-                if (channel.state == ConsoleInterpreter.HealthState.DOWN) {
-                    append(" – offline per logs")
-                }
+            "network"
+        }
+        val detail = trimDetail(channel.detail)
+        return when {
+            !report.isConnected -> "It looks like your $label connection is offline right now."
+            channel.state == ConsoleInterpreter.HealthState.GOOD -> {
+                val extras = networkExtras(report)
+                "Your $label connection looks okay from the logs$extras."
             }
+            channel.state == ConsoleInterpreter.HealthState.DEGRADED -> detail?.let {
+                "Your $label connection might be spotty — $it."
+            } ?: "Your $label connection might be spotty."
+            channel.state == ConsoleInterpreter.HealthState.DOWN -> detail?.let {
+                "Your $label connection appears offline — $it."
+            } ?: "Your $label connection appears offline."
+            else -> detail?.let {
+                "I'm not getting clear info about your $label connection — $it."
+            } ?: "I'm not getting clear info about your $label connection yet."
         }
     }
+
+    private fun friendlyStatus(label: String, status: ConsoleInterpreter.ChannelStatus): String {
+        val normalized = label.replaceFirstChar { ch ->
+            if (ch.isLowerCase()) ch.titlecase(Locale.getDefault()) else ch.toString()
+        }
+        val detail = trimDetail(status.detail)
+        return when (status.state) {
+            ConsoleInterpreter.HealthState.GOOD -> detail?.let {
+                "$normalized looks good — $it."
+            } ?: "$normalized looks good from what I can see."
+            ConsoleInterpreter.HealthState.DEGRADED -> detail?.let {
+                "$normalized might be having trouble — $it."
+            } ?: "$normalized might be having trouble."
+            ConsoleInterpreter.HealthState.DOWN -> detail?.let {
+                "$normalized appears offline — $it."
+            } ?: "$normalized appears offline."
+            ConsoleInterpreter.HealthState.UNKNOWN -> detail?.let {
+                "I'm not getting clear info about $normalized — $it."
+            } ?: "I'm not getting clear info about $normalized yet."
+        }
+    }
+
+    private fun joinClauses(prefix: String, parts: List<String>): String? {
+        if (parts.isEmpty()) return null
+        val body = when (parts.size) {
+            1 -> parts.first()
+            2 -> parts.joinToString(" and ")
+            else -> parts.dropLast(1).joinToString(", ") + ", and " + parts.last()
+        }
+        val sentence = prefix + body
+        return if (sentence.endsWith('.') || sentence.endsWith('!') || sentence.endsWith('?')) {
+            sentence
+        } else {
+            "$sentence."
+        }
+    }
+
+    private fun combineNotes(notes: List<String>): String? {
+        if (notes.isEmpty()) return null
+        val cleaned = notes.map { it.trim().trimEnd('.', '!', '?') }
+        return "From the logs: ${cleaned.joinToString("; ")}."
+    }
+
+    private fun networkExtras(report: DiagnosticRepository.NetworkReport): String {
+        val flags = buildList {
+            if (!report.hasValidatedInternet) add("no internet access yet")
+            if (report.isMetered) add("metered")
+        }
+        if (flags.isEmpty()) return ""
+        val descriptor = when (flags.size) {
+            1 -> flags.first()
+            2 -> "${flags[0]} and ${flags[1]}"
+            else -> flags.dropLast(1).joinToString(", ") + ", and ${flags.last()}"
+        }
+        return " ($descriptor)"
+    }
+
+    private fun trimDetail(detail: String?): String? = detail?.trim()?.trimEnd('.', '!', '?')
 
     fun resetSession() {
         offlineIntroShown = false
