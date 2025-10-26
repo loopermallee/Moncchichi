@@ -28,5 +28,11 @@ class BleTelemetryRepositoryUtf8Test {
         assertEquals("ver 1.2.3 DeviceID 42", lines[0].text)
         assertEquals(Lens.RIGHT, lines[1].lens)
         assertEquals("ver 1.2.3 DeviceID 42", lines[1].text)
+
+        val snapshot = repository.snapshot.value
+        assertEquals("1.2.3", snapshot.left.firmwareVersion)
+        assertEquals("DeviceID 42", snapshot.left.notes)
+        assertEquals("1.2.3", snapshot.right.firmwareVersion)
+        assertEquals("DeviceID 42", snapshot.right.notes)
     }
 }

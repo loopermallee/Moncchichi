@@ -83,7 +83,10 @@ class BleToolLiveImpl(
     override suspend fun caseBattery(): Int? = telemetry.snapshot.value.left.caseBatteryPercent
         ?: telemetry.snapshot.value.right.caseBatteryPercent
 
-    override suspend fun firmware(): String? = telemetry.snapshot.value.firmwareVersion
+    override suspend fun firmware(): String? {
+        val snapshot = telemetry.snapshot.value
+        return snapshot.left.firmwareVersion ?: snapshot.right.firmwareVersion
+    }
 
     override suspend fun macAddress(): String? = lastConnectedMac
 
