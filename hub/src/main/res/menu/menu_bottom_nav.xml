@@ -5,6 +5,10 @@
         android:title="Hub"
         android:icon="@android:drawable/ic_menu_manage"/>
     <item
+        android:id="@+id/tab_hud"
+        android:title="HUD"
+        android:icon="@android:drawable/ic_menu_myplaces"/>
+    <item
         android:id="@+id/tab_console"
         android:title="Console"
         android:icon="@android:drawable/ic_menu_view"/>
