@@ -10,6 +10,7 @@ import com.loopermallee.moncchichi.hub.data.db.MemoryDb
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
+import com.loopermallee.moncchichi.hub.model.Repository
 import com.loopermallee.moncchichi.hub.router.IntentRouter
 import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
@@ -22,11 +23,14 @@ import com.loopermallee.moncchichi.hub.tools.impl.DisplayToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.LlmToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.PermissionToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.TtsToolImpl
+import okhttp3.OkHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
 object AppLocator {
+    lateinit var appContext: Context
+        private set
     lateinit var memory: MemoryRepository
         private set
     lateinit var router: IntentRouter
@@ -47,6 +51,10 @@ object AppLocator {
         private set
     lateinit var diagnostics: DiagnosticRepository
         private set
+    lateinit var repository: Repository
+        private set
+    lateinit var httpClient: OkHttpClient
+        private set
 
     private var initialized = false
     private const val useLiveBle: Boolean = true
@@ -57,6 +65,7 @@ object AppLocator {
     fun init(ctx: Context) {
         if (initialized) return
         val appCtx = ctx.applicationContext
+        appContext = appCtx
         prefs = PreferenceManager.getDefaultSharedPreferences(appCtx)
 
         val db = Room.databaseBuilder(appCtx, MemoryDb::class.java, "moncchichi.db")
@@ -79,6 +88,8 @@ object AppLocator {
         perms = PermissionToolImpl(appCtx)
         tts = TtsToolImpl(appCtx)
         diagnostics = DiagnosticRepository(appCtx, memory)
+        repository = Repository(appCtx)
+        httpClient = OkHttpClient()
         initialized = true
     }
 }

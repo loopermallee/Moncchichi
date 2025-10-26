@@ -64,5 +64,15 @@
                 <action android:name="com.loopermallee.moncchichi.service.protocol.IG1ServiceClient" />
             </intent-filter>
         </service>
+
+        <service
+            android:name="com.loopermallee.moncchichi.hub.ui.hud.HudNotificationListenerService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
