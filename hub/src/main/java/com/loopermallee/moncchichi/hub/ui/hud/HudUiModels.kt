@@ -76,7 +76,6 @@ data class HudUiState(
     val isRefreshingWeather: Boolean = false,
     val isSendingMessage: Boolean = false,
     val sendError: String? = null,
-    val isDisplayServiceConnected: Boolean = false,
     val notificationListenerEnabled: Boolean = false,
     val postNotificationPermissionGranted: Boolean = false,
 )

@@ -1,23 +1,16 @@
 package com.loopermallee.moncchichi.hub.ui.hud
 
 import android.Manifest
-import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
-import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.IBinder
-import android.os.RemoteException
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.loopermallee.moncchichi.client.G1ServiceCommon
 import com.loopermallee.moncchichi.hub.model.Repository
-import io.texne.g1.basis.service.G1DisplayService
-import io.texne.g1.basis.service.protocol.IG1DisplayService
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -43,29 +36,11 @@ class HudViewModel(
     private val _uiState = MutableStateFlow(HudUiState())
     val uiState: StateFlow<HudUiState> = _uiState
 
-    private var displayService: IG1DisplayService? = null
-    private var isDisplayServiceBound: Boolean = false
     private var weatherJob: Job? = null
-
-    private val displayServiceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName, service: IBinder) {
-            displayService = IG1DisplayService.Stub.asInterface(service)
-            isDisplayServiceBound = true
-            updateDisplayServiceStatus(true)
-            refreshDisplayInfo()
-        }
-
-        override fun onServiceDisconnected(name: ComponentName) {
-            displayService = null
-            isDisplayServiceBound = false
-            updateDisplayServiceStatus(false)
-        }
-    }
 
     init {
         loadConfig()
         bindRepository()
-        bindDisplayService()
         observeRepository()
         observeNotifications()
         refreshPermissions()
@@ -160,7 +135,6 @@ class HudViewModel(
                     },
                 )
             }
-            refreshDisplayInfo()
         }
     }
 
@@ -191,7 +165,6 @@ class HudViewModel(
                     },
                 )
             }
-            refreshDisplayInfo()
         }
     }
 
@@ -216,9 +189,6 @@ class HudViewModel(
     override fun onCleared() {
         super.onCleared()
         repository.unbindService()
-        if (isDisplayServiceBound) {
-            runCatching { appContext.unbindService(displayServiceConnection) }
-        }
     }
 
     private fun observeRepository() {
@@ -359,42 +329,6 @@ class HudViewModel(
     private fun bindRepository() {
         viewModelScope.launch {
             repository.bindService()
-        }
-    }
-
-    private fun bindDisplayService() {
-        if (isDisplayServiceBound) {
-            return
-        }
-        val intent = Intent(appContext, G1DisplayService::class.java)
-        isDisplayServiceBound = appContext.bindService(
-            intent,
-            displayServiceConnection,
-            Context.BIND_AUTO_CREATE,
-        )
-        updateDisplayServiceStatus(isDisplayServiceBound)
-    }
-
-    private fun updateDisplayServiceStatus(connected: Boolean) {
-        _uiState.update { it.copy(isDisplayServiceConnected = connected) }
-    }
-
-    private fun refreshDisplayInfo() {
-        val service = displayService ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val info = service.glassesInfo ?: return@launch
-                val state = HudMirrorState(
-                    text = info.currentText,
-                    isDisplaying = info.isDisplaying,
-                    isPaused = info.isPaused,
-                    scrollSpeed = info.scrollSpeed,
-                    lastUpdatedMillis = System.currentTimeMillis(),
-                )
-                _uiState.update { it.copy(mirrorState = state) }
-            } catch (exception: RemoteException) {
-                updateDisplayServiceStatus(false)
-            }
         }
     }
 
