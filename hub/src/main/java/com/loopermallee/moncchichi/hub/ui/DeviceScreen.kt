@@ -57,7 +57,7 @@ fun DeviceScreen(
             isLooking = state.isLooking,
             serviceError = state.serviceError,
             connect = { ids, name ->
-                ids.forEach { id -> viewModel.connect(id, name) }
+                viewModel.connectPair(ids, name)
             },
             disconnect = { ids ->
                 ids.forEach { id -> viewModel.disconnect(id) }
