@@ -36,6 +36,12 @@ class G1BleClient(
     private val scope: CoroutineScope,
     private val label: String,
     private val logger: MoncchichiLogger,
+    private val uartClientFactory: (
+        Context,
+        BluetoothDevice,
+        (String) -> Unit,
+        CoroutineScope,
+    ) -> G1BleUartClient = ::G1BleUartClient,
 ) {
 
     enum class ConnectionState {
@@ -50,7 +56,7 @@ class G1BleClient(
         val bonded: Boolean = false,
     )
 
-    private val uartClient = G1BleUartClient(
+    private val uartClient = uartClientFactory(
         context,
         device,
         { message -> logger.i(label, "[BLE] $message") },
@@ -109,7 +115,10 @@ class G1BleClient(
         registerBondReceiverIfNeeded()
         updateBondState(device.bondState)
         when (device.bondState) {
-            BluetoothDevice.BOND_BONDED -> maybeStartGattConnection()
+            BluetoothDevice.BOND_BONDED -> {
+                uartClient.requestWarmupOnNextNotify()
+                maybeStartGattConnection()
+            }
             BluetoothDevice.BOND_NONE -> {
                 val bonded = device.createBond()
                 logger.i(label, "${tt()} Initiating bond=${bonded}")
