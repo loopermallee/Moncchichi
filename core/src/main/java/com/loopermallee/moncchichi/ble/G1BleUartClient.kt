@@ -52,8 +52,8 @@ class G1BleUartClient(
     private var rxChar: BluetoothGattCharacteristic? = null
     private var txChar: BluetoothGattCharacteristic? = null
 
-    /** Feature flag for diagnostic warm-up after notifications arm. */
-    private val enableWarmup: Boolean = false
+    /** Indicates whether we should issue a diagnostic warm-up once notifications arm. */
+    @Volatile private var warmupPending: Boolean = false
     @Volatile private var warmupSentOnce: Boolean = false
 
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
@@ -82,6 +82,7 @@ class G1BleUartClient(
 
     fun close() {
         warmupSentOnce = false
+        warmupPending = false
         notifyArmed.set(false)
         try {
             gatt?.close()
@@ -96,11 +97,17 @@ class G1BleUartClient(
     }
 
     private fun maybeSendWarmupAfterNotifyArmed() {
-        if (!enableWarmup) return
+        if (!warmupPending) return
         if (!notifyArmed.get() || warmupSentOnce) return
         val wrote = write("ver\n".toByteArray(StandardCharsets.UTF_8), withResponse = false)
         warmupSentOnce = wrote
+        warmupPending = false
         logger("[BLE][NUS] warm-up 'ver\\n' sent=$wrote")
+    }
+
+    fun requestWarmupOnNextNotify() {
+        warmupPending = true
+        maybeSendWarmupAfterNotifyArmed()
     }
 
     fun write(bytes: ByteArray, withResponse: Boolean = false): Boolean {
