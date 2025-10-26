@@ -80,20 +80,15 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <ScrollView
-        android:id="@+id/scroll_conversation"
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/list_messages"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
+        android:clipToPadding="false"
         android:overScrollMode="never"
-        android:paddingTop="@dimen/assistant_spacing">
-
-        <LinearLayout
-            android:id="@+id/container_messages"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical" />
-    </ScrollView>
+        android:paddingTop="@dimen/assistant_spacing"
+        android:paddingBottom="@dimen/assistant_spacing" />
 
     <LinearLayout
         android:id="@+id/container_thinking"
