@@ -54,21 +54,47 @@ class ApplicationViewModel @Inject constructor(
     }
 
     fun connect(glassesId: String? = null, glassesName: String? = null) {
-        viewModelScope.launch {
-            if (glassesId != null) {
-                val label = glassesName?.takeIf { it.isNotBlank() } ?: "glasses"
-                _messages.emit("Connecting to $label…")
-            }
-            val result = if (glassesId != null) {
-                runCatching { repository.connectGlasses(glassesId) }
-            } else {
-                runCatching { repository.connectSelectedGlasses() }
-            }
+        if (glassesId != null) {
+            connectPair(listOf(glassesId), glassesName)
+            return
+        }
 
-            val success = result.getOrNull()
-            if (result.isFailure || (success is Boolean && success != true)) {
+        viewModelScope.launch {
+            val result = runCatching { repository.connectSelectedGlasses() }
+
+            if (result.isFailure) {
                 _messages.emit("Unable to connect to the selected glasses")
             }
+        }
+    }
+
+    fun connectPair(lensIds: List<String>, pairName: String?) {
+        if (lensIds.isEmpty()) {
+            viewModelScope.launch {
+                _messages.emit("No lenses available to connect")
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            val label = pairName?.takeIf { it.isNotBlank() } ?: "headset"
+            _messages.emit("Connecting to $label…")
+
+            var allSuccessful = true
+            for (id in lensIds) {
+                val result = runCatching { repository.connectGlasses(id) }
+                val success = result.getOrNull() == true
+                if (!success) {
+                    allSuccessful = false
+                }
+            }
+
+            val message = if (allSuccessful) {
+                "Connected to $label"
+            } else {
+                "Unable to connect to $label"
+            }
+            _messages.emit(message)
         }
     }
 
