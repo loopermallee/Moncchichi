@@ -15,7 +15,7 @@ class G1BleClientAckDetectionTest {
 
     @Test
     fun `detectAck returns true for reverse binary marker`() {
-        val payload = byteArrayOf(0x04, 0xCA.toByte())
+        val payload = byteArrayOf(0x10, 0x04, 0xCA.toByte(), 0x20)
 
         assertTrue(payload.detectAck())
     }
@@ -28,8 +28,8 @@ class G1BleClientAckDetectionTest {
     }
 
     @Test
-    fun `detectAck trims whitespace when matching ok`() {
-        val payload = "  Ok\r\n".encodeToByteArray()
+    fun `detectAck trims ascii whitespace when matching ok`() {
+        val payload = "\t Ok\r\n".encodeToByteArray()
 
         assertTrue(payload.detectAck())
     }
@@ -39,6 +39,17 @@ class G1BleClientAckDetectionTest {
         val payload = "not ack".encodeToByteArray()
 
         assertFalse(payload.detectAck())
+    }
+
+    @Test
+    fun `detectAck returns false for partial binary markers`() {
+        val onlyFirst = byteArrayOf(0xC9.toByte())
+        val onlySecond = byteArrayOf(0x04)
+        val mismatchedPair = byteArrayOf(0xC9.toByte(), 0x05)
+
+        assertFalse(onlyFirst.detectAck())
+        assertFalse(onlySecond.detectAck())
+        assertFalse(mismatchedPair.detectAck())
     }
 
     @Test
