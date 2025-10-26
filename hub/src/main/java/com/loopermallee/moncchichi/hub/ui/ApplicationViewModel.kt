@@ -62,8 +62,13 @@ class ApplicationViewModel @Inject constructor(
         viewModelScope.launch {
             val result = runCatching { repository.connectSelectedGlasses() }
 
-            val success = result.getOrNull()
-            if (result.isFailure || (success is Boolean && success != true)) {
+            val didConnect = when (val value = result.getOrNull()) {
+                is Boolean -> value
+                null -> false
+                else -> result.isSuccess
+            }
+
+            if (!didConnect) {
                 _messages.emit("Unable to connect to the selected glasses")
             }
         }
