@@ -64,8 +64,8 @@ class ApplicationViewModel @Inject constructor(
 
             val didConnect = when (val value = result.getOrNull()) {
                 is Boolean -> value
-                null -> false
-                else -> result.isSuccess
+                null -> result.isSuccess
+                else -> true
             }
 
             if (!didConnect) {
