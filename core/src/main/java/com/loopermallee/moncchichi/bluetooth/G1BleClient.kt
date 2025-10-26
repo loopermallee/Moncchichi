@@ -176,15 +176,20 @@ class G1BleClient(
 
     fun lastAckTimestamp(): Long = lastAckTimestamp.get()
 
-    private fun ByteArray.detectAck(): Boolean {
-        if (isEmpty()) return false
-        for (byte in this) {
-            val value = byte.toInt() and 0xFF
-            if (value == 0xC9 || value == 0x04) {
-                return true
+    internal fun ByteArray.detectAck(): Boolean {
+        if (size >= 2) {
+            for (index in 0 until size - 1) {
+                val first = this[index].toInt() and 0xFF
+                val second = this[index + 1].toInt() and 0xFF
+                if ((first == 0xC9 && second == 0x04) || (first == 0x04 && second == 0xCA)) {
+                    return true
+                }
             }
         }
-        return false
+
+        val ascii = runCatching { decodeToString() }.getOrNull() ?: return false
+        val trimmed = ascii.trim { it.code <= 0x20 }
+        return trimmed.equals("OK", ignoreCase = true)
     }
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
