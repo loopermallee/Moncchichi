@@ -164,12 +164,21 @@ class MainActivity : ComponentActivity() {
         actionLabel: String,
         action: (IG1DisplayService) -> Unit
     ) {
-        val service = displayService ?: return
+        val service = displayService ?: run {
+            Log.w(TAG, "Unable to $actionLabel because the display service is not available")
+            viewModel.showSnackbar("Display service unavailable. Please try again.")
+            return
+        }
         try {
             action(service)
             refreshGlassesInfo()
         } catch (exception: RemoteException) {
             Log.e(TAG, "Failed to $actionLabel", exception)
+            val message = buildString {
+                append("Failed to $actionLabel")
+                exception.message?.takeIf { it.isNotBlank() }?.let { append(": $it") }
+            }
+            viewModel.showSnackbar(message)
         }
     }
 
