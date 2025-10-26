@@ -222,6 +222,11 @@ class G1BleClient(
     }
 
     private fun updateBondState(state: Int) {
-        _state.value = _state.value.copy(bonded = state == BluetoothDevice.BOND_BONDED)
+        val wasBonded = _state.value.bonded
+        val isBonded = state == BluetoothDevice.BOND_BONDED
+        _state.value = _state.value.copy(bonded = isBonded)
+        if (isBonded && !wasBonded) {
+            uartClient.requestWarmupOnNextNotify()
+        }
     }
 }

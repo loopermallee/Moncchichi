@@ -94,4 +94,7 @@ dependencies {
 
     kapt(libs.hilt.android.compiler)
     kapt("androidx.room:room-compiler:2.6.1")
+
+    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }
