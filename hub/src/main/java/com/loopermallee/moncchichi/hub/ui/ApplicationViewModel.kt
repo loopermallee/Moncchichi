@@ -6,6 +6,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import com.loopermallee.moncchichi.client.G1ServiceCommon
 import com.loopermallee.moncchichi.client.G1ServiceCommon.ServiceStatus
 import com.loopermallee.moncchichi.hub.model.Repository
+import com.loopermallee.moncchichi.hub.ui.glasses.PairedGlasses
+import com.loopermallee.moncchichi.hub.ui.glasses.toPairedGlasses
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
@@ -21,6 +23,7 @@ class ApplicationViewModel @Inject constructor(
 
     data class State(
         val glasses: List<G1ServiceCommon.Glasses> = emptyList(),
+        val pairedGlasses: List<PairedGlasses> = emptyList(),
         val serviceStatus: ServiceStatus = ServiceStatus.READY,
         val isLooking: Boolean = false,
         val serviceError: Boolean = false
@@ -36,6 +39,7 @@ class ApplicationViewModel @Inject constructor(
             val status = serviceState?.status ?: ServiceStatus.READY
             State(
                 glasses = serviceState?.glasses ?: emptyList(),
+                pairedGlasses = serviceState?.glasses?.toPairedGlasses() ?: emptyList(),
                 serviceStatus = status,
                 isLooking = status == ServiceStatus.LOOKING,
                 serviceError = status == ServiceStatus.ERROR

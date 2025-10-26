@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
@@ -32,19 +33,26 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.hub.ui.glasses.LensSide
+import com.loopermallee.moncchichi.hub.ui.glasses.PairedGlasses
 import com.loopermallee.moncchichi.hub.ui.glasses.batteryLabel
-import com.loopermallee.moncchichi.hub.ui.glasses.displayName
-import com.loopermallee.moncchichi.hub.ui.glasses.firmwareLabel
+import com.loopermallee.moncchichi.hub.ui.glasses.connectedLensIds
+import com.loopermallee.moncchichi.hub.ui.glasses.hasError
+import com.loopermallee.moncchichi.hub.ui.glasses.isAnyConnected
+import com.loopermallee.moncchichi.hub.ui.glasses.isAnyInProgress
+import com.loopermallee.moncchichi.hub.ui.glasses.isFullyConnected
+import com.loopermallee.moncchichi.hub.ui.glasses.lensIds
 import com.loopermallee.moncchichi.hub.ui.glasses.statusColor
 import com.loopermallee.moncchichi.hub.ui.glasses.statusText
 import kotlinx.coroutines.flow.collectLatest
+import java.util.Locale
 
 @Composable
 fun DisplayScreen(
@@ -58,36 +66,30 @@ fun DisplayScreen(
     var lastSentPreview by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedTargetId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val sortedGlasses = remember(state.glasses) {
-        state.glasses.sortedBy { it.displayName() }
+    val sortedPairs = remember(state.pairedGlasses) {
+        state.pairedGlasses.sortedBy { it.pairName.lowercase(Locale.US) }
     }
-    val connectedGlasses = remember(sortedGlasses) {
-        sortedGlasses.filter { it.status == G1ServiceCommon.GlassesStatus.CONNECTED }
+    val connectablePairs = remember(sortedPairs) {
+        sortedPairs.filter { it.connectedLensIds.isNotEmpty() }
     }
-    val connectableGlasses = remember(connectedGlasses) {
-        connectedGlasses.filter { !it.id.isNullOrBlank() }
+    val allConnected = remember(sortedPairs) {
+        sortedPairs.isNotEmpty() &&
+            sortedPairs.all { it.isFullyConnected && it.connectedLensIds.isNotEmpty() }
     }
-    val allConnected = remember(sortedGlasses) {
-        sortedGlasses.isNotEmpty() &&
-            sortedGlasses.all {
-                it.status == G1ServiceCommon.GlassesStatus.CONNECTED && !it.id.isNullOrBlank()
-            }
-    }
-    val targetIds = remember(connectableGlasses, selectedTargetId) {
-        if (connectableGlasses.isEmpty()) {
-            emptyList()
-        } else if (selectedTargetId == null) {
-            connectableGlasses.mapNotNull { it.id }
-        } else {
-            connectableGlasses.firstOrNull { it.id == selectedTargetId }
-                ?.id
-                ?.let { listOf(it) }
+    val targetIds = remember(connectablePairs, selectedTargetId, sortedPairs) {
+        when {
+            connectablePairs.isEmpty() -> emptyList()
+            selectedTargetId == null -> connectablePairs.flatMap { it.connectedLensIds }
+            else -> sortedPairs.firstOrNull { it.pairId == selectedTargetId }
+                ?.let { pair ->
+                    if (pair.lensIds.isNotEmpty()) pair.lensIds else pair.connectedLensIds
+                }
                 ?: emptyList()
         }
     }
 
-    LaunchedEffect(connectableGlasses.mapNotNull { it.id }) {
-        if (selectedTargetId != null && connectableGlasses.none { it.id == selectedTargetId }) {
+    LaunchedEffect(connectablePairs.map { it.pairId }) {
+        if (selectedTargetId != null && connectablePairs.none { it.pairId == selectedTargetId }) {
             selectedTargetId = null
         }
     }
@@ -115,11 +117,11 @@ fun DisplayScreen(
         )
 
         ConnectionStatusPanel(
-            glasses = sortedGlasses,
+            glasses = sortedPairs,
             modifier = Modifier.fillMaxWidth()
         )
 
-        if (sortedGlasses.isNotEmpty()) {
+        if (sortedPairs.isNotEmpty()) {
             Text(
                 text = "Choose where to send",
                 style = MaterialTheme.typography.titleSmall,
@@ -137,24 +139,24 @@ fun DisplayScreen(
                     selected = allSelected && targetIds.isNotEmpty(),
                     onClick = { selectedTargetId = null },
                     label = {
-                        Text(if (allConnected) "All connected" else "Connected devices")
+                        Text(if (allConnected) "All connected headsets" else "Connected headsets")
                     },
-                    enabled = connectableGlasses.isNotEmpty(),
+                    enabled = connectablePairs.isNotEmpty(),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                     )
                 )
 
-                connectableGlasses.forEach { glasses ->
-                    val glassesId = glasses.id
-                    val isSelected = selectedTargetId == glassesId
+                sortedPairs.forEach { pair ->
+                    val enabled = pair.connectedLensIds.isNotEmpty()
+                    val isSelected = selectedTargetId == pair.pairId
                     FilterChip(
                         selected = isSelected,
                         onClick = {
-                            selectedTargetId = if (isSelected) null else glassesId
+                            selectedTargetId = if (isSelected) null else pair.pairId
                         },
-                        enabled = glassesId != null,
-                        label = { Text(glasses.displayName()) },
+                        enabled = enabled,
+                        label = { PairChipLabel(pair) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                         )
@@ -237,9 +239,9 @@ fun DisplayScreen(
         }
 
         if (targetIds.isEmpty()) {
-            if (connectedGlasses.isEmpty()) {
+            if (connectablePairs.isEmpty()) {
                 Text(
-                    text = "Connect to your glasses from the Device screen to send a message.",
+                    text = "Connect to your headset from the Device screen to send a message.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -249,7 +251,7 @@ fun DisplayScreen(
 
 @Composable
 private fun ConnectionStatusPanel(
-    glasses: List<G1ServiceCommon.Glasses>,
+    glasses: List<PairedGlasses>,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -272,12 +274,12 @@ private fun ConnectionStatusPanel(
 
             if (glasses.isEmpty()) {
                 Text(
-                    text = "No glasses discovered. Use the Device tab to scan for nearby glasses.",
+                    text = "No headsets discovered. Use the Device tab to scan for nearby headsets.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             } else {
-                glasses.forEachIndexed { index, glassesItem ->
-                    GlassesStatusRow(glassesItem)
+                glasses.forEachIndexed { index, pair ->
+                    PairStatusRow(pair)
                     if (index < glasses.lastIndex) {
                         Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
                     }
@@ -288,52 +290,157 @@ private fun ConnectionStatusPanel(
 }
 
 @Composable
-private fun GlassesStatusRow(glasses: G1ServiceCommon.Glasses) {
-    val statusColor = glasses.statusColor()
-    val statusText = glasses.statusText()
+private fun PairStatusRow(pair: PairedGlasses) {
+    val summaryColor = when {
+        pair.hasError -> MaterialTheme.colorScheme.error
+        pair.isAnyInProgress -> MaterialTheme.colorScheme.tertiary
+        pair.isAnyConnected -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .background(color = statusColor, shape = CircleShape)
-            )
-
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = glasses.displayName(),
+                    text = pair.pairName,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = statusColor,
-                    fontWeight = FontWeight.SemiBold
+                    text = "Pair ID: ${pair.pairId}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
             }
+            Text(
+                text = pair.summaryLabel(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = summaryColor,
+                fontWeight = FontWeight.SemiBold
+            )
         }
 
-        Column(
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = "Battery: ${glasses.batteryLabel()}",
-                style = MaterialTheme.typography.bodyMedium
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            LensStatusLine(
+                label = fullLensLabel(slotIndex = 0, side = pair.leftSide, hasCompanion = pair.right != null),
+                glasses = pair.left
             )
-            Text(
-                text = "Firmware: ${glasses.firmwareLabel()}",
-                style = MaterialTheme.typography.bodyMedium
+            LensStatusLine(
+                label = fullLensLabel(slotIndex = 1, side = pair.rightSide, hasCompanion = pair.left != null),
+                glasses = pair.right
             )
         }
+
+        Text(
+            text = "Lens IDs: ${pair.lensIds.joinToString(", ").ifEmpty { "Unavailable" }}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+        )
+    }
+}
+
+@Composable
+private fun LensStatusLine(
+    label: String,
+    glasses: G1ServiceCommon.Glasses?
+) {
+    if (glasses == null) {
+        Text(
+            text = "$label: Not detected",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+        )
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = "$label: ${glasses.statusText()}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = glasses.statusColor(),
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Battery ${glasses.batteryLabel()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PairChipLabel(pair: PairedGlasses) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), horizontalAlignment = Alignment.Start) {
+        Text(
+            text = pair.pairName,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            fontWeight = FontWeight.SemiBold
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LensDot(
+                label = shortLensLabel(slotIndex = 0, side = pair.leftSide, hasCompanion = pair.right != null),
+                glasses = pair.left
+            )
+            LensDot(
+                label = shortLensLabel(slotIndex = 1, side = pair.rightSide, hasCompanion = pair.left != null),
+                glasses = pair.right
+            )
+        }
+    }
+}
+
+@Composable
+private fun LensDot(
+    label: String,
+    glasses: G1ServiceCommon.Glasses?
+) {
+    val color = glasses?.statusColor() ?: MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+private fun PairedGlasses.summaryLabel(): String = when {
+    hasError -> "Attention Needed"
+    isAnyInProgress -> "Working…"
+    isFullyConnected -> "Connected"
+    isAnyConnected -> "Partially Connected"
+    else -> "Disconnected"
+}
+
+private fun fullLensLabel(slotIndex: Int, side: LensSide, hasCompanion: Boolean): String = when (side) {
+    LensSide.LEFT -> "Left"
+    LensSide.RIGHT -> "Right"
+    LensSide.UNKNOWN -> if (hasCompanion) {
+        if (slotIndex == 0) "Lens A" else "Lens B"
+    } else {
+        "Lens"
+    }
+}
+
+private fun shortLensLabel(slotIndex: Int, side: LensSide, hasCompanion: Boolean): String = when (side) {
+    LensSide.LEFT -> "L"
+    LensSide.RIGHT -> "R"
+    LensSide.UNKNOWN -> if (hasCompanion) {
+        if (slotIndex == 0) "A" else "B"
+    } else {
+        "L"
     }
 }
