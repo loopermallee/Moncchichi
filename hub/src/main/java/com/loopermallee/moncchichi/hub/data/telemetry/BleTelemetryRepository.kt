@@ -2,6 +2,7 @@ package com.loopermallee.moncchichi.hub.data.telemetry
 
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -12,7 +13,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.util.Locale
@@ -24,6 +25,8 @@ import kotlin.text.Charsets
  * Aggregates BLE telemetry packets (battery %, uptime, firmware, RSSI) emitted by [MoncchichiBleService].
  */
 class BleTelemetryRepository(
+    private val memory: MemoryRepository,
+    private val persistenceScope: CoroutineScope,
     private val logger: (String) -> Unit = {},
 ) {
 
@@ -132,7 +135,7 @@ class BleTelemetryRepository(
         }
         val timestamp = System.currentTimeMillis()
         val hex = frame.toHex()
-        _snapshot.update { current ->
+        updateSnapshot(eventTimestamp = timestamp) { current ->
             val existing = current.lens(lens)
             val updatedLens = existing.copy(
                 batteryPercent = primary ?: existing.batteryPercent,
@@ -154,7 +157,8 @@ class BleTelemetryRepository(
             return
         }
         val hex = frame.toHex()
-        _snapshot.update { current ->
+        val eventTimestamp = System.currentTimeMillis()
+        updateSnapshot(eventTimestamp = eventTimestamp) { current ->
             if (current.uptimeSeconds == uptime && current.lastLens == lens && current.lastFrameHex == hex) {
                 current
             } else {
@@ -173,7 +177,8 @@ class BleTelemetryRepository(
         val decoded = runCatching { raw.toString(Charsets.UTF_8).trim() }.getOrNull().orEmpty()
         val version = if (decoded.isBlank()) raw.toHex() else decoded
         val hex = frame.toHex()
-        _snapshot.update { current ->
+        val eventTimestamp = System.currentTimeMillis()
+        updateSnapshot(eventTimestamp = eventTimestamp) { current ->
             val existing = current.lens(lens)
             if (existing.firmwareVersion == version && current.lastLens == lens && current.lastFrameHex == hex) {
                 current
@@ -187,11 +192,11 @@ class BleTelemetryRepository(
     private fun logRaw(lens: Lens, frame: ByteArray) {
         val hex = frame.toHex()
         logger("[BLE][RAW] ${lens.name}: $hex")
-        _snapshot.update { current -> current.withFrame(lens, hex) }
+        updateSnapshot(persist = false) { current -> current.withFrame(lens, hex) }
     }
 
     private fun mergeRssi(lens: Lens, newValue: Int?) {
-        _snapshot.update { current ->
+        updateSnapshot { current ->
             val existing = current.lens(lens)
             if (existing.rssi == newValue) {
                 current
@@ -288,7 +293,7 @@ class BleTelemetryRepository(
     }
 
     private fun parseTextMetadata(lens: Lens, line: String) {
-        _snapshot.update { current ->
+        updateSnapshot { current ->
             val existing = current.lens(lens)
             var firmware = existing.firmwareVersion
             var notes = existing.notes
@@ -324,6 +329,41 @@ class BleTelemetryRepository(
     private fun ByteArray.toHex(): String = joinToString(separator = "") { byte ->
         ((byte.toInt() and 0xFF).toString(16)).padStart(2, '0')
     }
+
+    private fun updateSnapshot(
+        eventTimestamp: Long? = null,
+        persist: Boolean = true,
+        transform: (Snapshot) -> Snapshot,
+    ) {
+        val previous = _snapshot.value
+        val updated = _snapshot.updateAndGet(transform)
+        if (persist && updated != previous) {
+            persistSnapshot(updated, eventTimestamp)
+        }
+    }
+
+    private fun persistSnapshot(snapshot: Snapshot, eventTimestamp: Long?) {
+        val recordedAt = eventTimestamp ?: System.currentTimeMillis()
+        val record = MemoryRepository.TelemetrySnapshotRecord(
+            recordedAt = recordedAt,
+            uptimeSeconds = snapshot.uptimeSeconds,
+            left = snapshot.left.toRecord(),
+            right = snapshot.right.toRecord(),
+        )
+        persistenceScope.launch {
+            memory.addTelemetrySnapshot(record)
+        }
+    }
+
+    private fun LensTelemetry.toRecord(): MemoryRepository.LensSnapshot =
+        MemoryRepository.LensSnapshot(
+            batteryPercent = batteryPercent,
+            caseBatteryPercent = caseBatteryPercent,
+            lastUpdated = lastUpdated,
+            rssi = rssi,
+            firmwareVersion = firmwareVersion,
+            notes = notes,
+        )
 
     companion object {
         private const val BATTERY_OPCODE = 0x2C

@@ -65,7 +65,7 @@ object AppLocator {
         memory = MemoryRepository(db.dao())
         router = IntentRouter()
         appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        telemetry = BleTelemetryRepository()
+        telemetry = BleTelemetryRepository(memory, appScope)
         ble = if (useLiveBle) {
             bleScanner = BluetoothScanner(appCtx)
             bleService = MoncchichiBleService(appCtx, appScope)
