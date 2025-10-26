@@ -8,7 +8,6 @@ import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.ui.ConsoleFragment
 import com.loopermallee.moncchichi.hub.ui.assistant.AssistantFragment
 import com.loopermallee.moncchichi.hub.ui.hud.HudFragment
-import com.loopermallee.moncchichi.hub.ui.permissions.PermissionsFragment
 import com.loopermallee.moncchichi.hub.ui.settings.SettingsFragment
 
 class HubMainActivity : AppCompatActivity() {
