@@ -23,4 +23,12 @@
     <string name="status_bind_timeout_retry">Service bind timeout – retrying…</string>
     <string name="action_connect">Connect to glasses</string>
     <string name="action_disconnect">Disconnect</string>
+    <string name="chat_label_you">You</string>
+    <string name="chat_label_chatgpt">ChatGPT</string>
+    <string name="chat_label_offline">Offline Assistant</string>
+    <string name="chat_label_device">Device Diagnostics</string>
+    <string name="chat_avatar_you">Your chat avatar</string>
+    <string name="chat_avatar_chatgpt">ChatGPT avatar</string>
+    <string name="chat_avatar_offline">Offline assistant avatar</string>
+    <string name="chat_avatar_device">Device diagnostics avatar</string>
 </resources>

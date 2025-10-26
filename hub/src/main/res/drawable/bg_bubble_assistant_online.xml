@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="@dimen/assistant_bubble_radius" />
+    <gradient
+        android:angle="135"
+        android:endColor="#D7E5FF"
+        android:startColor="#F3F6FF" />
+    <stroke
+        android:width="1dp"
+        android:color="#C0D4FF" />
+</shape>
