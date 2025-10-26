@@ -42,6 +42,7 @@ class DiagnosticRepository(
         val network: NetworkReport,
         val phoneBattery: Int?,
         val isPowerSaver: Boolean,
+        val telemetry: List<MemoryRepository.TelemetrySnapshotRecord>,
     )
 
     private val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
@@ -55,6 +56,7 @@ class DiagnosticRepository(
         val battery = batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
             ?.takeIf { it in 0..100 }
         val saver = powerManager?.isPowerSaveMode ?: false
+        val telemetrySnapshots = memory.recentTelemetrySnapshots(40)
 
         return Snapshot(
             logs = logs,
@@ -63,6 +65,7 @@ class DiagnosticRepository(
             network = network,
             phoneBattery = battery,
             isPowerSaver = saver,
+            telemetry = telemetrySnapshots,
         )
     }
 
