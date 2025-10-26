@@ -24,6 +24,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.loopermallee.moncchichi.client.G1ServiceCommon
 import com.loopermallee.moncchichi.hub.ui.glasses.GlassesScreen
 import com.loopermallee.moncchichi.hub.ui.glasses.displayName
+import com.loopermallee.moncchichi.hub.ui.glasses.lensRecords
 import kotlinx.coroutines.flow.collectLatest
 
 @Composable
@@ -51,22 +52,21 @@ fun DeviceScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         GlassesScreen(
-            glasses = state.glasses,
+            glasses = state.pairedGlasses,
             serviceStatus = state.serviceStatus,
             isLooking = state.isLooking,
             serviceError = state.serviceError,
-            connect = { id, name -> viewModel.connect(id, name) },
-            disconnect = { id -> viewModel.disconnect(id) },
+            connect = { ids, name ->
+                ids.forEach { id -> viewModel.connect(id, name) }
+            },
+            disconnect = { ids ->
+                ids.forEach { id -> viewModel.disconnect(id) }
+            },
             refresh = viewModel::refreshGlasses,
             testMessages = testMessages,
-            onTestMessageChange = { id, value -> testMessages[id] = value },
-            onSendTestMessage = { id, message, onResult ->
-                viewModel.displayText(message, listOf(id)) { success ->
-                    if (success) {
-                        testMessages[id] = ""
-                    }
-                    onResult(success)
-                }
+            onTestMessageChange = { pairId, value -> testMessages[pairId] = value },
+            onSendTestMessage = { ids, message, onResult ->
+                viewModel.displayText(message, ids, onResult)
             },
             modifier = Modifier.fillMaxWidth()
         )
@@ -74,50 +74,54 @@ fun DeviceScreen(
         Spacer(modifier = Modifier.height(8.dp))
     }
 
-    LaunchedEffect(state.glasses) {
-        val idsInState = mutableSetOf<String>()
-        state.glasses.forEach { glass ->
-            val id = glass.id
-            if (id != null) {
-                idsInState += id
-                if (!testMessages.containsKey(id)) {
-                    testMessages[id] = ""
-                }
-                val previous = statusHistory[id]
-                if (previous != null && previous != glass.status) {
-                    if (previous == G1ServiceCommon.GlassesStatus.CONNECTING &&
-                        glass.status == G1ServiceCommon.GlassesStatus.CONNECTED
-                    ) {
-                        Toast.makeText(
-                            context,
-                            "Connected to ${glass.displayName()}",
-                            Toast.LENGTH_SHORT
-                        ).show()
+    LaunchedEffect(state.pairedGlasses) {
+        val activeLensIds = mutableSetOf<String>()
+        val activePairIds = mutableSetOf<String>()
+        state.pairedGlasses.forEach { pair ->
+            activePairIds += pair.pairId
+            if (!testMessages.containsKey(pair.pairId)) {
+                testMessages[pair.pairId] = ""
+            }
+            pair.lensRecords.forEach { lens ->
+                val id = lens.id
+                if (id != null) {
+                    activeLensIds += id
+                    val previous = statusHistory[id]
+                    if (previous != null && previous != lens.status) {
+                        if (previous == G1ServiceCommon.GlassesStatus.CONNECTING &&
+                            lens.status == G1ServiceCommon.GlassesStatus.CONNECTED
+                        ) {
+                            Toast.makeText(
+                                context,
+                                "Connected to ${lens.displayName()}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        if (previous == G1ServiceCommon.GlassesStatus.CONNECTING &&
+                            lens.status == G1ServiceCommon.GlassesStatus.ERROR
+                        ) {
+                            Toast.makeText(
+                                context,
+                                "Failed to connect to ${lens.displayName()}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
-                    if (previous == G1ServiceCommon.GlassesStatus.CONNECTING &&
-                        glass.status == G1ServiceCommon.GlassesStatus.ERROR
-                    ) {
-                        Toast.makeText(
-                            context,
-                            "Failed to connect to ${glass.displayName()}",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
+                    statusHistory[id] = lens.status
                 }
-                statusHistory[id] = glass.status
             }
         }
-        val iterator = statusHistory.keys.iterator()
-        while (iterator.hasNext()) {
-            val id = iterator.next()
-            if (id !in idsInState) {
-                iterator.remove()
+        val statusIterator = statusHistory.keys.iterator()
+        while (statusIterator.hasNext()) {
+            val id = statusIterator.next()
+            if (id !in activeLensIds) {
+                statusIterator.remove()
             }
         }
         val messageIterator = testMessages.keys.iterator()
         while (messageIterator.hasNext()) {
-            val id = messageIterator.next()
-            if (id !in idsInState) {
+            val pairId = messageIterator.next()
+            if (pairId !in activePairIds) {
                 messageIterator.remove()
             }
         }
