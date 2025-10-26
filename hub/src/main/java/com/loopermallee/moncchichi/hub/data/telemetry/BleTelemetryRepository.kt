@@ -32,6 +32,8 @@ class BleTelemetryRepository(
         val caseBatteryPercent: Int? = null,
         val lastUpdated: Long? = null,
         val rssi: Int? = null,
+        val firmwareVersion: String? = null,
+        val notes: String? = null,
     )
 
     data class Snapshot(
@@ -40,8 +42,6 @@ class BleTelemetryRepository(
         val uptimeSeconds: Long? = null,
         val lastLens: Lens? = null,
         val lastFrameHex: String? = null,
-        val firmwareVersion: String? = null,
-        val notes: String? = null,
     )
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -174,10 +174,11 @@ class BleTelemetryRepository(
         val version = if (decoded.isBlank()) raw.toHex() else decoded
         val hex = frame.toHex()
         _snapshot.update { current ->
-            if (current.firmwareVersion == version && current.lastLens == lens && current.lastFrameHex == hex) {
+            val existing = current.lens(lens)
+            if (existing.firmwareVersion == version && current.lastLens == lens && current.lastFrameHex == hex) {
                 current
             } else {
-                current.copy(firmwareVersion = version).withFrame(lens, hex)
+                current.updateLens(lens, existing.copy(firmwareVersion = version)).withFrame(lens, hex)
             }
         }
         _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} firmware=$version")
@@ -232,7 +233,7 @@ class BleTelemetryRepository(
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (lines.isEmpty()) return false
         lines.forEach { line ->
-            parseTextMetadata(line)
+            parseTextMetadata(lens, line)
             _uartText.tryEmit(UartLine(lens, line))
         }
         return true
@@ -264,7 +265,7 @@ class BleTelemetryRepository(
                 }
             } else {
                 if (trimmed.isNotEmpty()) {
-                    parseTextMetadata(trimmed)
+                    parseTextMetadata(lens, trimmed)
                     _uartText.tryEmit(UartLine(lens, trimmed))
                     emitted = true
                 }
@@ -286,10 +287,11 @@ class BleTelemetryRepository(
         return unsigned == 0x0A || unsigned == 0x0D || unsigned in 0x20..0x7E
     }
 
-    private fun parseTextMetadata(line: String) {
+    private fun parseTextMetadata(lens: Lens, line: String) {
         _snapshot.update { current ->
-            var firmware = current.firmwareVersion
-            var notes = current.notes
+            val existing = current.lens(lens)
+            var firmware = existing.firmwareVersion
+            var notes = existing.notes
             val versionMatch = versionRegex.matcher(line)
             if (versionMatch.find()) {
                 firmware = versionMatch.group(1)
@@ -300,8 +302,9 @@ class BleTelemetryRepository(
                     notes = "Build ${buildMatch.group(1)}"
                 }
             }
-            if (firmware != current.firmwareVersion || notes != current.notes) {
-                current.copy(firmwareVersion = firmware, notes = notes)
+            val updated = existing.copy(firmwareVersion = firmware, notes = notes)
+            if (updated != existing) {
+                current.updateLens(lens, updated)
             } else {
                 current
             }
