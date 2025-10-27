@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,8 +62,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.layout.matchParentSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toDp
 import androidx.compose.ui.unit.toSize
 import java.text.DateFormat
 import java.util.Date
@@ -300,7 +299,7 @@ private fun TargetDropdown(
     val menuLabel = if (expanded) "Collapse target list" else "Expand target list"
     val interactionSource = remember { MutableInteractionSource() }
     var textFieldSize by remember { mutableStateOf(Size.Zero) }
-    val density = LocalDensity.current
+    val localDensity = LocalDensity.current
 
     Box(modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
@@ -327,7 +326,11 @@ private fun TargetDropdown(
             expanded = expanded && options.isNotEmpty(),
             onDismissRequest = { onExpandedChange(false) },
             modifier = if (textFieldSize.width > 0f) {
-                Modifier.width(with(density) { textFieldSize.width.toDp() })
+                Modifier.width(
+                    with(localDensity) {
+                        (textFieldSize.width / density).dp
+                    },
+                )
             } else {
                 Modifier
             },
