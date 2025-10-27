@@ -27,6 +27,8 @@ internal class BluetoothManager(
     private val bluetoothAdapter: BluetoothAdapter? = systemBluetoothManager?.adapter
     private val scanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
     private val deviceManager = DeviceManager(context, scope)
+    private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
+    private val headsets: MutableMap<PairKey, HeadsetOrchestrator> = mutableMapOf()
 
     private val writableDevices = MutableStateFlow<Map<String, ScanResult>>(emptyMap())
     private val readableDevices = MutableStateFlow<List<ScanResult>>(emptyList())

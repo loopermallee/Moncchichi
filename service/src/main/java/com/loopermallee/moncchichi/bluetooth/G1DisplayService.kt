@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.LazyThreadSafetyMode
 
 class G1DisplayService : Service() {
 
@@ -44,6 +45,23 @@ class G1DisplayService : Service() {
     private val heartbeatStarted = AtomicBoolean(false)
     private var heartbeatJob: Job? = null
     private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
+    private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
+    private val demoHeadsetLazy = lazy(LazyThreadSafetyMode.NONE) {
+        if (!pairBleEnabled) {
+            null
+        } else {
+            val pair = PairKey("demo-pair")
+            val leftClient = BleClientStub(
+                LensState(LensId("00:00:00:00:00:01", LensSide.LEFT)),
+            )
+            val rightClient = BleClientStub(
+                LensState(LensId("00:00:00:00:00:02", LensSide.RIGHT)),
+            )
+            HeadsetOrchestrator(pair, leftClient, rightClient, serviceScope)
+        }
+    }
+    private val demoHeadset: HeadsetOrchestrator?
+        get() = demoHeadsetLazy.value
 
     override fun onCreate() {
         super.onCreate()
@@ -119,6 +137,10 @@ class G1DisplayService : Service() {
             deviceManager.disconnect() // Gadgetbridge-style safe dispose
         }.onFailure { error ->
             logger.w(TAG, "${tt()} Error during BLE disconnect: ${error.message}", error)
+        }
+
+        if (pairBleEnabled && demoHeadsetLazy.isInitialized()) {
+            demoHeadsetLazy.value?.close()
         }
 
         serviceScope.cancel() // stop any coroutines still running
@@ -277,6 +299,15 @@ class G1DisplayService : Service() {
                     false
                 }
             }
+        }
+
+        fun getHeadsetState(pairToken: String): HeadsetState? {
+            if (!pairBleEnabled) {
+                return null
+            }
+            val headset = demoHeadset ?: return null
+            val state = headset.headset.value
+            return if (state.pair.token == pairToken) state else null
         }
     }
 
