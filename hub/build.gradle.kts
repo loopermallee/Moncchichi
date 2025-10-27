@@ -63,6 +63,12 @@ android {
     }
 }
 
+configurations.all {
+    resolutionStrategy {
+        force("com.google.android.material:material:1.12.0")
+    }
+}
+
 dependencies {
     implementation(project(":core"))
     implementation(project(":service"))
