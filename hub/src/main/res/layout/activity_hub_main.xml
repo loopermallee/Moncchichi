@@ -1,31 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:orientation="vertical"
-    android:fitsSystemWindows="true"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    tools:context=".ui.HubMainActivity">
 
-    <!-- Simple toolbar text so content is not hidden under status bar -->
-    <TextView
+    <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/titleBar"
-        android:padding="16dp"
-        android:text="Moncchichi Hub"
-        android:textSize="20sp"
-        android:textStyle="bold"
+        style="@style/Widget.Material3.Toolbar.Surface"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorSurface"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:title="@string/hub_title"
+        android:titleTextColor="?attr/colorOnSurface" />
 
     <FrameLayout
         android:id="@+id/fragment_container"
-        android:layout_weight="1"
         android:layout_width="match_parent"
-        android:layout_height="0dp"/>
+        android:layout_height="match_parent"
+        android:layout_marginTop="?attr/actionBarSize"
+        android:layout_marginBottom="@dimen/bottom_nav_height"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior" />
 
     <com.google.android.material.bottomnavigation.BottomNavigationView
         android:id="@+id/bottom_nav"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        style="@style/Widget.Material3.BottomNavigationView"
+        android:layout_gravity="bottom"
+        android:background="?attr/colorSurface"
+        app:itemIconTint="@color/selector_nav_item"
+        app:itemTextColor="@color/selector_nav_item"
         app:menu="@menu/menu_bottom_nav" />
-</LinearLayout>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

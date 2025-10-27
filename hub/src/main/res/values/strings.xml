@@ -14,6 +14,7 @@
     <string name="notification_channel_name">Display connectivity</string>
     <string name="notification_channel_description">Keeps the G1 display connection active</string>
     <string name="hub_inflation_error">Moncchichi Hub failed to load UI. Please reinstall or update.</string>
+    <string name="hub_title">Moncchichi Hub</string>
     <string name="status_connected_green">Connected 🟢</string>
     <string name="status_reconnecting_yellow">Reconnecting 🟡</string>
     <string name="status_waiting_red">Waiting for reconnect 🔴</string>
