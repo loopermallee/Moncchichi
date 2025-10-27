@@ -34,7 +34,7 @@
     <string name="chat_avatar_device">Device diagnostics avatar</string>
     <string name="diagnostics_placeholder">System diagnostics will appear here.</string>
     <string name="permissions_screen_title">App permissions</string>
-    <string name="permissions_screen_all_granted">All required permissions are already granted. You're good to go!</string>
+    <string name="permissions_screen_all_granted">All permissions granted</string>
     <string name="permissions_screen_missing">Please allow these permissions so the app can connect to your Moncchichi glasses.</string>
     <string name="permissions_summary_none_required">No runtime permissions are required on this device.</string>
     <string name="permissions_screen_help">Tip: If a permission prompt no longer appears, open system settings to grant it manually.</string>
