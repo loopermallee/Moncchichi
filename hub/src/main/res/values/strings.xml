@@ -32,4 +32,5 @@
     <string name="chat_avatar_chatgpt">ChatGPT avatar</string>
     <string name="chat_avatar_offline">Offline assistant avatar</string>
     <string name="chat_avatar_device">Device diagnostics avatar</string>
+    <string name="diagnostics_placeholder">System diagnostics will appear here.</string>
 </resources>
