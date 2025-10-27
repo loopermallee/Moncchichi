@@ -5,6 +5,7 @@
         <item name="colorPrimaryContainer">@color/er_surface_alt</item>
         <item name="colorSecondary">@color/er_surface</item>
         <item name="colorOnSecondary">@color/er_text_primary</item>
+        <item name="bottomNavigationStyle">@style/Widget.Material3.BottomNavigationView</item>
         <item name="android:statusBarColor">@color/er_background</item>
         <item name="android:navigationBarColor">@color/er_background</item>
         <item name="android:windowBackground">@color/er_background</item>

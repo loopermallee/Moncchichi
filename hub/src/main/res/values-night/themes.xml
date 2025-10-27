@@ -3,6 +3,7 @@
         <item name="colorPrimary">@color/purple_200</item>
         <item name="colorOnPrimary">@color/black</item>
         <item name="colorSecondary">@color/teal_200</item>
+        <item name="bottomNavigationStyle">@style/Widget.Material3.BottomNavigationView</item>
         <item name="android:statusBarColor">?attr/colorPrimary</item>
     </style>
 </resources>
