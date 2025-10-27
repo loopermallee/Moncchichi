@@ -1,8 +1,9 @@
 package com.loopermallee.moncchichi.hub.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,15 +12,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.loopermallee.moncchichi.hub.ui.theme.StatusConnected
+import com.loopermallee.moncchichi.hub.ui.theme.StatusError
+import com.loopermallee.moncchichi.hub.ui.theme.StatusWarning
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,22 +41,28 @@ fun BleStatusView(
     modifier: Modifier = Modifier,
     spacing: Dp = 16.dp,
 ) {
-    Column(
-        modifier = modifier
-            .background(MonochromeSurface, RoundedCornerShape(20.dp))
-            .border(1.dp, MonochromeBorder, RoundedCornerShape(20.dp))
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(spacing),
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 2.dp,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        Text(
-            text = "BLE Link",
-            color = Color.White,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp,
-        )
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(spacing)
+        ) {
+            Text(
+                text = "BLE Link",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
 
-        LensRow(title = "Left", state = left)
-        LensRow(title = "Right", state = right)
+            LensRow(title = "Left", state = left)
+            LensRow(title = "Right", state = right)
+        }
     }
 }
 
@@ -62,35 +74,38 @@ private fun LensRow(title: String, state: LensUiState) {
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(color = state.statusColor)
+            StatusSwatch(color = state.statusColor)
             Spacer(modifier = Modifier.size(12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = title,
-                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium,
-                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = state.statusLabel,
-                    color = state.statusDetailColor,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             state.rssi?.let { value ->
                 Text(
                     text = "${value} dBm",
-                    color = Color.White,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
             state.lastAckLabel?.let { label ->
                 Text(
                     text = label,
-                    color = SecondaryText,
-                    fontSize = 10.sp,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -98,11 +113,12 @@ private fun LensRow(title: String, state: LensUiState) {
 }
 
 @Composable
-private fun StatusDot(color: Color) {
-    Spacer(
+private fun StatusSwatch(color: Color) {
+    Box(
         modifier = Modifier
             .size(14.dp)
-            .background(color, CircleShape)
+            .clip(CircleShape)
+            .background(color)
     )
 }
 
@@ -117,7 +133,7 @@ data class LensUiState(
 ) {
     val statusLabel: String
         get() = when {
-            isConnected && degraded -> "Connected • Retrying"
+            isConnected && degraded -> "Connected \u2022 Retrying"
             isConnected -> "Connected"
             degraded -> "Link unstable"
             else -> "Disconnected"
@@ -125,17 +141,10 @@ data class LensUiState(
 
     val statusColor: Color
         get() = when {
-            isConnected && !degraded -> Success
-            isConnected && degraded -> Warning
-            degraded -> Warning
-            else -> Error
-        }
-
-    val statusDetailColor: Color
-        get() = when {
-            degraded -> Warning
-            isConnected -> SecondaryText
-            else -> SecondaryText
+            isConnected && !degraded -> StatusConnected
+            isConnected && degraded -> StatusWarning
+            degraded -> StatusWarning
+            else -> StatusError
         }
 
     val lastAckLabel: String?
@@ -144,13 +153,6 @@ data class LensUiState(
             val seconds = TimeUnit.MILLISECONDS.toSeconds(delta).coerceAtLeast(0)
             val formatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
             val formatted = formatter.format(Date(timestamp))
-            "Ack ${seconds}s ago • $formatted"
+            "Ack ${seconds}s ago \u2022 $formatted"
         }
 }
-
-private val MonochromeSurface = Color(0xFF1A1A1A)
-private val MonochromeBorder = Color(0xFF2A2A2A)
-private val SecondaryText = Color(0xFFCCCCCC)
-private val Success = Color(0xFF4CAF50)
-private val Warning = Color(0xFFFFC107)
-private val Error = Color(0xFFF44336)

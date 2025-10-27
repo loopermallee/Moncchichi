@@ -2,12 +2,17 @@ package com.loopermallee.moncchichi.hub.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Bof4Midnight = Color(0xFF081726)
-val Bof4Steel = Color(0xFF1F3D5B)
-val Bof4Mist = Color(0xFFE9E2CE)
-val Bof4Sand = Color(0xFFCDB894)
-val Bof4Ember = Color(0xFFE39A3B)
-val Bof4Sky = Color(0xFF6CA6D9)
-val Bof4Verdant = Color(0xFF5D9479)
-val Bof4Coral = Color(0xFFD9644C)
-val Bof4Warning = Color(0xFFF2C74E)
+val Neutral950 = Color(0xFF0D0F12)
+val Neutral900 = Color(0xFF16181D)
+val Neutral850 = Color(0xFF1E2127)
+val Neutral800 = Color(0xFF23262D)
+val Neutral300 = Color(0xFFCDD0D8)
+val Neutral200 = Color(0xFFE3E5EB)
+val Neutral150 = Color(0xFFECEEF3)
+val Neutral100 = Color(0xFFF7F8FA)
+val Neutral050 = Color(0xFFFFFFFF)
+
+val StatusConnected = Color(0xFF2EA66E)
+val StatusWarning = Color(0xFFF0B429)
+val StatusError = Color(0xFFD64545)
+val StatusIdle = Color(0xFF8E939C)

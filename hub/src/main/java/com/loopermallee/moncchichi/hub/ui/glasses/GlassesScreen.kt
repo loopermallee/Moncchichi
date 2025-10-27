@@ -14,9 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,20 +49,16 @@ import com.loopermallee.moncchichi.hub.ui.glasses.isAnyInProgress
 import com.loopermallee.moncchichi.hub.ui.glasses.isFullyConnected
 import com.loopermallee.moncchichi.hub.ui.glasses.lensIds
 import com.loopermallee.moncchichi.hub.ui.glasses.lensRecords
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Coral
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Midnight
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Mist
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Sand
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Sky
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Steel
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Verdant
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Warning
+import com.loopermallee.moncchichi.hub.ui.theme.StatusConnected
+import com.loopermallee.moncchichi.hub.ui.theme.StatusError
+import com.loopermallee.moncchichi.hub.ui.theme.StatusIdle
+import com.loopermallee.moncchichi.hub.ui.theme.StatusWarning
 import java.util.Locale
 
-private val ConnectedColor = Bof4Verdant
-private val DisconnectedColor = Bof4Sand
-private val ErrorColor = Bof4Coral
-private val WarningColor = Bof4Warning
+private val ConnectedColor = StatusConnected
+private val DisconnectedColor = StatusIdle
+private val ErrorColor = StatusError
+private val WarningColor = StatusWarning
 
 private val GenericNameRegex = Regex("^(left|right)([-_][a-z0-9]+)?$", RegexOption.IGNORE_CASE)
 
@@ -121,7 +118,6 @@ fun GlassesScreen(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(Bof4Midnight)
     ) {
         LazyColumn(
             modifier = Modifier
@@ -148,7 +144,7 @@ fun GlassesScreen(
                         text = "Available Headsets",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Bof4Mist,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
 
@@ -189,10 +185,12 @@ fun GlassesScreen(
 @Composable
 private fun HeroHeader() {
     Surface(
-        color = Bof4Steel.copy(alpha = 0.85f),
-        contentColor = Bof4Mist,
         shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
+        tonalElevation = 4.dp,
+        shadowElevation = 0.dp,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
             modifier = Modifier
@@ -203,18 +201,21 @@ private fun HeroHeader() {
             Text(
                 text = "Breath of Fire IV",
                 style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
             )
 
             Text(
                 text = "G1 Hub Device Control",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Text(
                 text = "Discover, pair, and manage your G1 glasses with a single tap.",
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -257,10 +258,10 @@ private fun StatusPanel(
     }
 
     Surface(
-        color = Bof4Steel.copy(alpha = 0.85f),
-        contentColor = Bof4Mist,
         shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
+        tonalElevation = 2.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
@@ -271,14 +272,14 @@ private fun StatusPanel(
             Text(
                 text = "Status",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
             )
 
-            StatusChip(
-                color = statusColor,
+            StatusPill(
+                tone = statusColor,
                 label = statusLabel,
-                modifier = Modifier.fillMaxWidth(),
-                fill = true
+                modifier = Modifier.fillMaxWidth()
             )
 
             if (isLooking || hasConnecting) {
@@ -298,58 +299,41 @@ private fun StatusPanel(
                         } else {
                             "Finalizing connections…"
                         },
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            Divider(color = Bof4Sky.copy(alpha = 0.35f))
+            Divider(color = MaterialTheme.colorScheme.outlineVariant)
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Headsets discovered",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Bof4Mist.copy(alpha = 0.8f)
-                    )
-                    Text(
-                        text = "$totalPairs",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Connected lenses",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Bof4Mist.copy(alpha = 0.8f)
-                    )
-                    Text(
-                        text = "$connectedLensCount / $totalLensCount",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+                StatusMetric(
+                    title = "Headsets discovered",
+                    value = "$totalPairs"
+                )
+                StatusMetric(
+                    title = "Connected lenses",
+                    value = "$connectedLensCount / $totalLensCount",
+                    horizontalAlignment = Alignment.End
+                )
             }
 
             if (partiallyConnectedPairs > 0) {
                 Text(
                     text = "$partiallyConnectedPairs headset" + if (partiallyConnectedPairs == 1) " needs attention" else "s need attention",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Bof4Mist.copy(alpha = 0.75f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             OutlinedButton(
                 onClick = onRefresh,
                 enabled = !serviceError,
-                border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Refresh")
@@ -386,10 +370,10 @@ private fun GlassesCard(
 
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = Bof4Steel.copy(alpha = 0.7f),
-            contentColor = Bof4Mist
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
         ),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         shape = RoundedCornerShape(24.dp)
     ) {
         Column(
@@ -417,13 +401,13 @@ private fun GlassesCard(
                     Text(
                         text = "Pair ID: ${pair.pairId}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Bof4Mist.copy(alpha = 0.75f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                StatusChip(
-                    color = statusColor,
+                StatusPill(
+                    tone = statusColor,
                     label = pair.overallStatusLabel()
                 )
             }
@@ -447,7 +431,7 @@ private fun GlassesCard(
             Text(
                 text = "Lens IDs: ${lensIds.joinToString(", ").ifEmpty { "Unavailable" }}",
                 style = MaterialTheme.typography.bodySmall,
-                color = Bof4Mist.copy(alpha = 0.75f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             if (pair.isAnyConnected && onSendTestMessage != null) {
@@ -480,7 +464,7 @@ private fun GlassesCard(
                 Text(
                     text = "Connect to both lenses before sending a test message.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Bof4Mist.copy(alpha = 0.75f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -488,16 +472,13 @@ private fun GlassesCard(
                 Text(
                     text = "Lens identifiers unavailable. Try refreshing discovery.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Bof4Mist.copy(alpha = 0.75f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             Button(
                 onClick = { buttonAction?.invoke() },
                 enabled = buttonEnabled,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = statusColor.copy(alpha = if (buttonEnabled) 0.85f else 0.5f)
-                ),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(buttonLabel)
@@ -507,34 +488,69 @@ private fun GlassesCard(
 }
 
 @Composable
-private fun StatusChip(
-    color: Color,
+private fun StatusPill(
+    tone: Color,
     label: String,
     modifier: Modifier = Modifier,
-    fill: Boolean = false,
 ) {
     Surface(
-        color = color.copy(alpha = 0.12f),
+        modifier = modifier,
         shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.6f)),
-        modifier = modifier
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        val textModifier = if (fill) {
-            Modifier
+        Row(
+            modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
-        } else {
-            Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            StatusSwatch(color = tone)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
+    }
+}
+
+@Composable
+private fun StatusMetric(
+    title: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    horizontalAlignment: Alignment.Horizontal = Alignment.Start,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = horizontalAlignment
+    ) {
         Text(
-            text = label,
-            modifier = textModifier,
-            textAlign = TextAlign.Center,
-            color = color,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
+            text = title,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
+}
+
+@Composable
+private fun StatusSwatch(color: Color) {
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .clip(CircleShape)
+            .background(color)
+    )
 }
 
 @Composable
@@ -545,33 +561,41 @@ private fun LensStatusBadge(
 ) {
     val color = glasses?.statusColor() ?: DisconnectedColor
     val detailText = if (glasses != null) {
-        "${glasses.statusText()} • Battery ${glasses.batteryLabel()}"
+        "${glasses.statusText()} \u2022 Battery ${glasses.batteryLabel()}"
     } else {
         "Not detected"
     }
 
     Surface(
-        color = color.copy(alpha = 0.12f),
-        contentColor = color,
+        modifier = modifier,
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.4f)),
-        modifier = modifier
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                StatusSwatch(color = color)
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
             Text(
                 text = detailText,
-                style = MaterialTheme.typography.labelMedium
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
+}
 }
 
 private fun lensLabel(slotIndex: Int, side: LensSide, hasCompanion: Boolean): String = when (side) {
@@ -616,10 +640,10 @@ private fun NoGlassesMessage(
     }
 
     Surface(
-        color = Bof4Steel.copy(alpha = 0.8f),
-        contentColor = Bof4Mist,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
             modifier = Modifier
@@ -630,12 +654,14 @@ private fun NoGlassesMessage(
             Text(
                 text = "No headsets detected",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
             )
 
             Text(
                 text = description,
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
