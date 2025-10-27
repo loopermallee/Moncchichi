@@ -11,7 +11,7 @@ interface BleClient {
     val state: StateFlow<LensState>
     suspend fun bondAndConnect()
     suspend fun disconnect()
-    suspend fun close()
+    fun close()
 }
 
 class BleClientStub(private val initial: LensState) : BleClient {
@@ -27,7 +27,7 @@ class BleClientStub(private val initial: LensState) : BleClient {
         _state.value = _state.value.copy(status = LinkStatus.DISCONNECTED)
     }
 
-    override suspend fun close() {
+    override fun close() {
         // No-op for the stub implementation.
     }
 }
