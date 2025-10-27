@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import com.loopermallee.moncchichi.client.G1ServiceCommon
 import com.loopermallee.moncchichi.client.G1ServiceCommon.GlassesStatus
 import com.loopermallee.moncchichi.client.G1ServiceCommon.ServiceStatus
+import com.loopermallee.moncchichi.hub.ui.components.screenContentWidth
 import com.loopermallee.moncchichi.hub.ui.glasses.LensSide.UNKNOWN
 import com.loopermallee.moncchichi.hub.ui.glasses.LensSide.LEFT
 import com.loopermallee.moncchichi.hub.ui.glasses.LensSide.RIGHT
@@ -123,7 +124,9 @@ fun GlassesScreen(
             .background(Bof4Midnight)
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .screenContentWidth()
+                .align(Alignment.TopCenter),
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {

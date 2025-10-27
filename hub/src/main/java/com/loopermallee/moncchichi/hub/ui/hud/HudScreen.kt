@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
+import com.loopermallee.moncchichi.hub.ui.components.screenContentWidth
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.launch
@@ -85,6 +86,7 @@ fun HudScreen(
     var messageText by rememberSaveable { mutableStateOf("") }
     var targetExpanded by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
 
     LaunchedEffect(state.lastMessageTimestamp) {
         if (state.lastMessageTimestamp != null) {
@@ -112,33 +114,39 @@ fun HudScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
-            MirrorCard(state = state)
-            MessageComposerCard(
-                state = state,
-                messageText = messageText,
-                onMessageChanged = { messageText = it },
-                expanded = targetExpanded,
-                onExpandedChange = { targetExpanded = it },
-                onSendMessage = { onSendMessage(messageText) },
-                onStopMessage = onStopMessage,
-                onTargetSelected = onTargetSelected,
-            )
-            DashboardCard(
-                state = state,
-                onToggleTile = onToggleTile,
-                onMoveTile = onMoveTile,
-                onRefreshWeather = onRefreshWeather,
-                onRequestPostNotifications = onRequestPostNotifications,
-                onOpenNotificationSettings = onOpenNotificationSettings,
-            )
+            Column(
+                modifier = Modifier
+                    .screenContentWidth()
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 16.dp, vertical = 24.dp)
+                    .align(Alignment.TopCenter),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                MirrorCard(state = state)
+                MessageComposerCard(
+                    state = state,
+                    messageText = messageText,
+                    onMessageChanged = { messageText = it },
+                    expanded = targetExpanded,
+                    onExpandedChange = { targetExpanded = it },
+                    onSendMessage = { onSendMessage(messageText) },
+                    onStopMessage = onStopMessage,
+                    onTargetSelected = onTargetSelected,
+                )
+                DashboardCard(
+                    state = state,
+                    onToggleTile = onToggleTile,
+                    onMoveTile = onMoveTile,
+                    onRefreshWeather = onRefreshWeather,
+                    onRequestPostNotifications = onRequestPostNotifications,
+                    onOpenNotificationSettings = onOpenNotificationSettings,
+                )
+            }
         }
     }
 }
