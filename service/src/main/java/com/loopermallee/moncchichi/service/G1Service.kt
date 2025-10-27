@@ -36,16 +36,19 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import java.util.Locale
+import kotlin.collections.ArrayDeque
 
 internal enum class DeviceSide(val prefix: String, val displayName: String, val defaultBattery: Int) {
     LEFT("left", "Left Glass", 82),
     RIGHT("right", "Right Glass", 67);
 
-    fun buildId(address: String?): String {
-        val suffix = address
-            ?.takeLast(4)
-            ?.replace(":", "")
-            ?.lowercase()
+    fun buildId(address: String?, pairToken: String? = null): String {
+        val suffix = pairToken?.takeIf { it.isNotBlank() }
+            ?: address
+                ?.takeLast(4)
+                ?.replace(":", "")
+                ?.lowercase(Locale.US)
             ?: "mock"
         return "$prefix-$suffix"
     }
@@ -102,39 +105,142 @@ private fun defaultDevices(): Map<String, InternalDevice> =
         device.id to device
     }
 
+private val sideMarkerRegex = Regex("([_\\-\\s])(l|r|left|right)(?=[_\\-\\s]|\\b)", RegexOption.IGNORE_CASE)
+private val nonIdCharactersRegex = Regex("[^a-z0-9]+")
+private val repeatedHyphenRegex = Regex("-+")
+private val trailingSideRegex = Regex("\\s*\\((left|right)\\)\\s*\$", RegexOption.IGNORE_CASE)
+
+private fun identifySide(name: String?): DeviceSide? {
+    if (name.isNullOrBlank()) return null
+    val normalized = name.lowercase(Locale.US)
+    return when {
+        normalized.contains("_l_") || normalized.endsWith("_l") ||
+            normalized.contains("-l-") || normalized.endsWith("-l") ||
+            normalized.startsWith("left ") || normalized.contains(" left") -> DeviceSide.LEFT
+        normalized.contains("_r_") || normalized.endsWith("_r") ||
+            normalized.contains("-r-") || normalized.endsWith("-r") ||
+            normalized.startsWith("right ") || normalized.contains(" right") -> DeviceSide.RIGHT
+        else -> null
+    }
+}
+
+private fun extractPairTokenFromName(name: String?): String? {
+    if (name.isNullOrBlank()) return null
+    val match = sideMarkerRegex.find(name)
+    return if (match != null) {
+        name.substring(0, match.range.first)
+    } else {
+        null
+    }
+}
+
+private fun sanitizePairToken(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val normalized = raw.trim().lowercase(Locale.US)
+    val replaced = nonIdCharactersRegex.replace(normalized, "-")
+    val compacted = repeatedHyphenRegex.replace(replaced, "-")
+    return compacted.trim('-').takeIf { it.isNotBlank() }
+}
+
+private fun stripSidePrefixFromId(id: String?): String? {
+    if (id.isNullOrBlank()) return null
+    for (side in DeviceSide.values()) {
+        val prefix = "${side.prefix}-"
+        if (id.startsWith(prefix)) {
+            return id.removePrefix(prefix)
+        }
+    }
+    return id
+}
+
+private fun formatPairDisplayName(raw: String): String {
+    val words = raw
+        .replace('_', ' ')
+        .replace('-', ' ')
+        .split(Regex("\\s+"))
+        .filter { it.isNotBlank() }
+    if (words.isEmpty()) {
+        return raw.trim()
+    }
+    return words.joinToString(" ") { word ->
+        word.replaceFirstChar { char ->
+            if (char.isLowerCase()) char.titlecase(Locale.US) else char.toString()
+        }
+    }
+}
+
+private fun extractPairDisplayBase(name: String?): String? {
+    if (name.isNullOrBlank()) return null
+    return trailingSideRegex.replace(name, "").trim().takeIf { it.isNotBlank() }
+}
+
 private fun buildDevicesSnapshot(
     scanResults: List<ScanResult>,
     previousState: InternalState,
     selectedAddress: String?,
     connectionState: DeviceManager.ConnectionState,
 ): Map<String, InternalDevice> {
-    val assignments = DeviceSide.values().mapIndexed { index, side ->
-        val result = scanResults.getOrNull(index)
+    if (scanResults.isEmpty() && previousState.devices.isEmpty()) {
+        return defaultDevices()
+    }
+
+    val byAddress = scanResults.associateBy { it.device.address }
+    val selectedPairToken = selectedAddress?.let { address ->
+        val raw = byAddress[address]?.device?.name?.let(::extractPairTokenFromName)
+        sanitizePairToken(raw)
+            ?: previousState.devices.values.firstOrNull { it.address == address }
+                ?.id
+                ?.let(::stripSidePrefixFromId)
+    }
+
+    val assignedBySide = mutableMapOf<DeviceSide, ScanResult>()
+    val unassigned = ArrayDeque<ScanResult>()
+    scanResults.forEach { result ->
+        val side = identifySide(result.device.name)
+        if (side != null && assignedBySide[side] == null) {
+            assignedBySide[side] = result
+        } else {
+            unassigned.addLast(result)
+        }
+    }
+
+    val assignments = DeviceSide.values().map { side ->
         val previous = previousState.devices.values.firstOrNull { it.side == side }
+        val result = assignedBySide[side] ?: if (unassigned.isEmpty()) null else unassigned.removeFirst()
         val address = result?.device?.address ?: previous?.address
+        val rawPairToken = result?.device?.name?.let(::extractPairTokenFromName)
+            ?: previous?.id?.let(::stripSidePrefixFromId)
+        val pairToken = sanitizePairToken(rawPairToken)
         val resolvedId = when {
+            pairToken != null -> side.buildId(address, pairToken)
             address != null -> side.buildId(address)
             previous != null -> previous.id
             else -> side.buildId(null)
         }
-        val name = result?.device?.name ?: previous?.name ?: side.displayName
-        val battery = previous?.batteryPercentage ?: side.defaultBattery
-        val firmware = previous?.firmwareVersion
-        val isMock = result == null || address == null
-        val resolvedConnection = if (!isMock && address != null && address == selectedAddress) {
-            connectionState
-        } else {
-            DeviceManager.ConnectionState.DISCONNECTED
+        val isMock = address.isNullOrBlank()
+        val resolvedConnection = when {
+            !isMock && address != null && address == selectedAddress -> connectionState
+            !isMock && pairToken != null && selectedPairToken != null && pairToken == selectedPairToken -> connectionState
+            else -> DeviceManager.ConnectionState.DISCONNECTED
+        }
+        val baseName = rawPairToken?.let(::formatPairDisplayName)
+            ?: previous?.name?.let(::extractPairDisplayBase)
+        val sideLabel = if (side == DeviceSide.LEFT) "Left" else "Right"
+        val resolvedName = when {
+            !baseName.isNullOrBlank() -> "$baseName ($sideLabel)"
+            result?.device?.name?.isNotBlank() == true -> result.device.name
+            previous?.name?.isNotBlank() == true -> previous.name
+            else -> side.displayName
         }
         InternalDevice(
             id = resolvedId,
             address = address,
-            name = name,
+            name = resolvedName,
             connectionState = resolvedConnection,
-            batteryPercentage = battery,
+            batteryPercentage = previous?.batteryPercentage ?: side.defaultBattery,
             side = side,
             isMock = isMock,
-            firmwareVersion = firmware,
+            firmwareVersion = previous?.firmwareVersion,
         )
     }
     return assignments.associateBy { it.id }
