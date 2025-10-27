@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.hub.ui.components.screenContentWidth
 import com.loopermallee.moncchichi.hub.ui.glasses.LensSide
 import com.loopermallee.moncchichi.hub.ui.glasses.PairedGlasses
 import com.loopermallee.moncchichi.hub.ui.glasses.batteryLabel
@@ -102,148 +103,154 @@ fun DisplayScreen(
 
     val scrollState = rememberScrollState()
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(scrollState)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        Text(
-            text = "Display Message",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold
-        )
-
-        ConnectionStatusPanel(
-            glasses = sortedPairs,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        if (sortedPairs.isNotEmpty()) {
+        Column(
+            modifier = Modifier
+                .screenContentWidth()
+                .verticalScroll(scrollState)
+                .padding(24.dp)
+                .align(Alignment.TopCenter),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
             Text(
-                text = "Choose where to send",
-                style = MaterialTheme.typography.titleSmall,
+                text = "Display Message",
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold
             )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                val allSelected = selectedTargetId == null
-                FilterChip(
-                    selected = allSelected && targetIds.isNotEmpty(),
-                    onClick = { selectedTargetId = null },
-                    label = {
-                        Text(if (allConnected) "All connected headsets" else "Connected headsets")
-                    },
-                    enabled = connectablePairs.isNotEmpty(),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                    )
+            ConnectionStatusPanel(
+                glasses = sortedPairs,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            if (sortedPairs.isNotEmpty()) {
+                Text(
+                    text = "Choose where to send",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
                 )
 
-                sortedPairs.forEach { pair ->
-                    val enabled = pair.connectedLensIds.isNotEmpty()
-                    val isSelected = selectedTargetId == pair.pairId
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val allSelected = selectedTargetId == null
                     FilterChip(
-                        selected = isSelected,
-                        onClick = {
-                            selectedTargetId = if (isSelected) null else pair.pairId
+                        selected = allSelected && targetIds.isNotEmpty(),
+                        onClick = { selectedTargetId = null },
+                        label = {
+                            Text(if (allConnected) "All connected headsets" else "Connected headsets")
                         },
-                        enabled = enabled,
-                        label = { PairChipLabel(pair) },
+                        enabled = connectablePairs.isNotEmpty(),
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                         )
                     )
+
+                    sortedPairs.forEach { pair ->
+                        val enabled = pair.connectedLensIds.isNotEmpty()
+                        val isSelected = selectedTargetId == pair.pairId
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                selectedTargetId = if (isSelected) null else pair.pairId
+                            },
+                            enabled = enabled,
+                            label = { PairChipLabel(pair) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                            )
+                        )
+                    }
                 }
             }
-        }
 
-        OutlinedTextField(
-            value = messageText,
-            onValueChange = { messageText = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Message") },
-            minLines = 2
-        )
-
-        TextButton(
-            onClick = {
-                messageText = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor."
-            },
-            modifier = Modifier.align(Alignment.End)
-        ) {
-            Text("Lorem Ipsum")
-        }
-
-        Button(
-            onClick = {
-                viewModel.displayText(messageText, targetIds) { success ->
-                    if (success) {
-                        lastSentPreview = messageText.trim().ifBlank { null }
-                        messageText = ""
-                    }
-                }
-            },
-            enabled = targetIds.isNotEmpty() && messageText.isNotBlank(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(text = "Send Message")
-        }
-
-        Button(
-            onClick = {
-                viewModel.stopDisplaying(targetIds) { success ->
-                    if (success) {
-                        lastSentPreview = null
-                    }
-                }
-            },
-            enabled = targetIds.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Stop Displaying")
-        }
-
-        lastSentPreview?.let { preview ->
-            Surface(
+            OutlinedTextField(
+                value = messageText,
+                onValueChange = { messageText = it },
                 modifier = Modifier.fillMaxWidth(),
-                tonalElevation = 2.dp,
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surfaceVariant
+                label = { Text("Message") },
+                minLines = 2
+            )
+
+            TextButton(
+                onClick = {
+                    messageText = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor."
+                },
+                modifier = Modifier.align(Alignment.End)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Text("Lorem Ipsum")
+            }
+
+            Button(
+                onClick = {
+                    viewModel.displayText(messageText, targetIds) { success ->
+                        if (success) {
+                            lastSentPreview = messageText.trim().ifBlank { null }
+                            messageText = ""
+                        }
+                    }
+                },
+                enabled = targetIds.isNotEmpty() && messageText.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(text = "Send Message")
+            }
+
+            Button(
+                onClick = {
+                    viewModel.stopDisplaying(targetIds) { success ->
+                        if (success) {
+                            lastSentPreview = null
+                        }
+                    }
+                },
+                enabled = targetIds.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Stop Displaying")
+            }
+
+            lastSentPreview?.let { preview ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    tonalElevation = 2.dp,
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
-                    Text(
-                        text = "Last message sent",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = preview,
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Start
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Last message sent",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = preview,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Start
+                        )
+                    }
                 }
             }
-        }
 
-        if (targetIds.isEmpty()) {
-            if (connectablePairs.isEmpty()) {
-                Text(
-                    text = "Connect to your headset from the Device screen to send a message.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+            if (targetIds.isEmpty()) {
+                if (connectablePairs.isEmpty()) {
+                    Text(
+                        text = "Connect to your headset from the Device screen to send a message.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         }
     }
