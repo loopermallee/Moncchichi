@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -157,7 +158,7 @@ fun DeviceConsoleBody(
         G1ConnectionState.CONNECTED -> StatusConnected
         G1ConnectionState.RECONNECTING -> StatusWarning
         G1ConnectionState.CONNECTING -> StatusWarning
-        G1ConnectionState.DISCONNECTING -> StatusWarning
+        G1ConnectionState.DISCONNECTED -> StatusWarning
         else -> StatusError
     }
     val bannerColor by animateColorAsState(targetColor, animationSpec = tween(600), label = "connectionBanner")
