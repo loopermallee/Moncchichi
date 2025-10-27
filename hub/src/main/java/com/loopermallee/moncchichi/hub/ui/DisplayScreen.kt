@@ -38,10 +38,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.hub.ui.glasses.AttentionIndicator
+import com.loopermallee.moncchichi.hub.ui.glasses.ConnectedIndicator
+import com.loopermallee.moncchichi.hub.ui.glasses.InactiveIndicator
 import com.loopermallee.moncchichi.hub.ui.glasses.LensSide
 import com.loopermallee.moncchichi.hub.ui.glasses.PairedGlasses
+import com.loopermallee.moncchichi.hub.ui.glasses.TransitionIndicator
 import com.loopermallee.moncchichi.hub.ui.glasses.batteryLabel
 import com.loopermallee.moncchichi.hub.ui.glasses.connectedLensIds
 import com.loopermallee.moncchichi.hub.ui.glasses.hasError
@@ -281,7 +286,7 @@ private fun ConnectionStatusPanel(
                 glasses.forEachIndexed { index, pair ->
                     PairStatusRow(pair)
                     if (index < glasses.lastIndex) {
-                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                        Divider(color = MaterialTheme.colorScheme.outline)
                     }
                 }
             }
@@ -291,12 +296,7 @@ private fun ConnectionStatusPanel(
 
 @Composable
 private fun PairStatusRow(pair: PairedGlasses) {
-    val summaryColor = when {
-        pair.hasError -> MaterialTheme.colorScheme.error
-        pair.isAnyInProgress -> MaterialTheme.colorScheme.tertiary
-        pair.isAnyConnected -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val (summaryLabel, summaryIndicator) = pair.summaryStatus()
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -312,16 +312,20 @@ private fun PairStatusRow(pair: PairedGlasses) {
                 )
                 Text(
                     text = "Pair ID: ${pair.pairId}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
-            Text(
-                text = pair.summaryLabel(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = summaryColor,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                StatusIndicator(color = summaryIndicator)
+                Text(
+                    text = summaryLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -337,8 +341,7 @@ private fun PairStatusRow(pair: PairedGlasses) {
 
         Text(
             text = "Lens IDs: ${pair.lensIds.joinToString(", ").ifEmpty { "Unavailable" }}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -349,26 +352,45 @@ private fun LensStatusLine(
     glasses: G1ServiceCommon.Glasses?
 ) {
     if (glasses == null) {
-        Text(
-            text = "$label: Not detected",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StatusIndicator(color = InactiveIndicator)
+            Text(
+                text = "$label: Not detected",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
     } else {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = "$label: ${glasses.statusText()}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = glasses.statusColor(),
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                StatusIndicator(color = glasses.statusColor())
+                Text(
+                    text = "$label: ${glasses.statusText()}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
             Text(
                 text = "Battery ${glasses.batteryLabel()}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
+}
+
+@Composable
+private fun StatusIndicator(color: Color) {
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .clip(CircleShape)
+            .background(color)
+    )
 }
 
 @Composable
@@ -398,7 +420,7 @@ private fun LensDot(
     label: String,
     glasses: G1ServiceCommon.Glasses?
 ) {
-    val color = glasses?.statusColor() ?: MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
+    val color = glasses?.statusColor() ?: InactiveIndicator
     Row(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -417,12 +439,12 @@ private fun LensDot(
     }
 }
 
-private fun PairedGlasses.summaryLabel(): String = when {
-    hasError -> "Attention Needed"
-    isAnyInProgress -> "Working…"
-    isFullyConnected -> "Connected"
-    isAnyConnected -> "Partially Connected"
-    else -> "Disconnected"
+private fun PairedGlasses.summaryStatus(): Pair<String, Color> = when {
+    hasError -> "Attention Needed" to AttentionIndicator
+    isAnyInProgress -> "Working…" to TransitionIndicator
+    isFullyConnected -> "Connected" to ConnectedIndicator
+    isAnyConnected -> "Partially Connected" to TransitionIndicator
+    else -> "Disconnected" to InactiveIndicator
 }
 
 private fun fullLensLabel(slotIndex: Int, side: LensSide, hasCompanion: Boolean): String = when (side) {

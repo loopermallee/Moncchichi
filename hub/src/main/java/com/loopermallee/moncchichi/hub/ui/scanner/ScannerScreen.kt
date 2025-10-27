@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.hub.ui.scanner
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -16,18 +18,25 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.hub.ui.glasses.AttentionIndicator
+import com.loopermallee.moncchichi.hub.ui.glasses.ConnectedIndicator
+import com.loopermallee.moncchichi.hub.ui.glasses.InactiveIndicator
 import com.loopermallee.moncchichi.hub.ui.glasses.LensSide
 import com.loopermallee.moncchichi.hub.ui.glasses.PairedGlasses
+import com.loopermallee.moncchichi.hub.ui.glasses.TransitionIndicator
 import com.loopermallee.moncchichi.hub.ui.glasses.batteryLabel
 import com.loopermallee.moncchichi.hub.ui.glasses.hasError
 import com.loopermallee.moncchichi.hub.ui.glasses.isAnyConnected
@@ -133,8 +142,7 @@ private fun ScannerEmptyState(
             )
             Text(
                 text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                style = MaterialTheme.typography.bodyMedium
             )
         }
     }
@@ -146,22 +154,9 @@ private fun PairedHeadsetCard(
     onConnect: (List<String>, String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scheme = MaterialTheme.colorScheme
     val lensIds = pair.lensIds
     val hasLensIds = lensIds.isNotEmpty()
-    val statusColor = when {
-        pair.hasError -> scheme.error
-        pair.isAnyInProgress -> scheme.tertiary
-        pair.isAnyConnected -> scheme.primary
-        else -> scheme.onSurfaceVariant
-    }
-    val statusLabel = when {
-        pair.hasError -> "Attention needed"
-        pair.isAnyInProgress -> "Working…"
-        pair.isFullyConnected -> "Connected"
-        pair.isAnyConnected -> "Partially connected"
-        else -> "Ready to pair"
-    }
+    val (statusLabel, statusIndicator) = pair.summaryStatus()
 
     val detectionMessage = detectionMessage(pair)
     val buttonLabel = when {
@@ -184,10 +179,10 @@ private fun PairedHeadsetCard(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(
-            containerColor = scheme.surface,
-            contentColor = scheme.onSurface
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurface
         ),
-        border = BorderStroke(1.dp, scheme.outline.copy(alpha = 0.2f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier
@@ -214,17 +209,21 @@ private fun PairedHeadsetCard(
                     Text(
                         text = "Pair ID: ${pair.pairId}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Text(
-                    text = statusLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = statusColor,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    StatusIndicator(color = statusIndicator)
+                    Text(
+                        text = statusLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
 
             Row(
@@ -246,13 +245,11 @@ private fun PairedHeadsetCard(
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     text = detectionMessage,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
+                    style = MaterialTheme.typography.bodySmall
                 )
                 Text(
                     text = "Lens IDs: ${formatLensIds(lensIds)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = scheme.onSurfaceVariant
+                    style = MaterialTheme.typography.labelSmall
                 )
             }
 
@@ -273,39 +270,52 @@ private fun LensStatusChip(
     glasses: G1ServiceCommon.Glasses?,
     modifier: Modifier = Modifier,
 ) {
-    val scheme = MaterialTheme.colorScheme
-    val color = glasses?.statusColor() ?: scheme.outline
+    val indicatorColor = glasses?.statusColor() ?: InactiveIndicator
     val detailText = if (glasses != null) {
         "${glasses.statusText()} • Battery ${glasses.batteryLabel()}"
     } else {
         "Not detected"
     }
 
-    Card(
+    Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(
-            containerColor = color.copy(alpha = 0.12f),
-            contentColor = color
-        ),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.4f))
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 1.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                StatusIndicator(color = indicatorColor)
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
             Text(
                 text = detailText,
-                style = MaterialTheme.typography.labelSmall,
-                color = color
+                style = MaterialTheme.typography.labelSmall
             )
         }
     }
+}
+
+@Composable
+private fun StatusIndicator(color: Color) {
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .clip(CircleShape)
+            .background(color)
+    )
 }
 
 private fun detectionMessage(pair: PairedGlasses): String {
@@ -327,6 +337,14 @@ private fun lensLabel(slotIndex: Int, side: LensSide, hasCompanion: Boolean): St
     } else {
         "Lens"
     }
+}
+
+private fun PairedGlasses.summaryStatus(): Pair<String, Color> = when {
+    hasError -> "Attention needed" to AttentionIndicator
+    isAnyInProgress -> "Working…" to TransitionIndicator
+    isFullyConnected -> "Connected" to ConnectedIndicator
+    isAnyConnected -> "Partially connected" to TransitionIndicator
+    else -> "Ready to pair" to InactiveIndicator
 }
 
 private fun formatLensIds(ids: List<String>): String = ids.joinToString(", ").ifEmpty { "Unavailable" }

@@ -11,7 +11,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -32,7 +31,7 @@ fun TelemetryObserver(
         if (events.isEmpty()) {
             Text(
                 text = "No telemetry yet",
-                color = Color.Gray,
+                color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -42,16 +41,11 @@ fun TelemetryObserver(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 items(events.takeLast(200)) { event ->
-                    val color = when (event.source.uppercase(Locale.US)) {
-                        "APP" -> Color(0xFF2196F3)
-                        "SERVICE" -> Color(0xFF4CAF50)
-                        "DEVICE" -> Color(0xFFFFC107)
-                        "SYSTEM" -> Color(0xFFF44336)
-                        else -> MaterialTheme.colorScheme.onSurface
-                    }
+                    val label = event.source.uppercase(Locale.US)
+                    val text = "[$label] ${event}"
                     Text(
-                        text = event.toString(),
-                        color = color,
+                        text = text,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Medium,
                         style = MaterialTheme.typography.bodySmall
                     )

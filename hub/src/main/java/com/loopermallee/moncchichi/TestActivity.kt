@@ -499,7 +499,7 @@ class TestActivity : ComponentActivity() {
         val buttonUi = when {
             connectionState == G1ConnectionState.CONNECTED -> ConnectButtonUi("Connected ✅", Color(0xFF2ECC71), true)
             connectionState == G1ConnectionState.CONNECTING || connectionState == G1ConnectionState.RECONNECTING ->
-                ConnectButtonUi("Connecting…", Color(0xFFFFC107), false)
+                ConnectButtonUi("Connecting…", Color.White, false)
             lastFailure -> ConnectButtonUi("Failed ❌", Color(0xFFE53935), true)
             else -> ConnectButtonUi("Connect", MaterialTheme.colorScheme.primary, true)
         }
@@ -530,7 +530,7 @@ class TestActivity : ComponentActivity() {
         }
         val connectionStatusColor = when (connectionState) {
             G1ConnectionState.CONNECTED -> Color(0xFF4CAF50)
-            G1ConnectionState.CONNECTING, G1ConnectionState.RECONNECTING -> Color(0xFFFFC107)
+            G1ConnectionState.CONNECTING, G1ConnectionState.RECONNECTING -> Color.White
             else -> Color(0xFFE53935)
         }
 
@@ -668,7 +668,7 @@ class TestActivity : ComponentActivity() {
         val mac = device?.address ?: "N/A"
         val bannerTarget = when (state.connectionState) {
             G1ConnectionState.CONNECTED -> Color(0xFF4CAF50)
-            G1ConnectionState.RECONNECTING -> Color(0xFFFFC107)
+            G1ConnectionState.RECONNECTING -> Color.White
             else -> Color(0xFFF44336)
         }
         val bannerColor by animateColorAsState(bannerTarget, animationSpec = tween(600), label = "hubBanner")
@@ -687,12 +687,12 @@ class TestActivity : ComponentActivity() {
             ) {
                 Text(
                     text = "Connected Device: $deviceName",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     text = "MAC: $mac",
-                    color = Color(0xFF9E9E9E),
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 12.sp
                 )
                 Box(
@@ -704,17 +704,17 @@ class TestActivity : ComponentActivity() {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
                             text = "Status: ${state.connectionState.name}",
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.bodyLarge
                         )
                         Text(
                             text = state.statusMessage,
-                            color = Color.White.copy(alpha = 0.9f),
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
                             text = "Service: ${state.serviceStatus}",
-                            color = Color.White.copy(alpha = 0.8f),
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -744,7 +744,7 @@ class TestActivity : ComponentActivity() {
                             text = "G1 Even Realities Glasses Summary",
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 16.sp,
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(bottom = 6.dp)
                         )
 
@@ -759,21 +759,21 @@ class TestActivity : ComponentActivity() {
                                     "🕶️ Even G1 Glasses (Paired)",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 18.sp,
-                                    color = Color.White
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Text(
                                     "Battery: ${unifiedBattery?.toInt() ?: "--"}% $batteryEmoji",
-                                    color = Color.Gray
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
                                     "Firmware: ${state.firmwareVersion ?: "v—"}",
-                                    color = Color.Gray
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
                                     "Est. Usage: ${estimateUsageHours ?: "—"} hrs",
                                     fontSize = 12.sp,
-                                    color = Color(0xFFAAAAAA)
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -789,11 +789,11 @@ class TestActivity : ComponentActivity() {
                             Text(
                                 "🔌 No G1 Glasses Connected",
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 "Please power on your glasses and ensure Bluetooth is enabled.",
-                                color = Color.Gray,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 13.sp
                             )
                         }
@@ -816,7 +816,7 @@ class TestActivity : ComponentActivity() {
                         Text(
                             "📡 Live Telemetry",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         if (telemetry.isEmpty()) {
                             Box(
@@ -827,7 +827,7 @@ class TestActivity : ComponentActivity() {
                             ) {
                                 Text(
                                     text = "Waiting for BLE activity…",
-                                    color = Color(0xFF9E9E9E),
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     textAlign = TextAlign.Center
                                 )
                             }
@@ -844,7 +844,7 @@ class TestActivity : ComponentActivity() {
                                         "APP" -> Color.Cyan
                                         "DEVICE" -> Color(0xFFB388FF)
                                         "SERVICE" -> Color(0xFFFFB300)
-                                        "SYSTEM" -> Color.Gray
+                                        "SYSTEM" -> Color.White
                                         else -> MaterialTheme.colorScheme.onSurface
                                     }
                                     Text(
@@ -882,7 +882,7 @@ class TestActivity : ComponentActivity() {
 
                 Text(
                     "Nearby Devices",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp
                 )
@@ -905,7 +905,7 @@ class TestActivity : ComponentActivity() {
                             modifier = devicesContainerModifier,
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Bluetooth unavailable on this device.", color = Color(0xFFE57373))
+                            Text("Bluetooth unavailable on this device.", color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                     !state.bluetoothOn -> {
@@ -913,7 +913,7 @@ class TestActivity : ComponentActivity() {
                             modifier = devicesContainerModifier,
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Bluetooth is OFF. Please enable to continue.", color = Color(0xFFFFC107))
+                            Text("Bluetooth is OFF. Please enable to continue.", color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                     !state.hasCriticalPermissions -> {
@@ -921,7 +921,7 @@ class TestActivity : ComponentActivity() {
                             modifier = devicesContainerModifier,
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Bluetooth permissions are required to discover devices.", color = Color(0xFFE57373))
+                            Text("Bluetooth permissions are required to discover devices.", color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                     sortedDevices.isEmpty() -> {
@@ -929,7 +929,7 @@ class TestActivity : ComponentActivity() {
                             modifier = devicesContainerModifier,
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Searching for devices…", color = Color(0xFFB0BEC5))
+                            Text("Searching for devices…", color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                     else -> {
@@ -962,12 +962,12 @@ class TestActivity : ComponentActivity() {
                                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text(
                                                 device.name ?: "Unknown Device",
-                                                color = Color.White,
+                                                color = MaterialTheme.colorScheme.onSurface,
                                                 fontWeight = FontWeight.Medium
                                             )
                                             Text(
                                                 device.address,
-                                                color = Color.Gray,
+                                                color = MaterialTheme.colorScheme.onSurface,
                                                 fontSize = 12.sp
                                             )
                                             Text(
@@ -978,7 +978,7 @@ class TestActivity : ComponentActivity() {
                                             if (device.isSelected) {
                                                 Text(
                                                     "Selected",
-                                                    color = Color(0xFF81D4FA),
+                                                    color = MaterialTheme.colorScheme.onSurface,
                                                     fontSize = 12.sp
                                                 )
                                             }
@@ -986,7 +986,7 @@ class TestActivity : ComponentActivity() {
                                         Icon(
                                             imageVector = Icons.Default.Bluetooth,
                                             contentDescription = "Pair",
-                                            tint = if (device.isPaired) Color(0xFF00E676) else Color.Gray,
+                                            tint = if (device.isPaired) Color(0xFF00E676) else Color.White,
                                             modifier = Modifier.size(24.dp)
                                         )
                                     }

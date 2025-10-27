@@ -14,9 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,32 +35,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.client.G1ServiceCommon.Glasses
 import com.loopermallee.moncchichi.client.G1ServiceCommon.GlassesStatus
 import com.loopermallee.moncchichi.client.G1ServiceCommon.ServiceStatus
-import com.loopermallee.moncchichi.hub.ui.glasses.LensSide.UNKNOWN
-import com.loopermallee.moncchichi.hub.ui.glasses.LensSide.LEFT
-import com.loopermallee.moncchichi.hub.ui.glasses.LensSide.RIGHT
-import com.loopermallee.moncchichi.hub.ui.glasses.PairedGlasses
-import com.loopermallee.moncchichi.hub.ui.glasses.hasError
-import com.loopermallee.moncchichi.hub.ui.glasses.isAnyConnected
-import com.loopermallee.moncchichi.hub.ui.glasses.isAnyInProgress
-import com.loopermallee.moncchichi.hub.ui.glasses.isFullyConnected
-import com.loopermallee.moncchichi.hub.ui.glasses.lensIds
-import com.loopermallee.moncchichi.hub.ui.glasses.lensRecords
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Coral
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Midnight
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Mist
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Sand
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Sky
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Steel
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Verdant
-import com.loopermallee.moncchichi.hub.ui.theme.Bof4Warning
 import java.util.Locale
-
-private val ConnectedColor = Bof4Verdant
-private val DisconnectedColor = Bof4Sand
-private val ErrorColor = Bof4Coral
-private val WarningColor = Bof4Warning
 
 private val GenericNameRegex = Regex("^(left|right)([-_][a-z0-9]+)?$", RegexOption.IGNORE_CASE)
 
@@ -92,13 +70,6 @@ internal fun G1ServiceCommon.Glasses.statusText(): String = when (status) {
     GlassesStatus.UNINITIALIZED -> "Initializing"
 }
 
-internal fun G1ServiceCommon.Glasses.statusColor(): Color = when (status) {
-    GlassesStatus.CONNECTED -> ConnectedColor
-    GlassesStatus.CONNECTING, GlassesStatus.UNINITIALIZED, GlassesStatus.DISCONNECTING -> WarningColor
-    GlassesStatus.DISCONNECTED -> DisconnectedColor
-    GlassesStatus.ERROR -> ErrorColor
-}
-
 internal fun G1ServiceCommon.Glasses.batteryLabel(): String =
     batteryPercentage?.takeIf { it >= 0 }?.let { "$it%" } ?: "Unknown"
 
@@ -117,79 +88,74 @@ fun GlassesScreen(
     modifier: Modifier = Modifier,
 ) {
     val sortedGlasses = glasses.sortedBy { it.pairName.lowercase(Locale.US) }
-    Box(
+
+    LazyColumn(
         modifier = modifier
             .fillMaxWidth()
-            .background(Bof4Midnight)
+            .background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
-        ) {
-            item { HeroHeader() }
+        item { HeroHeader() }
 
+        item {
+            StatusPanel(
+                glasses = sortedGlasses,
+                status = serviceStatus,
+                isLooking = isLooking,
+                serviceError = serviceError,
+                onRefresh = refresh,
+            )
+        }
+
+        if (sortedGlasses.isNotEmpty()) {
             item {
-                StatusPanel(
-                    glasses = sortedGlasses,
-                    status = serviceStatus,
-                    isLooking = isLooking,
-                    serviceError = serviceError,
-                    onRefresh = refresh,
+                Text(
+                    text = "Available Headsets",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
 
-            if (sortedGlasses.isNotEmpty()) {
-                item {
-                    Text(
-                        text = "Available Headsets",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Bof4Mist,
-                    )
+            items(sortedGlasses, key = { it.pairId }) { pair ->
+                val testMessage = testMessages[pair.pairId] ?: ""
+                val messageChanged: (String) -> Unit = { newValue ->
+                    onTestMessageChange(pair.pairId, newValue)
                 }
-
-                items(sortedGlasses, key = { it.pairId }) { pair ->
-                    val testMessage = testMessages[pair.pairId] ?: ""
-                    val messageChanged: (String) -> Unit = { newValue ->
-                        onTestMessageChange(pair.pairId, newValue)
+                val lensIds = pair.lensIds
+                val sendMessage = if (lensIds.isNotEmpty()) {
+                    { message: String, onResult: (Boolean) -> Unit ->
+                        onSendTestMessage(lensIds, message, onResult)
                     }
-                    val lensIds = pair.lensIds
-                    val sendMessage = if (lensIds.isNotEmpty()) {
-                        { message: String, onResult: (Boolean) -> Unit ->
-                            onSendTestMessage(lensIds, message, onResult)
-                        }
-                    } else {
-                        null
-                    }
-                    GlassesCard(
-                        pair = pair,
-                        lensIds = lensIds,
-                        onConnect = { connect(lensIds, pair.pairName) },
-                        onDisconnect = { disconnect(lensIds) },
-                        testMessage = testMessage,
-                        onTestMessageChange = messageChanged,
-                        onSendTestMessage = sendMessage,
-                    )
+                } else {
+                    null
                 }
-            } else {
-                item {
-                    NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking)
-                }
+                GlassesCard(
+                    pair = pair,
+                    lensIds = lensIds,
+                    onConnect = { connect(lensIds, pair.pairName) },
+                    onDisconnect = { disconnect(lensIds) },
+                    testMessage = testMessage,
+                    onTestMessageChange = messageChanged,
+                    onSendTestMessage = sendMessage,
+                )
             }
-
-            item { Spacer(modifier = Modifier.height(8.dp)) }
+        } else {
+            item { NoGlassesMessage(serviceStatus = serviceStatus, isLooking = isLooking) }
         }
+
+        item { Spacer(modifier = Modifier.height(8.dp)) }
     }
 }
 
 @Composable
 private fun HeroHeader() {
     Surface(
-        color = Bof4Steel.copy(alpha = 0.85f),
-        contentColor = Bof4Mist,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
+        tonalElevation = 2.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier
@@ -245,19 +211,20 @@ private fun StatusPanel(
         else -> "Ready to scan"
     }
 
-    val statusColor = when {
-        serviceError || hasError -> ErrorColor
-        isLooking || hasConnecting -> WarningColor
-        connectedPairs > 0 && connectedPairs == totalPairs -> ConnectedColor
-        connectedPairs > 0 || partiallyConnectedPairs > 0 -> WarningColor
-        else -> DisconnectedColor
+    val statusIndicator = when {
+        serviceError || hasError -> AttentionIndicator
+        isLooking || hasConnecting -> TransitionIndicator
+        connectedPairs > 0 -> ConnectedIndicator
+        partiallyConnectedPairs > 0 -> TransitionIndicator
+        else -> InactiveIndicator
     }
 
     Surface(
-        color = Bof4Steel.copy(alpha = 0.85f),
-        contentColor = Bof4Mist,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
+        tonalElevation = 2.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier
@@ -271,11 +238,11 @@ private fun StatusPanel(
                 fontWeight = FontWeight.SemiBold
             )
 
-            StatusChip(
-                color = statusColor,
+            StatusBadge(
                 label = statusLabel,
+                indicatorColor = statusIndicator,
                 modifier = Modifier.fillMaxWidth(),
-                fill = true
+                fillWidth = true
             )
 
             if (isLooking || hasConnecting) {
@@ -286,7 +253,7 @@ private fun StatusPanel(
                 ) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
-                        color = statusColor,
+                        color = MaterialTheme.colorScheme.onSurface,
                         strokeWidth = 3.dp
                     )
                     Text(
@@ -300,7 +267,7 @@ private fun StatusPanel(
                 }
             }
 
-            Divider(color = Bof4Sky.copy(alpha = 0.35f))
+            Divider(color = MaterialTheme.colorScheme.outline)
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -309,8 +276,7 @@ private fun StatusPanel(
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         text = "Headsets discovered",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Bof4Mist.copy(alpha = 0.8f)
+                        style = MaterialTheme.typography.bodySmall
                     )
                     Text(
                         text = "$totalPairs",
@@ -324,8 +290,7 @@ private fun StatusPanel(
                 ) {
                     Text(
                         text = "Connected lenses",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Bof4Mist.copy(alpha = 0.8f)
+                        style = MaterialTheme.typography.bodySmall
                     )
                     Text(
                         text = "$connectedLensCount / $totalLensCount",
@@ -338,15 +303,14 @@ private fun StatusPanel(
             if (partiallyConnectedPairs > 0) {
                 Text(
                     text = "$partiallyConnectedPairs headset" + if (partiallyConnectedPairs == 1) " needs attention" else "s need attention",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Bof4Mist.copy(alpha = 0.75f)
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
             OutlinedButton(
                 onClick = onRefresh,
                 enabled = !serviceError,
-                border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Refresh")
@@ -365,7 +329,7 @@ private fun GlassesCard(
     onTestMessageChange: (String) -> Unit,
     onSendTestMessage: ((String, (Boolean) -> Unit) -> Unit)?,
 ) {
-    val statusColor = pair.overallStatusColor()
+    val (statusLabel, statusIndicator) = pair.overallStatus()
     val hasLensIds = lensIds.isNotEmpty()
     val connectAction = if (hasLensIds) onConnect else null
     val disconnectAction = if (hasLensIds) onDisconnect else null
@@ -379,14 +343,12 @@ private fun GlassesCard(
         else -> "Connect" to connectAction
     }
 
-    val buttonEnabled = buttonAction != null
-
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = Bof4Steel.copy(alpha = 0.7f),
-            contentColor = Bof4Mist
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurface
         ),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         shape = RoundedCornerShape(24.dp)
     ) {
         Column(
@@ -414,14 +376,13 @@ private fun GlassesCard(
                     Text(
                         text = "Pair ID: ${pair.pairId}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Bof4Mist.copy(alpha = 0.75f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                StatusChip(
-                    color = statusColor,
-                    label = pair.overallStatusLabel()
+                StatusBadge(
+                    label = statusLabel,
+                    indicatorColor = statusIndicator
                 )
             }
 
@@ -443,8 +404,7 @@ private fun GlassesCard(
 
             Text(
                 text = "Lens IDs: ${lensIds.joinToString(", ").ifEmpty { "Unavailable" }}",
-                style = MaterialTheme.typography.bodySmall,
-                color = Bof4Mist.copy(alpha = 0.75f)
+                style = MaterialTheme.typography.bodySmall
             )
 
             if (pair.isAnyConnected && onSendTestMessage != null) {
@@ -476,25 +436,20 @@ private fun GlassesCard(
             } else if (!pair.isAnyConnected) {
                 Text(
                     text = "Connect to both lenses before sending a test message.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Bof4Mist.copy(alpha = 0.75f)
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
             if (!hasLensIds) {
                 Text(
                     text = "Lens identifiers unavailable. Try refreshing discovery.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Bof4Mist.copy(alpha = 0.75f)
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
             Button(
                 onClick = { buttonAction?.invoke() },
-                enabled = buttonEnabled,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = statusColor.copy(alpha = if (buttonEnabled) 0.85f else 0.5f)
-                ),
+                enabled = buttonAction != null,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(buttonLabel)
@@ -504,43 +459,49 @@ private fun GlassesCard(
 }
 
 @Composable
-private fun StatusChip(
-    color: Color,
+private fun StatusBadge(
     label: String,
+    indicatorColor: Color,
     modifier: Modifier = Modifier,
-    fill: Boolean = false,
+    fillWidth: Boolean = false,
 ) {
     Surface(
-        color = color.copy(alpha = 0.12f),
+        modifier = if (fillWidth) modifier else modifier,
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.6f)),
-        modifier = modifier
+        tonalElevation = 1.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
-        val textModifier = if (fill) {
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
-        } else {
-            Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+        Row(
+            modifier = if (fillWidth) {
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            } else {
+                Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+            },
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StatusIndicator(color = indicatorColor)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                textAlign = if (fillWidth) TextAlign.Start else TextAlign.Center
+            )
         }
-        Text(
-            text = label,
-            modifier = textModifier,
-            textAlign = TextAlign.Center,
-            color = color,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
     }
 }
 
 @Composable
 private fun LensStatusBadge(
     label: String,
-    glasses: G1ServiceCommon.Glasses?,
+    glasses: Glasses?,
     modifier: Modifier = Modifier,
 ) {
-    val color = glasses?.statusColor() ?: DisconnectedColor
+    val indicatorColor = glasses?.statusColor() ?: InactiveIndicator
     val detailText = if (glasses != null) {
         "${glasses.statusText()} • Battery ${glasses.batteryLabel()}"
     } else {
@@ -548,21 +509,28 @@ private fun LensStatusBadge(
     }
 
     Surface(
-        color = color.copy(alpha = 0.12f),
-        contentColor = color,
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.4f)),
-        modifier = modifier
+        tonalElevation = 1.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                StatusIndicator(color = indicatorColor)
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
             Text(
                 text = detailText,
                 style = MaterialTheme.typography.labelMedium
@@ -571,29 +539,31 @@ private fun LensStatusBadge(
     }
 }
 
+@Composable
+private fun StatusIndicator(color: Color) {
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .background(color, CircleShape)
+    )
+}
+
 private fun lensLabel(slotIndex: Int, side: LensSide, hasCompanion: Boolean): String = when (side) {
-    LEFT -> "Left"
-    RIGHT -> "Right"
-    UNKNOWN -> if (hasCompanion) {
+    LensSide.LEFT -> "Left"
+    LensSide.RIGHT -> "Right"
+    LensSide.UNKNOWN -> if (hasCompanion) {
         if (slotIndex == 0) "Lens A" else "Lens B"
     } else {
         "Lens"
     }
 }
 
-private fun PairedGlasses.overallStatusColor(): Color = when {
-    hasError -> ErrorColor
-    isAnyInProgress -> WarningColor
-    isAnyConnected -> ConnectedColor
-    else -> DisconnectedColor
-}
-
-private fun PairedGlasses.overallStatusLabel(): String = when {
-    hasError -> "Attention Needed"
-    isAnyInProgress -> "Working…"
-    isFullyConnected -> "Connected"
-    isAnyConnected -> "Partially Connected"
-    else -> "Disconnected"
+private fun PairedGlasses.overallStatus(): Pair<String, Color> = when {
+    hasError -> "Attention Needed" to AttentionIndicator
+    isAnyInProgress -> "Working…" to TransitionIndicator
+    isFullyConnected -> "Connected" to ConnectedIndicator
+    isAnyConnected -> "Partially Connected" to TransitionIndicator
+    else -> "Disconnected" to InactiveIndicator
 }
 
 @Composable
@@ -613,10 +583,11 @@ private fun NoGlassesMessage(
     }
 
     Surface(
-        color = Bof4Steel.copy(alpha = 0.8f),
-        contentColor = Bof4Mist,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.dp, Bof4Sky.copy(alpha = 0.55f))
+        tonalElevation = 2.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier

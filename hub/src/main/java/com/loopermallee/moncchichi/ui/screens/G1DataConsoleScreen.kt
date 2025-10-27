@@ -87,7 +87,7 @@ fun G1DataConsoleScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF000000))
+            .background(MaterialTheme.colorScheme.background)
             .verticalScroll(scrollState)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -97,19 +97,19 @@ fun G1DataConsoleScreen(
             text = "🔧 G1 Data Console",
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
             textAlign = TextAlign.Center,
-            color = Color.White
+            color = MaterialTheme.colorScheme.onSurface
         )
 
         Text(
             text = "Connected Device: $deviceName",
             style = MaterialTheme.typography.bodyMedium,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.fillMaxWidth()
         )
         Text(
             text = "MAC: $mac",
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFB0BEC5),
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -148,10 +148,11 @@ fun DeviceConsoleBody(
 
     val binder = binderProvider()
 
+    val scheme = MaterialTheme.colorScheme
     val targetColor = when (connectionState) {
-        G1ConnectionState.CONNECTED -> Color(0xFF4CAF50)
-        G1ConnectionState.RECONNECTING -> Color(0xFFFFC107)
-        else -> Color(0xFFF44336)
+        G1ConnectionState.CONNECTED -> scheme.surfaceVariant
+        G1ConnectionState.RECONNECTING -> scheme.surface
+        else -> scheme.surface.copy(alpha = 0.9f)
     }
     val bannerColor by animateColorAsState(targetColor, animationSpec = tween(600), label = "connectionBanner")
 
@@ -333,12 +334,12 @@ fun DeviceConsoleBody(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = "Status: ${connectionState.name}",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.bodyLarge
                 )
                 Text(
                     text = connectionDescription,
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -355,7 +356,7 @@ fun DeviceConsoleBody(
         if (!isConnected) {
             Text(
                 text = "No active connection. Turn on your G1 glasses and tap Connect from the hub screen.",
-                color = Color(0xFFB0BEC5),
+                color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -446,7 +447,7 @@ fun DeviceConsoleBody(
         statusMessage?.let { message ->
             Text(
                 text = message,
-                color = Color(0xFFFF8A80),
+                color = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
@@ -474,7 +475,7 @@ fun DeviceConsoleBody(
                     ) {
                         Text(
                             text = "Activity will appear once data starts flowing.",
-                            color = Color(0xFF9E9E9E),
+                            color = MaterialTheme.colorScheme.onSurface,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -487,21 +488,11 @@ fun DeviceConsoleBody(
                         state = listState
                     ) {
                         items(telemetry) { event ->
-                            val baseColor = when (event.source.uppercase(Locale.US)) {
-                                "APP" -> Color(0xFF00E5FF)
-                                "DEVICE" -> Color(0xFFBB86FC)
-                                "SERVICE" -> Color(0xFF4CAF50)
-                                "SYSTEM" -> Color(0xFFB0BEC5)
-                                else -> Color.White
-                            }
-                            val color = if ("error" in event.tag.lowercase(Locale.US)) {
-                                Color(0xFFFF5252)
-                            } else {
-                                baseColor
-                            }
+                            val sourceLabel = event.source.uppercase(Locale.US)
+                            val message = "[$sourceLabel] ${event}"
                             Text(
-                                text = event.toString(),
-                                color = color,
+                                text = message,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
@@ -525,8 +516,8 @@ private fun StatusCard(title: String, value: String, modifier: Modifier = Modifi
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(title, fontWeight = FontWeight.SemiBold, color = Color.White)
-            Text(value, color = Color(0xFFB0BEC5))
+            Text(title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text(value, color = MaterialTheme.colorScheme.onSurface)
         }
     }
 }

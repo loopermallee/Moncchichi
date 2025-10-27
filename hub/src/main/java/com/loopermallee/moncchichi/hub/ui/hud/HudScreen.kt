@@ -172,7 +172,7 @@ private fun MirrorCard(state: HudUiState) {
                         Text(
                             text = "No message currently showing",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                     } else {
                         Text(

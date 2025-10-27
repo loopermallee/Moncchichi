@@ -314,7 +314,7 @@ private fun StatusCard(
                     Text(
                         text = statusSupportingText(uiState.status),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
                 IconButton(onClick = onRefresh) {
@@ -331,7 +331,7 @@ private fun StatusCard(
                 Text(
                     text = "Last updated $updated",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
             val showRetryButton = remember(uiState.status, uiState.isRetryVisible) {
@@ -374,7 +374,7 @@ private fun GlassesCard(glasses: List<GlassesSummary>) {
                 Text(
                     text = "No glasses connected",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             } else {
                 glasses.forEachIndexed { index, summary ->
@@ -406,7 +406,7 @@ private fun GlassesSummaryRow(summary: GlassesSummary) {
                 Text(
                     text = "Battery: $battery%",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 LinearProgressIndicator(
                     progress = (battery / 100f).coerceIn(0f, 1f),
@@ -418,7 +418,7 @@ private fun GlassesSummaryRow(summary: GlassesSummary) {
             Text(
                 text = "Firmware: $firmware",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
         val statusDetails = when {
@@ -429,18 +429,18 @@ private fun GlassesSummaryRow(summary: GlassesSummary) {
         Text(
             text = "Status: $statusDetails",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurface
         )
         Text(
             text = "Scroll Speed: ${"%.1f".format(summary.scrollSpeed)}",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurface
         )
         if (summary.currentText.isNotBlank()) {
             Text(
                 text = "Content: ${summary.currentText}",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
