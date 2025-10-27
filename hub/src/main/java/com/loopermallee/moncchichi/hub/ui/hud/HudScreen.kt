@@ -62,7 +62,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.layout.matchParentSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import java.text.DateFormat
@@ -348,7 +347,7 @@ private fun TargetDropdown(
 
         Box(
             modifier = Modifier
-                .matchParentSize()
+                .fillMaxSize()
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null,
