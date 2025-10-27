@@ -19,12 +19,22 @@ class BleClientStub(private val initial: LensState) : BleClient {
     override val state: StateFlow<LensState> = _state
 
     override suspend fun bondAndConnect() {
-        _state.value = _state.value.copy(status = LinkStatus.CONNECTED)
-        _state.value = _state.value.copy(status = LinkStatus.READY)
+        _state.value = _state.value.copy(
+            status = LinkStatus.READY,
+            bonded = true,
+            connected = true,
+            mtu = _state.value.mtu ?: 251,
+            readyProbePassed = true,
+            lastSeenRssi = _state.value.lastSeenRssi ?: -55,
+        )
     }
 
     override suspend fun disconnect() {
-        _state.value = _state.value.copy(status = LinkStatus.DISCONNECTED)
+        _state.value = _state.value.copy(
+            status = LinkStatus.DISCONNECTED,
+            connected = false,
+            readyProbePassed = false,
+        )
     }
 
     override fun close() {
