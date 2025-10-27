@@ -1,17 +1,16 @@
 package com.loopermallee.moncchichi.hub.tools.impl
 
-import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
 import androidx.core.content.ContextCompat
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.G1Packets
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
+import com.loopermallee.moncchichi.hub.permissions.PermissionRequirements
 import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.ScanResult
 import kotlinx.coroutines.CoroutineScope
@@ -96,20 +95,11 @@ class BleToolLiveImpl(
     }
 
     fun requiredPermissions(): List<String> {
-        val perms = buildSet {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                add(Manifest.permission.BLUETOOTH_SCAN)
-                add(Manifest.permission.BLUETOOTH_CONNECT)
-            } else {
-                add(Manifest.permission.BLUETOOTH)
-                add(Manifest.permission.BLUETOOTH_ADMIN)
+        return PermissionRequirements.forDevice()
+            .map { it.permission }
+            .filter {
+                ContextCompat.checkSelfPermission(appContext, it) != PackageManager.PERMISSION_GRANTED
             }
-            // Align with PermissionToolImpl and PermissionsActivity: always request FINE.
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-        return perms.filter {
-            ContextCompat.checkSelfPermission(appContext, it) != PackageManager.PERMISSION_GRANTED
-        }
     }
 
     private fun resolveDevice(mac: String): BluetoothDevice? {
