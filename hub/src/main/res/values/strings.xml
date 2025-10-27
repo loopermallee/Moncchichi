@@ -33,4 +33,21 @@
     <string name="chat_avatar_offline">Offline assistant avatar</string>
     <string name="chat_avatar_device">Device diagnostics avatar</string>
     <string name="diagnostics_placeholder">System diagnostics will appear here.</string>
+    <string name="permissions_screen_title">App permissions</string>
+    <string name="permissions_screen_all_granted">All permissions granted</string>
+    <string name="permissions_screen_missing">Please allow these permissions so the app can connect to your Moncchichi glasses.</string>
+    <string name="permissions_summary_none_required">No runtime permissions are required on this device.</string>
+    <string name="permissions_screen_help">Tip: If a permission prompt no longer appears, open system settings to grant it manually.</string>
+    <string name="permissions_request_button">Request permissions</string>
+    <string name="permissions_settings_button">Open system settings</string>
+    <string name="permission_status_granted">Granted</string>
+    <string name="permission_status_missing">Needs action</string>
+    <string name="permission_location_title">Location access</string>
+    <string name="permission_location_description">Android requires location access to scan for nearby Bluetooth devices like your glasses.</string>
+    <string name="permission_bluetooth_scan_title">Bluetooth scanning</string>
+    <string name="permission_bluetooth_scan_description">Lets Moncchichi discover your glasses when you start a scan.</string>
+    <string name="permission_bluetooth_connect_title">Bluetooth connection control</string>
+    <string name="permission_bluetooth_connect_description">Allows the app to pair and stay connected with your glasses.</string>
+    <string name="permission_notifications_title">Notifications</string>
+    <string name="permission_notifications_description">Keeps you informed when your glasses connect, disconnect, or need attention.</string>
 </resources>
