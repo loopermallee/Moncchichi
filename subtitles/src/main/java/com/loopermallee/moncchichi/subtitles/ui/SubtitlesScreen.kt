@@ -40,9 +40,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.loopermallee.moncchichi.client.G1ServiceCommon
-import com.loopermallee.moncchichi.hub.ui.theme.StatusConnected
-import com.loopermallee.moncchichi.hub.ui.theme.StatusError
-import com.loopermallee.moncchichi.hub.ui.theme.StatusWarning
+import com.loopermallee.moncchichi.subtitles.ui.theme.StatusConnected
+import com.loopermallee.moncchichi.subtitles.ui.theme.StatusError
+import com.loopermallee.moncchichi.subtitles.ui.theme.StatusWarning
 import com.loopermallee.moncchichi.subtitles.R
 
 @Composable

@@ -596,7 +596,6 @@ private fun LensStatusBadge(
         }
     }
 }
-}
 
 private fun lensLabel(slotIndex: Int, side: LensSide, hasCompanion: Boolean): String = when (side) {
     LEFT -> "Left"
