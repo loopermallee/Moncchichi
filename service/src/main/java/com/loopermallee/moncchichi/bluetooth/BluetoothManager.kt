@@ -101,7 +101,13 @@ internal class BluetoothManager(
     fun registerHeadset(pairKey: PairKey, leftMac: String, rightMac: String, orchestrator: HeadsetOrchestrator) {
         headsets[pairKey] = RegisteredHeadset(orchestrator, leftMac, rightMac)
         headsetJobs.remove(pairKey)?.cancel()
-        headsetStates.update { current -> current + (pairKey to orchestrator.headset.value) }
+        headsetStates.update { current ->
+            val base = orchestrator.headset.value
+            val merged = current[pairKey]?.let { existing ->
+                mergeHeadsetStates(existing, base)
+            } ?: base
+            current + (pairKey to merged)
+        }
         val job = scope.launch {
             orchestrator.headset.collectLatest { state ->
                 headsetStates.update { current -> current + (pairKey to state) }
@@ -389,11 +395,32 @@ internal class BluetoothManager(
             val updated = base.copy(status = HeadsetStatus.PAIRING)
             current + (window.key to updated)
         }
-        scope.launch {
-            headsets[window.key]?.let {
-                Log.i(TAG, "Pair ${window.key.token} discovered; orchestrator ready")
-            }
+        if (headsets.containsKey(window.key)) {
+            Log.i(TAG, "Pair ${window.key.token} already registered; skipping duplicate discovery")
+            stopPairScan()
+            return
         }
+        val (leftObservation, rightObservation) = selectLensObservations(window)
+        if (leftObservation == null || rightObservation == null) {
+            Log.w(TAG, "Pair ${window.key.token} discovered but could not resolve both lenses; ignoring")
+            stopPairScan()
+            return
+        }
+        val leftMac = leftObservation.id.mac
+        val rightMac = rightObservation.id.mac
+        val orchestrator = HeadsetOrchestrator(
+            pairKey = window.key,
+            bleFactory = { mac ->
+                val side = when (mac) {
+                    leftMac -> LensSide.LEFT
+                    rightMac -> LensSide.RIGHT
+                    else -> null
+                }
+                BleClientImpl(LensId(mac, side))
+            },
+            scope = scope,
+        )
+        registerHeadset(window.key, leftMac, rightMac, orchestrator)
         stopPairScan()
     }
 
@@ -468,18 +495,7 @@ internal class BluetoothManager(
     }
 
     private fun buildDiscoveryState(window: PairCorrelationWindow): HeadsetState {
-        val observations = window.lenses.values.sortedBy { it.firstSeenAt }
-        var left = observations.firstOrNull { it.id.side == LensSide.LEFT }
-        var right = observations.firstOrNull { it.id.side == LensSide.RIGHT }
-        val remaining = observations
-            .filterNot { it == left || it == right }
-            .toMutableList()
-        if (left == null && remaining.isNotEmpty()) {
-            left = remaining.removeAt(0)
-        }
-        if (right == null && remaining.isNotEmpty()) {
-            right = remaining.removeAt(0)
-        }
+        val (left, right) = selectLensObservations(window)
         val leftState = left?.toLensState(LensSide.LEFT)
         val rightState = right?.toLensState(LensSide.RIGHT)
         return HeadsetState(
@@ -578,4 +594,21 @@ internal class BluetoothManager(
         val address = writableSelectedAddress.value ?: return null
         return bluetoothAdapter?.getRemoteDevice(address)
     }
+
+    private fun selectLensObservations(window: PairCorrelationWindow): Pair<LensObservation?, LensObservation?> {
+        val observations = window.lenses.values.sortedBy { it.firstSeenAt }
+        var left = observations.firstOrNull { it.id.side == LensSide.LEFT }
+        var right = observations.firstOrNull { it.id.side == LensSide.RIGHT }
+        val remaining = observations
+            .filterNot { it == left || it == right }
+            .toMutableList()
+        if (left == null && remaining.isNotEmpty()) {
+            left = remaining.removeAt(0)
+        }
+        if (right == null && remaining.isNotEmpty()) {
+            right = remaining.removeAt(0)
+        }
+        return left to right
+    }
 }
+

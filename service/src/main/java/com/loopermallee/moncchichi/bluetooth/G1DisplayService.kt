@@ -27,7 +27,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
@@ -47,36 +46,9 @@ class G1DisplayService : Service() {
     private var heartbeatJob: Job? = null
     private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
     private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
-    private val demoLeftMac = "00:00:00:00:00:01"
-    private val demoRightMac = "00:00:00:00:00:02"
     private val bluetoothManagerLazy = lazy(LazyThreadSafetyMode.NONE) { BluetoothManager(this, serviceScope) }
     private val bluetoothManager: BluetoothManager?
         get() = if (pairBleEnabled) bluetoothManagerLazy.value else null
-    private val demoHeadsetLazy = lazy(LazyThreadSafetyMode.NONE) {
-        if (!pairBleEnabled) {
-            null
-        } else {
-            val pair = PairKey("demo-pair")
-            HeadsetOrchestrator(
-                pair,
-                bleFactory = { mac ->
-                    val side = when (mac) {
-                        demoLeftMac -> LensSide.LEFT
-                        demoRightMac -> LensSide.RIGHT
-                        else -> null
-                    }
-                    BleClientStub(
-                        LensState(
-                            id = LensId(mac, side),
-                        ),
-                    )
-                },
-                scope = serviceScope,
-            )
-        }
-    }
-    private val demoHeadset: HeadsetOrchestrator?
-        get() = demoHeadsetLazy.value
 
     override fun onCreate() {
         super.onCreate()
@@ -91,9 +63,20 @@ class G1DisplayService : Service() {
         attemptPersistentRebind()
         monitorReconnection()
         if (pairBleEnabled) {
-            demoHeadset?.let { headset ->
-                val pair = headset.headset.value.pair
-                bluetoothManager?.registerHeadset(pair, demoLeftMac, demoRightMac, headset)
+            bluetoothManager?.let { manager ->
+                serviceScope.launch {
+                    val autoConnected = mutableSetOf<PairKey>()
+                    manager.headsetsFlow.collectLatest { headsets ->
+                        autoConnected.retainAll(headsets.keys)
+                        headsets.forEach { (pair, state) ->
+                            if (state.status == HeadsetStatus.PAIRING && autoConnected.add(pair)) {
+                                if (!manager.connectHeadset(pair.token)) {
+                                    autoConnected.remove(pair)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         serviceScope.launch {
@@ -161,16 +144,7 @@ class G1DisplayService : Service() {
         }
 
         if (pairBleEnabled && bluetoothManagerLazy.isInitialized()) {
-            val manager = bluetoothManagerLazy.value
-            if (demoHeadsetLazy.isInitialized()) {
-                demoHeadsetLazy.value?.let { headset ->
-                    manager.unregisterHeadset(headset.headset.value.pair)
-                    headset.close()
-                }
-            }
-            manager.close()
-        } else if (pairBleEnabled && demoHeadsetLazy.isInitialized()) {
-            demoHeadsetLazy.value?.close()
+            bluetoothManagerLazy.value.close()
         }
 
         serviceScope.cancel() // stop any coroutines still running
