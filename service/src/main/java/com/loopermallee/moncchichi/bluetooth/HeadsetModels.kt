@@ -46,6 +46,7 @@ data class LensState(
 
 enum class HeadsetStatus {
     IDLE,
+    DISCOVERING,
     PAIRING,
     CONNECTING,
     PROBING,
@@ -54,41 +55,86 @@ enum class HeadsetStatus {
     ERROR,
 }
 
-private fun deriveHeadsetStatus(left: LensState, right: LensState): HeadsetStatus {
-    if (left.error != null || right.error != null ||
-        left.status == LinkStatus.ERROR || right.status == LinkStatus.ERROR
-    ) {
+private fun deriveHeadsetStatus(left: LensState?, right: LensState?): HeadsetStatus {
+    val lenses = listOfNotNull(left, right)
+    if (lenses.isEmpty()) {
+        return HeadsetStatus.IDLE
+    }
+
+    if (lenses.any { it.error != null || it.status == LinkStatus.ERROR }) {
         return HeadsetStatus.ERROR
     }
 
-    val leftReady = left.isReady
-    val rightReady = right.isReady
+    val leftReady = left?.isReady == true
+    val rightReady = right?.isReady == true
+    if (leftReady && rightReady) {
+        return HeadsetStatus.READY
+    }
 
-    return when {
-        leftReady && rightReady -> HeadsetStatus.READY
-        leftReady || rightReady -> HeadsetStatus.PARTIAL
-        left.status == LinkStatus.SERVICES_READY && right.status == LinkStatus.SERVICES_READY -> HeadsetStatus.PROBING
-        left.status == LinkStatus.SERVICES_READY || right.status == LinkStatus.SERVICES_READY -> HeadsetStatus.PARTIAL
-        left.status == LinkStatus.CONNECTED && right.status == LinkStatus.CONNECTED -> HeadsetStatus.CONNECTING
-        left.status == LinkStatus.CONNECTED || right.status == LinkStatus.CONNECTED -> HeadsetStatus.PARTIAL
-        left.status == LinkStatus.CONNECTING && right.status == LinkStatus.CONNECTING -> HeadsetStatus.CONNECTING
-        left.status == LinkStatus.CONNECTING || right.status == LinkStatus.CONNECTING -> HeadsetStatus.PARTIAL
-        left.status == LinkStatus.BONDING || right.status == LinkStatus.BONDING -> HeadsetStatus.PAIRING
-        left.status == LinkStatus.DISCONNECTED && right.status == LinkStatus.DISCONNECTED -> HeadsetStatus.IDLE
-        else -> HeadsetStatus.IDLE
+    val bothPresent = left != null && right != null
+
+    if (leftReady || rightReady) {
+        return HeadsetStatus.PARTIAL
+    }
+
+    val statuses = lenses.map { it.status }
+    val allServicesReady = bothPresent && statuses.all { it == LinkStatus.SERVICES_READY }
+    if (allServicesReady) {
+        return HeadsetStatus.PROBING
+    }
+
+    val anyServicesReady = statuses.any { it == LinkStatus.SERVICES_READY }
+    if (anyServicesReady) {
+        return if (bothPresent) HeadsetStatus.PARTIAL else HeadsetStatus.PROBING
+    }
+
+    val allConnected = bothPresent && statuses.all { it == LinkStatus.CONNECTED }
+    if (allConnected) {
+        return HeadsetStatus.CONNECTING
+    }
+
+    val anyConnected = statuses.any { it == LinkStatus.CONNECTED }
+    if (anyConnected) {
+        return if (bothPresent) HeadsetStatus.PARTIAL else HeadsetStatus.CONNECTING
+    }
+
+    val allConnecting = bothPresent && statuses.all { it == LinkStatus.CONNECTING }
+    if (allConnecting) {
+        return HeadsetStatus.CONNECTING
+    }
+
+    val anyConnecting = statuses.any { it == LinkStatus.CONNECTING }
+    if (anyConnecting) {
+        return if (bothPresent) HeadsetStatus.PARTIAL else HeadsetStatus.CONNECTING
+    }
+
+    val anyBonding = statuses.any { it == LinkStatus.BONDING }
+    if (anyBonding) {
+        return HeadsetStatus.PAIRING
+    }
+
+    val anyProgressBeyondDiscovery = statuses.any { it != LinkStatus.DISCONNECTED }
+    if (!bothPresent) {
+        return if (anyProgressBeyondDiscovery) HeadsetStatus.PARTIAL else HeadsetStatus.DISCOVERING
+    }
+
+    return if (statuses.all { it == LinkStatus.DISCONNECTED }) {
+        HeadsetStatus.IDLE
+    } else {
+        HeadsetStatus.DISCOVERING
     }
 }
 
-private fun deriveWeakestBattery(left: LensState, right: LensState): Int? {
-    return listOfNotNull(left.batteryPct, right.batteryPct).minOrNull()
+private fun deriveWeakestBattery(left: LensState?, right: LensState?): Int? {
+    return listOfNotNull(left?.batteryPct, right?.batteryPct).minOrNull()
 }
 
 data class HeadsetState(
     val pair: PairKey,
-    val left: LensState,
-    val right: LensState,
+    val left: LensState?,
+    val right: LensState?,
     val status: HeadsetStatus = deriveHeadsetStatus(left, right),
-    val unifiedReady: Boolean = left.isReady && right.isReady,
+    val unifiedReady: Boolean = (left?.isReady == true) && (right?.isReady == true),
     val weakestBatteryPct: Int? = deriveWeakestBattery(left, right),
 ) {
     val ready: Boolean
