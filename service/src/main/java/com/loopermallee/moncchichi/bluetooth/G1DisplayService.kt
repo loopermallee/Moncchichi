@@ -41,6 +41,7 @@ class G1DisplayService : Service() {
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private val connectionStateFlow = MutableStateFlow(G1ConnectionState.DISCONNECTED)
     private val readableStateFlow = connectionStateFlow.asStateFlow()
+    private val emptyHeadsetStates = MutableStateFlow<Map<PairKey, HeadsetState>>(emptyMap())
     private val binder = G1Binder()
     private val heartbeatStarted = AtomicBoolean(false)
     private var heartbeatJob: Job? = null
@@ -147,12 +148,17 @@ class G1DisplayService : Service() {
             logger.w(TAG, "${tt()} Error during BLE disconnect: ${error.message}", error)
         }
 
-        if (pairBleEnabled && demoHeadsetLazy.isInitialized()) {
-            demoHeadsetLazy.value?.close()
-        }
-
         if (pairBleEnabled && bluetoothManagerLazy.isInitialized()) {
-            bluetoothManagerLazy.value.close()
+            val manager = bluetoothManagerLazy.value
+            if (demoHeadsetLazy.isInitialized()) {
+                demoHeadsetLazy.value?.let { headset ->
+                    manager.unregisterHeadset(headset.headset.value.pair)
+                    headset.close()
+                }
+            }
+            manager.close()
+        } else if (pairBleEnabled && demoHeadsetLazy.isInitialized()) {
+            demoHeadsetLazy.value?.close()
         }
 
         serviceScope.cancel() // stop any coroutines still running
@@ -279,6 +285,43 @@ class G1DisplayService : Service() {
             this@G1DisplayService.connect(address)
         }
 
+        val headsetStates: StateFlow<Map<PairKey, HeadsetState>>
+            get() = if (!pairBleEnabled) {
+                emptyHeadsetStates
+            } else {
+                bluetoothManager?.headsetsFlow ?: emptyHeadsetStates
+            }
+
+        fun headsetStateFlow(pairToken: String): StateFlow<HeadsetState>? {
+            if (!pairBleEnabled) {
+                logger.debug(TAG, "${tt()} headsetStateFlow ignored; pair mode disabled")
+                return null
+            }
+            return bluetoothManager?.headsetFlow(pairToken)
+        }
+
+        fun connectHeadset(pairToken: String) {
+            if (!pairBleEnabled) {
+                logger.debug(TAG, "${tt()} connectHeadset ignored; pair mode disabled")
+                return
+            }
+            val launched = bluetoothManager?.connectHeadset(pairToken) ?: false
+            if (!launched) {
+                logger.w(TAG, "${tt()} connectHeadset($pairToken) requested for unknown pair")
+            }
+        }
+
+        fun disconnectHeadset(pairToken: String) {
+            if (!pairBleEnabled) {
+                logger.debug(TAG, "${tt()} disconnectHeadset ignored; pair mode disabled")
+                return
+            }
+            val launched = bluetoothManager?.disconnectHeadset(pairToken) ?: false
+            if (!launched) {
+                logger.w(TAG, "${tt()} disconnectHeadset($pairToken) requested for unknown pair")
+            }
+        }
+
         fun startScan() {
             if (!pairBleEnabled) {
                 logger.debug(TAG, "${tt()} startScan ignored; pair mode disabled")
@@ -337,10 +380,7 @@ class G1DisplayService : Service() {
             if (!pairBleEnabled) {
                 return null
             }
-            bluetoothManager?.getHeadsetState(pairToken)?.let { return it }
-            val headset = demoHeadset ?: return null
-            val state = headset.headset.value
-            return if (state.pair.token == pairToken) state else null
+            return headsetStates.value[PairKey(pairToken)]
         }
     }
 
