@@ -6,8 +6,11 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager as SystemBluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.ParcelUuid
 import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -194,7 +197,7 @@ internal class BluetoothManager(
         val started = try {
             val scanner = bluetoothScanner()
             if (scanner == null) {
-                Log.d(TAG, "startLegacyScan: bluetooth scanner unavailable")
+                logScannerUnavailable("startLegacyScan")
                 false
             } else {
                 scanner.startScan(callback)
@@ -219,7 +222,7 @@ internal class BluetoothManager(
         val callback = scanCallback ?: return
         val scanner = bluetoothScanner()
         if (scanner == null) {
-            Log.d(TAG, "stopLegacyScan: bluetooth scanner unavailable")
+            logScannerUnavailable("stopLegacyScan")
         } else {
             try {
                 scanner.stopScan(callback)
@@ -257,10 +260,18 @@ internal class BluetoothManager(
         val started = try {
             val scanner = bluetoothScanner()
             if (scanner == null) {
-                Log.d(TAG, "startPairScan: bluetooth scanner unavailable")
+                logScannerUnavailable("startPairScan")
                 false
             } else {
-                scanner.startScan(callback)
+                val filters = listOf(
+                    ScanFilter.Builder()
+                        .setServiceUuid(ParcelUuid(BluetoothConstants.UART_SERVICE_UUID))
+                        .build(),
+                )
+                val settings = ScanSettings.Builder()
+                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    .build()
+                scanner.startScan(filters, settings, callback)
                 true
             }
         } catch (t: Throwable) {
@@ -285,7 +296,7 @@ internal class BluetoothManager(
         if (callback != null) {
             val scanner = bluetoothScanner()
             if (scanner == null) {
-                Log.d(TAG, "stopPairScan: bluetooth scanner unavailable")
+                logScannerUnavailable("stopPairScan")
             } else {
                 try {
                     scanner.stopScan(callback)
@@ -301,6 +312,19 @@ internal class BluetoothManager(
         pairWindowDeadlineJob = null
         pairWindowExpiryAt = null
         pairWindows.clear()
+    }
+
+    private fun logScannerUnavailable(operation: String) {
+        val adapter = bluetoothAdapter
+        if (adapter == null) {
+            Log.w(TAG, "$operation: bluetooth adapter unavailable; cannot access scanner")
+            return
+        }
+        if (!adapter.isEnabled) {
+            Log.w(TAG, "$operation: bluetooth adapter disabled; cannot access scanner")
+            return
+        }
+        Log.w(TAG, "$operation: bluetooth scanner unavailable despite enabled adapter")
     }
 
     private fun resetPairCorrelation() {
