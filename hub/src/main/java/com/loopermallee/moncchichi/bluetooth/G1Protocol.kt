@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -16,6 +17,8 @@ object G1Uuids {
 }
 
 object G1Packets {
+    private val textPacketBuilder = SendTextPacketBuilder()
+
     private fun crc16Ccitt(data: ByteArray): Int {
         var crc = 0xFFFF
         for (b in data) {
@@ -46,13 +49,19 @@ object G1Packets {
     private const val OP_PING: Byte = 0x01
     private const val OP_BRIGHTNESS: Byte = 0x05
     private const val OP_REBOOT: Byte = 0x06
-    private const val OP_BATTERY: Byte = 0x10
-    private const val OP_FIRMWARE: Byte = 0x11
-    private const val OP_TEXT_PAGE: Byte = 0x30
 
-    fun batteryQuery(): ByteArray = frame(OP_BATTERY)
-    fun firmwareQuery(): ByteArray = frame(OP_FIRMWARE)
-    fun textPageUtf8(text: String): ByteArray = frame(OP_TEXT_PAGE, text.toByteArray(Charsets.UTF_8))
+    private const val SUBCOMMAND_BATTERY: Byte = 0x01
+    private const val SUBCOMMAND_FIRMWARE: Byte = 0x02
+    private const val OPCODE_GLASSES_INFO: Byte = 0x2C
+
+    fun batteryQuery(): ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, SUBCOMMAND_BATTERY)
+    fun firmwareQuery(): ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, SUBCOMMAND_FIRMWARE)
+    fun textPageUtf8(text: String): ByteArray = textPacketBuilder.buildSendText(
+        currentPage = 1,
+        totalPages = 1,
+        screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+        textBytes = text.toByteArray(Charsets.UTF_8),
+    )
 
     fun ping(): ByteArray = frame(OP_PING)
 
@@ -79,31 +88,30 @@ object G1Packets {
 sealed class G1Inbound {
     data class Battery(val leftPct: Int?, val rightPct: Int?, val casePct: Int?) : G1Inbound()
     data class Firmware(val version: String) : G1Inbound()
-    data class Ack(val op: Int) : G1Inbound()
     data class Error(val code: Int, val message: String) : G1Inbound()
     data class Raw(val bytes: ByteArray) : G1Inbound()
 }
 
 object G1Parser {
     fun parse(bytes: ByteArray): G1Inbound {
-        if (bytes.size < 6) return G1Inbound.Raw(bytes)
-        if (bytes[0] != 0x55.toByte() || bytes[1] != 0xAA.toByte()) return G1Inbound.Raw(bytes)
-        val length = ((bytes[2].toInt() and 0xFF) shl 8) or (bytes[3].toInt() and 0xFF)
-        if (length + 6 != bytes.size) return G1Inbound.Raw(bytes)
-        val op = bytes[4].toInt() and 0xFF
-        val payload = bytes.sliceArray(5 until (5 + length - 1))
-        return when (op) {
-            0x10 -> {
-                val left = payload.getOrNull(0)?.toInt()?.takeIf { it in 0..100 }
-                val right = payload.getOrNull(1)?.toInt()?.takeIf { it in 0..100 }
-                val case = payload.getOrNull(2)?.toInt()?.takeIf { it in 0..100 }
+        if (bytes.isEmpty()) return G1Inbound.Raw(bytes)
+        if (bytes[0] != 0x2C.toByte()) return G1Inbound.Raw(bytes)
+        val subcommand = bytes.getOrNull(1)?.toUByte()?.toInt() ?: return G1Inbound.Raw(bytes)
+        val payload = bytes.copyOfRange(2, bytes.size)
+        return when (subcommand) {
+            0x01, 0x66 -> {
+                val left = payload.getOrNull(0)?.toUByte()?.toInt()?.takeIf { it in 0..100 }
+                val right = payload.getOrNull(1)?.toUByte()?.toInt()?.takeIf { it in 0..100 }
+                val case = payload.getOrNull(2)?.toUByte()?.toInt()?.takeIf { it in 0..100 }
                 G1Inbound.Battery(left, right, case)
             }
-            0x11 -> {
-                val version = payload.toString(Charsets.UTF_8).ifBlank { "unknown" }
+            0x02 -> {
+                val version = payload.toString(Charsets.UTF_8)
+                    .trim { it <= ' ' }
+                    .ifBlank { "unknown" }
                 G1Inbound.Firmware(version)
             }
-            else -> G1Inbound.Ack(op)
+            else -> G1Inbound.Raw(bytes)
         }
     }
 }
