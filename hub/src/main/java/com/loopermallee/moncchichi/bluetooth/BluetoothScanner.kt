@@ -16,7 +16,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
-data class DiscoveredDevice(val name: String?, val address: String)
+data class DiscoveredDevice(
+    val name: String?,
+    val address: String,
+    val rssi: Int,
+    val timestampNanos: Long?,
+)
 
 class BluetoothScanner(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -35,8 +40,14 @@ class BluetoothScanner(private val context: Context) {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             val device = result?.device ?: return
             val key = device.address
-            val value = DiscoveredDevice(device.name, key)
-            if (seen.put(key, value) == null) {
+            val value = DiscoveredDevice(
+                name = device.name,
+                address = key,
+                rssi = result.rssi,
+                timestampNanos = result.timestampNanos,
+            )
+            val previous = seen.put(key, value)
+            if (previous != value) {
                 scope.launch { _devices.emit(seen.values.toList()) }
             }
         }

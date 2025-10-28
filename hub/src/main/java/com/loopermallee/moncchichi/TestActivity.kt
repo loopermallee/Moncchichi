@@ -558,6 +558,8 @@ class TestActivity : ComponentActivity() {
                 BleDevice(
                     name = discovered.name,
                     address = discovered.address,
+                    rssi = discovered.rssi,
+                    timestampNanos = discovered.timestampNanos,
                     isPaired = isPaired,
                     isSelected = cachedDevice?.address == discovered.address
                 )
@@ -606,10 +608,24 @@ class TestActivity : ComponentActivity() {
                             state = hubUiState,
                             onConnect = { handleConnectAction() },
                             onPair = { device ->
-                                requestDeviceBond(DiscoveredDevice(device.name, device.address))
+                                requestDeviceBond(
+                                    DiscoveredDevice(
+                                        name = device.name,
+                                        address = device.address,
+                                        rssi = device.rssi,
+                                        timestampNanos = device.timestampNanos,
+                                    )
+                                )
                             },
                             onSelect = { device ->
-                                onDeviceSelected(DiscoveredDevice(device.name, device.address))
+                                onDeviceSelected(
+                                    DiscoveredDevice(
+                                        name = device.name,
+                                        address = device.address,
+                                        rssi = device.rssi,
+                                        timestampNanos = device.timestampNanos,
+                                    )
+                                )
                             },
                             onNavigateToDataConsole = { currentScreen = MoncchichiScreen.DATA_CONSOLE }
                         )
@@ -1030,6 +1046,8 @@ class TestActivity : ComponentActivity() {
     data class BleDevice(
         val name: String?,
         val address: String,
+        val rssi: Int,
+        val timestampNanos: Long?,
         val isPaired: Boolean,
         val isSelected: Boolean,
     )

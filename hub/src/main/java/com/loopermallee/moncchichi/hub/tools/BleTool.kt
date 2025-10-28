@@ -1,6 +1,11 @@
 package com.loopermallee.moncchichi.hub.tools
 
-data class ScanResult(val id: String, val name: String?, val rssi: Int)
+data class ScanResult(
+    val id: String,
+    val name: String?,
+    val rssi: Int,
+    val timestampNanos: Long? = null,
+)
 
 interface BleTool {
     suspend fun scanDevices(onFound: (ScanResult) -> Unit)

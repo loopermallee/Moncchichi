@@ -40,9 +40,16 @@ class BleToolLiveImpl(
         scanJob = appScope.launch {
             scanner.devices.collectLatest { devices ->
                 devices.forEach { dev ->
-                    val addr = dev.address ?: return@forEach
+                    val addr = dev.address
                     if (seen.add(addr)) {
-                        onFound(ScanResult(id = addr, name = dev.name, rssi = 0))
+                        onFound(
+                            ScanResult(
+                                id = addr,
+                                name = dev.name,
+                                rssi = dev.rssi,
+                                timestampNanos = dev.timestampNanos,
+                            )
+                        )
                     }
                 }
             }
