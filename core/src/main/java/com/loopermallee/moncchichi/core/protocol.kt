@@ -124,24 +124,25 @@ class BatteryLevelRequestPacket: OutgoingPacket(
 class SendTextPacket(
     text: String,
     pageNumber: Int,
-    maxPages: Int
+    maxPages: Int,
+    screenStatus: Int = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
 ): OutgoingPacket(
-    // EXAMPLE: TODO
     OutgoingPacketType.SEND_AI_RESULT,
-    byteArrayOf(
-        0x4E.toByte(),
-        0x00.toByte(),
-        0x01.toByte(),
-        0x00.toByte(),
-        0x71.toByte(),
-        0x00.toByte(),
-        0x00.toByte(),
-        pageNumber.toByte(),
-        maxPages.toByte()
-    ).plus(
-        text.encodeToByteArray()
+    builder.buildSendText(
+        currentPage = pageNumber,
+        totalPages = maxPages,
+        screenStatus = screenStatus,
+        textBytes = text.encodeToByteArray(),
     )
-)
+) {
+    companion object {
+        private val builder = SendTextPacketBuilder()
+
+        fun resetSequence() {
+            builder.resetSequence()
+        }
+    }
+}
 
 // incoming ////////////////////////////////////////////////////////////////////////////////////////
 

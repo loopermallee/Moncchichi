@@ -60,6 +60,7 @@ internal class G1BLEManager(private val deviceName: String, context: Context, pr
 
             override fun onDeviceReady(device: BluetoothDevice) {
                 writableConnectionState.value = G1.ConnectionState.CONNECTED
+                SendTextPacket.resetSequence()
             }
 
             override fun onDeviceDisconnecting(device: BluetoothDevice) {
@@ -71,6 +72,7 @@ internal class G1BLEManager(private val deviceName: String, context: Context, pr
                 reason: Int
             ) {
                 writableConnectionState.value = G1.ConnectionState.DISCONNECTED
+                SendTextPacket.resetSequence()
             }
         })
         val notificationCharacteristic = readCharacteristic

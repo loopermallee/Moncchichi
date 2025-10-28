@@ -8,6 +8,7 @@ import android.bluetooth.le.ScanResult
 import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
+import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
@@ -87,6 +88,7 @@ class DeviceManager(
 
     // ✅ Tracks whether a real connection has ever succeeded
     private var wasConnectedBefore = false
+    private val textPacketBuilder = SendTextPacketBuilder()
 
     init {
         logger.i(
@@ -131,6 +133,7 @@ class DeviceManager(
         _rssi.value = null
         updateState(G1ConnectionState.DISCONNECTED)
         G1ReplyParser.resetVitals()
+        textPacketBuilder.resetSequence()
     }
 
     @SuppressLint("MissingPermission")
@@ -161,16 +164,22 @@ class DeviceManager(
 
     suspend fun sendText(message: String): Boolean {
         val payload = message.encodeToByteArray()
+        val page = 1
+        val totalPages = 1
+        val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
+        val chunkCapacity = (BluetoothConstants.MAX_CHUNK_SIZE - SendTextPacketBuilder.HEADER_SIZE).coerceAtLeast(1)
+
         if (payload.isEmpty()) {
-            return sendCommand(byteArrayOf(BluetoothConstants.OPCODE_SEND_TEXT), "SendTextEmpty")
+            val frame = textPacketBuilder.buildSendText(page, totalPages, screenStatus, ByteArray(0))
+            return sendCommand(frame, "SendTextEmpty")
         }
+
         var offset = 0
         while (offset < payload.size) {
-            val chunkLength = min(BluetoothConstants.MAX_CHUNK_SIZE - 1, payload.size - offset)
-            val chunk = ByteArray(chunkLength + 1)
-            chunk[0] = BluetoothConstants.OPCODE_SEND_TEXT
-            System.arraycopy(payload, offset, chunk, 1, chunkLength)
-            val success = sendCommand(chunk, "SendTextChunk")
+            val chunkLength = min(chunkCapacity, payload.size - offset)
+            val chunk = payload.copyOfRange(offset, offset + chunkLength)
+            val frame = textPacketBuilder.buildSendText(page, totalPages, screenStatus, chunk)
+            val success = sendCommand(frame, "SendTextChunk")
             if (!success) return false
             offset += chunkLength
         }
@@ -315,6 +324,7 @@ class DeviceManager(
                     updateState(G1ConnectionState.CONNECTED)
                     val address = trackedDevice?.address ?: "unknown"
                     logTelemetry("BLE", "[STATE]", "Connected to $address")
+                    textPacketBuilder.resetSequence()
                 }
                 G1BleUartClient.ConnectionState.CONNECTING -> {
                     updateState(G1ConnectionState.CONNECTING)
