@@ -13,6 +13,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
 import com.loopermallee.moncchichi.core.ble.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
@@ -105,6 +106,7 @@ internal class DeviceManager(
     private var reconnectFailureCount: Int =
         preferences.getInt(KEY_RECONNECT_FAILURES, 0)
     private var notifyCallback: ((service: UUID, characteristic: UUID, value: ByteArray) -> Unit)? = null
+    private val textPacketBuilder = SendTextPacketBuilder()
 
     private enum class QueryToken { BATTERY, FIRMWARE }
 
@@ -128,6 +130,7 @@ internal class DeviceManager(
                     cacheLastConnected(gatt.device.address)
                     clearReconnectFailures()
                     gatt.discoverServices()
+                    textPacketBuilder.resetSequence()
                 }
                 BluetoothProfile.STATE_CONNECTING -> {
                     setConnectionState(ConnectionState.CONNECTING)
@@ -155,6 +158,7 @@ internal class DeviceManager(
                         else -> G1ConnectionState.DISCONNECTED
                     }
                     updateState(gatt.device, targetState)
+                    textPacketBuilder.resetSequence()
                     if (shouldAttemptReconnect && isBluetoothEnabled()) {
                         scope.launch {
                             tryReconnect(context.applicationContext)
@@ -571,19 +575,25 @@ internal class DeviceManager(
 
     suspend fun sendText(message: String): Boolean {
         val payload = message.encodeToByteArray()
+        val page = 1
+        val totalPages = 1
+        val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
+        val chunkCapacity = (BluetoothConstants.MAX_CHUNK_SIZE - SendTextPacketBuilder.HEADER_SIZE).coerceAtLeast(1)
+
         if (payload.isEmpty()) {
-            return sendCommand(byteArrayOf(BluetoothConstants.OPCODE_SEND_TEXT))
+            val frame = textPacketBuilder.buildSendText(page, totalPages, screenStatus, ByteArray(0))
+            return sendCommand(frame)
         }
+
         var index = 0
         var success = true
         while (index < payload.size && success) {
             val remaining = payload.size - index
-            val chunkSize = min(BluetoothConstants.MAX_CHUNK_SIZE - 1, remaining)
-            val chunk = ByteArray(chunkSize + 1)
-            chunk[0] = BluetoothConstants.OPCODE_SEND_TEXT
-            System.arraycopy(payload, index, chunk, 1, chunkSize)
+            val chunkSize = min(chunkCapacity, remaining)
+            val chunk = payload.copyOfRange(index, index + chunkSize)
+            val frame = textPacketBuilder.buildSendText(page, totalPages, screenStatus, chunk)
             index += chunkSize
-            success = sendCommand(chunk)
+            success = sendCommand(frame)
         }
         return success
     }
