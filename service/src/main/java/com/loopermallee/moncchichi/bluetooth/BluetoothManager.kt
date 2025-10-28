@@ -410,14 +410,7 @@ internal class BluetoothManager(
         val rightMac = rightObservation.id.mac
         val orchestrator = HeadsetOrchestrator(
             pairKey = window.key,
-            bleFactory = { mac ->
-                val side = when (mac) {
-                    leftMac -> LensSide.LEFT
-                    rightMac -> LensSide.RIGHT
-                    else -> null
-                }
-                BleClientImpl(LensId(mac, side))
-            },
+            bleFactory = { lensId -> BleClientImpl(lensId) },
             scope = scope,
         )
         registerHeadset(window.key, leftMac, rightMac, orchestrator)

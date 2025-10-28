@@ -26,11 +26,11 @@ import kotlin.math.min
  */
 class HeadsetOrchestrator(
     private val pairKey: PairKey,
-    private val bleFactory: (String) -> BleClient,
+    private val bleFactory: (LensId) -> BleClient,
     private val scope: CoroutineScope,
 ) {
     private data class LensSession(
-        val mac: String,
+        val id: LensId,
         val client: BleClient,
     )
 
@@ -71,10 +71,12 @@ class HeadsetOrchestrator(
 
         disconnectHeadset()
 
-        val leftClient = bleFactory(leftMac)
-        val rightClient = bleFactory(rightMac)
-        leftSession = LensSession(leftMac, leftClient)
-        rightSession = LensSession(rightMac, rightClient)
+        val leftId = LensId(leftMac, LensSide.LEFT)
+        val rightId = LensId(rightMac, LensSide.RIGHT)
+        val leftClient = bleFactory(leftId)
+        val rightClient = bleFactory(rightId)
+        leftSession = LensSession(leftId, leftClient)
+        rightSession = LensSession(rightId, rightClient)
 
         sessionActive = true
         _telemetry.value = emptyMap()
@@ -128,8 +130,8 @@ class HeadsetOrchestrator(
         rightSession = null
 
         stateLock.withLock {
-            latestLeft = leftClient?.state?.value
-            latestRight = rightClient?.state?.value
+            latestLeft = leftClient?.state?.value?.withSide(LensSide.LEFT)
+            latestRight = rightClient?.state?.value?.withSide(LensSide.RIGHT)
             publishHeadsetState()
         }
     }
@@ -145,16 +147,16 @@ class HeadsetOrchestrator(
         stateJobs[side] = scope.launch {
             stateLock.withLock {
                 when (side) {
-                    LensSide.LEFT -> latestLeft = client.state.value
-                    LensSide.RIGHT -> latestRight = client.state.value
+                    LensSide.LEFT -> latestLeft = client.state.value.withSide(side)
+                    LensSide.RIGHT -> latestRight = client.state.value.withSide(side)
                 }
                 publishHeadsetState()
             }
             client.state.collect { state ->
                 stateLock.withLock {
                     when (side) {
-                        LensSide.LEFT -> latestLeft = state
-                        LensSide.RIGHT -> latestRight = state
+                        LensSide.LEFT -> latestLeft = state.withSide(side)
+                        LensSide.RIGHT -> latestRight = state.withSide(side)
                     }
                     publishHeadsetState()
                 }
@@ -218,7 +220,18 @@ class HeadsetOrchestrator(
     }
 
     private suspend fun publishHeadsetState() {
-        _headset.value = HeadsetState(pairKey, latestLeft, latestRight)
+        val left = latestLeft?.withSide(LensSide.LEFT)
+        val right = latestRight?.withSide(LensSide.RIGHT)
+        _headset.value = HeadsetState(pairKey, left, right)
+    }
+
+    private fun LensState.withSide(side: LensSide): LensState {
+        val id = id
+        return if (id.side == side) {
+            this
+        } else {
+            copy(id = id.copy(side = side))
+        }
     }
 
     companion object {
