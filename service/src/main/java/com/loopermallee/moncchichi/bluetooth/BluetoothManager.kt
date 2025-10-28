@@ -30,7 +30,7 @@ internal class BluetoothManager(
     private val systemBluetoothManager =
         context.getSystemService(Context.BLUETOOTH_SERVICE) as? SystemBluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = systemBluetoothManager?.adapter
-    private val scanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
+    private fun bluetoothScanner(): BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
     private val deviceManager = DeviceManager(context, scope)
     private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
     private data class RegisteredHeadset(
@@ -192,8 +192,14 @@ internal class BluetoothManager(
         }
         scanCallback = callback
         val started = try {
-            scanner?.startScan(callback)
-            true
+            val scanner = bluetoothScanner()
+            if (scanner == null) {
+                Log.d(TAG, "startLegacyScan: bluetooth scanner unavailable")
+                false
+            } else {
+                scanner.startScan(callback)
+                true
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "startLegacyScan: failed", t)
             false
@@ -211,10 +217,15 @@ internal class BluetoothManager(
     @SuppressLint("MissingPermission")
     private fun stopLegacyScan() {
         val callback = scanCallback ?: return
-        try {
-            scanner?.stopScan(callback)
-        } catch (t: Throwable) {
-            Log.e(TAG, "stopLegacyScan: failed", t)
+        val scanner = bluetoothScanner()
+        if (scanner == null) {
+            Log.d(TAG, "stopLegacyScan: bluetooth scanner unavailable")
+        } else {
+            try {
+                scanner.stopScan(callback)
+            } catch (t: Throwable) {
+                Log.e(TAG, "stopLegacyScan: failed", t)
+            }
         }
         scanCallback = null
         scanJob?.cancel()
@@ -244,8 +255,14 @@ internal class BluetoothManager(
         }
         scanCallback = callback
         val started = try {
-            scanner?.startScan(callback)
-            true
+            val scanner = bluetoothScanner()
+            if (scanner == null) {
+                Log.d(TAG, "startPairScan: bluetooth scanner unavailable")
+                false
+            } else {
+                scanner.startScan(callback)
+                true
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "startPairScan: failed", t)
             false
@@ -266,10 +283,15 @@ internal class BluetoothManager(
     private fun stopPairScan() {
         val callback = scanCallback
         if (callback != null) {
-            try {
-                scanner?.stopScan(callback)
-            } catch (t: Throwable) {
-                Log.e(TAG, "stopPairScan: failed", t)
+            val scanner = bluetoothScanner()
+            if (scanner == null) {
+                Log.d(TAG, "stopPairScan: bluetooth scanner unavailable")
+            } else {
+                try {
+                    scanner.stopScan(callback)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "stopPairScan: failed", t)
+                }
             }
         }
         scanCallback = null
