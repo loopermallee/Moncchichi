@@ -35,8 +35,29 @@ class G1BleClientAckDetectionTest {
     }
 
     @Test
+    fun `detectAck recognizes firmware ack ping`() {
+        val payload = "ACK:PING".encodeToByteArray()
+
+        assertTrue(payload.detectAck())
+    }
+
+    @Test
+    fun `detectAck recognizes firmware ack keepalive with whitespace`() {
+        val payload = "\r\nACK:KEEPALIVE\n".encodeToByteArray()
+
+        assertTrue(payload.detectAck())
+    }
+
+    @Test
     fun `detectAck returns false for unrelated text`() {
         val payload = "not ack".encodeToByteArray()
+
+        assertFalse(payload.detectAck())
+    }
+
+    @Test
+    fun `detectAck ignores mixed case ack tokens`() {
+        val payload = "ACK:keepAlive".encodeToByteArray()
 
         assertFalse(payload.detectAck())
     }

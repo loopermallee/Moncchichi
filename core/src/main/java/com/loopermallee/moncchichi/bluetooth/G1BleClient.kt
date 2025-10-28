@@ -198,7 +198,19 @@ class G1BleClient(
 
         val ascii = runCatching { decodeToString() }.getOrNull() ?: return false
         val trimmed = ascii.trim { it.code <= 0x20 }
-        return trimmed.equals("OK", ignoreCase = true)
+        if (trimmed.equals("OK", ignoreCase = true)) {
+            return true
+        }
+
+        val normalized = trimmed.uppercase()
+        if (trimmed == normalized && normalized.startsWith("ACK:")) {
+            // These ACK:<TOKEN> strings are observed from the firmware but not part of
+            // any published protocol specification. Treat them as successful ACKs so the
+            // client remains resilient to keepalive and ping responses.
+            return true
+        }
+
+        return false
     }
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
