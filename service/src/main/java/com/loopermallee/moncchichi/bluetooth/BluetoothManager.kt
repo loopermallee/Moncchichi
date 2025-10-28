@@ -14,6 +14,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val TAG = "BluetoothManager"
@@ -29,6 +31,10 @@ internal class BluetoothManager(
     private val deviceManager = DeviceManager(context, scope)
     private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
     private val headsets: MutableMap<PairKey, HeadsetOrchestrator> = mutableMapOf()
+    private val headsetJobs: MutableMap<PairKey, Job> = mutableMapOf()
+
+    private val headsetStates = MutableStateFlow<Map<PairKey, HeadsetState>>(emptyMap())
+    val headsetsFlow: StateFlow<Map<PairKey, HeadsetState>> = headsetStates.asStateFlow()
 
     private val writableDevices = MutableStateFlow<Map<String, ScanResult>>(emptyMap())
     private val readableDevices = MutableStateFlow<List<ScanResult>>(emptyList())
@@ -49,6 +55,53 @@ internal class BluetoothManager(
 
     private var scanCallback: ScanCallback? = null
     private var scanJob: Job? = null
+
+    fun registerHeadset(orchestrator: HeadsetOrchestrator) {
+        val key = orchestrator.headset.value.pair
+        headsets[key] = orchestrator
+        headsetJobs.remove(key)?.cancel()
+        headsetStates.update { current -> current + (key to orchestrator.headset.value) }
+        val job = scope.launch {
+            orchestrator.headset.collectLatest { state ->
+                headsetStates.update { current -> current + (key to state) }
+            }
+        }
+        headsetJobs[key] = job
+    }
+
+    fun unregisterHeadset(pairKey: PairKey) {
+        headsets.remove(pairKey)
+        headsetJobs.remove(pairKey)?.cancel()
+        headsetStates.update { current -> current - pairKey }
+    }
+
+    fun getHeadsetState(pairToken: String): HeadsetState? {
+        return headsetStates.value[PairKey(pairToken)]
+    }
+
+    fun startPairDiscovery() {
+        if (!pairBleEnabled) {
+            startScan()
+            return
+        }
+        startScan()
+    }
+
+    fun stopPairDiscovery() {
+        if (!pairBleEnabled) {
+            stopScan()
+            return
+        }
+        stopScan()
+    }
+
+    fun close() {
+        stopScan()
+        headsetJobs.values.forEach { it.cancel() }
+        headsetJobs.clear()
+        headsets.clear()
+        headsetStates.value = emptyMap()
+    }
 
     @SuppressLint("MissingPermission")
     fun startScan() {

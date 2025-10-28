@@ -46,6 +46,9 @@ class G1DisplayService : Service() {
     private var heartbeatJob: Job? = null
     private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
     private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
+    private val bluetoothManagerLazy = lazy(LazyThreadSafetyMode.NONE) { BluetoothManager(this, serviceScope) }
+    private val bluetoothManager: BluetoothManager?
+        get() = if (pairBleEnabled) bluetoothManagerLazy.value else null
     private val demoHeadsetLazy = lazy(LazyThreadSafetyMode.NONE) {
         if (!pairBleEnabled) {
             null
@@ -75,6 +78,11 @@ class G1DisplayService : Service() {
         restoreCachedState()
         attemptPersistentRebind()
         monitorReconnection()
+        if (pairBleEnabled) {
+            demoHeadset?.let { headset ->
+                bluetoothManager?.registerHeadset(headset)
+            }
+        }
         serviceScope.launch {
             deviceManager.connectionState.collectLatest { connection ->
                 val nextState = when (connection) {
@@ -143,6 +151,10 @@ class G1DisplayService : Service() {
             demoHeadsetLazy.value?.close()
         }
 
+        if (pairBleEnabled && bluetoothManagerLazy.isInitialized()) {
+            bluetoothManagerLazy.value.close()
+        }
+
         serviceScope.cancel() // stop any coroutines still running
         logger.i(TAG, "${tt()} Service destroyed and BLE disconnected")
     }
@@ -152,6 +164,10 @@ class G1DisplayService : Service() {
      * This is exposed via the binder for manual pairing from the Hub UI.
      */
     fun connect(address: String) {
+        if (pairBleEnabled) {
+            logger.w(TAG, "${tt()} Ignoring direct connect($address) while pair mode is enabled")
+            return
+        }
         try {
             deviceManager.connectToAddress(address)
         } catch (error: Exception) {
@@ -263,6 +279,22 @@ class G1DisplayService : Service() {
             this@G1DisplayService.connect(address)
         }
 
+        fun startScan() {
+            if (!pairBleEnabled) {
+                logger.debug(TAG, "${tt()} startScan ignored; pair mode disabled")
+                return
+            }
+            bluetoothManager?.startPairDiscovery()
+        }
+
+        fun stopScan() {
+            if (!pairBleEnabled) {
+                logger.debug(TAG, "${tt()} stopScan ignored; pair mode disabled")
+                return
+            }
+            bluetoothManager?.stopPairDiscovery()
+        }
+
         fun heartbeat() {
             checkBinderHeartbeat()
         }
@@ -305,6 +337,7 @@ class G1DisplayService : Service() {
             if (!pairBleEnabled) {
                 return null
             }
+            bluetoothManager?.getHeadsetState(pairToken)?.let { return it }
             val headset = demoHeadset ?: return null
             val state = headset.headset.value
             return if (state.pair.token == pairToken) state else null
@@ -338,6 +371,10 @@ class G1DisplayService : Service() {
     }
 
     private fun attemptPersistentRebind() {
+        if (pairBleEnabled) {
+            logger.debug(TAG, "${tt()} Pair mode enabled — skipping legacy persistent rebind")
+            return
+        }
         val adapter = bluetoothAdapter
         if (adapter == null || adapter.isEnabled.not()) {
             logger.debug(TAG, "${tt()} Bluetooth disabled — skipping persistent rebind")
