@@ -1,5 +1,7 @@
 package com.loopermallee.moncchichi.core
 
+import kotlin.text.Charsets
+
 // bluetooth device name ---------------------------------------------------------------------------
 
 const val DEVICE_NAME_PREFIX = "Even G1_"
@@ -14,7 +16,8 @@ const val UART_READ_CHARACTERISTIC_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 enum class OutgoingPacketType(val label: String) {
     EXIT("EXIT"),                                                                             // x18
-    GET_BATTERY_LEVEL("GET_BATTERY_LEVEL"),                                                   // x2C
+    GET_BATTERY_LEVEL("GET_BATTERY_LEVEL"),                                                   // x2C 01
+    GET_FIRMWARE_INFO("GET_FIRMWARE_INFO"),                                                   // x2C 02
     SEND_AI_RESULT("SEND_AI_RESULT"),                                                         // x4E
     ;
     override fun toString() = label
@@ -65,17 +68,13 @@ internal fun hasFirst(byte: Byte): (ByteArray) -> Boolean = { bytes ->
     bytes.isNotEmpty() && bytes[0] == byte
 }
 
-internal fun hasFirstTwo(first: Byte, second: Byte): (ByteArray) -> Boolean = { bytes ->
-    bytes.size > 1 && bytes[0] == first && bytes[1] == second
-}
-
 enum class IncomingPacketType(
     val label: String,
     val isType: (bytes: ByteArray) -> Boolean,
     val factory: (bytes: ByteArray) -> (IncomingPacket?)
 ) {
     EXIT("EXIT", hasFirst(0x18), { ExitResponsePacket(it) }),
-    GLASSES_BATTERY_LEVEL("GLASSES_BATTERY_LEVEL", hasFirstTwo(0x2C, 0x66), { BatteryLevelResponsePacket(it) }),
+    GLASSES_INFO("GLASSES_INFO", hasFirst(0x2C), { GlassesInfoResponsePacket.from(it) }),
     AI_RESULT_RECEIVED("AI_RESULT_RECEIVED", hasFirst(0x4E), { SendTextResponsePacket(it) }),
 ;
     override fun toString() = label
@@ -114,9 +113,15 @@ class ExitRequestPacket: OutgoingPacket(
 // battery level request
 
 class BatteryLevelRequestPacket: OutgoingPacket(
-    // EXAMPLE: 2C
+    // EXAMPLE: 2C 01
     OutgoingPacketType.GET_BATTERY_LEVEL,
-    byteArrayOf(0x2C)
+    byteArrayOf(0x2C, 0x01)
+)
+
+class FirmwareInfoRequestPacket: OutgoingPacket(
+    // EXAMPLE: 2C 02
+    OutgoingPacketType.GET_FIRMWARE_INFO,
+    byteArrayOf(0x2C, 0x02)
 )
 
 // send text
@@ -165,22 +170,57 @@ class ExitResponsePacket(bytes: ByteArray): IncomingPacket(
     //             c9 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 -> TODO UNKNOWN
 }
 
-// battery level
+// glasses info ------------------------------------------------------------------------------------
 
-class BatteryLevelResponsePacket(bytes: ByteArray): IncomingPacket(
-    IncomingPacketType.GLASSES_BATTERY_LEVEL,
+sealed class GlassesInfoResponsePacket(
+    bytes: ByteArray,
+    responseTo: OutgoingPacketType?
+) : IncomingPacket(IncomingPacketType.GLASSES_INFO, bytes, responseTo) {
+    val subcommand: Int = bytes.getOrNull(1)?.toUByte()?.toInt() ?: -1
+
+    companion object {
+        fun from(bytes: ByteArray): IncomingPacket? {
+            val sub = bytes.getOrNull(1)?.toUByte()?.toInt() ?: return null
+            return when (sub) {
+                0x01, 0x66 -> BatteryLevelResponsePacket(bytes)
+                0x02 -> FirmwareInfoResponsePacket(bytes)
+                else -> UnknownGlassesInfoResponsePacket(bytes)
+            }
+        }
+    }
+}
+
+class BatteryLevelResponsePacket(bytes: ByteArray): GlassesInfoResponsePacket(
     bytes,
     OutgoingPacketType.GET_BATTERY_LEVEL
 ) {
-    // EXAMPLE: 2c 66 5e 00 e6 a0 19 00 00 00 01 05 00 00 00 00 00 00 00 00
-    //          2c 66 -> packet id
-    //                5e 00 e6 a0 19 00 00 00 01 05 00 00 00 00 00 00 00 00 -> TODO UNKNOWN
+    // EXAMPLE: 2c 01 5e 00 e6 a0 19 00 00 00 01 05 00 00 00 00 00 00 00 00
+    //          2c 01 -> packet id
+    //                5e 00 e6 a0 19 00 00 00 01 05 00 00 00 00 00 00 00 00
 
-    val level = bytes[2].toInt()
+    val level = bytes.getOrNull(2)?.toUByte()?.toInt() ?: -1
     override fun toString(): String {
         return "${type} => ${level}%"
     }
 }
+
+class FirmwareInfoResponsePacket(bytes: ByteArray): GlassesInfoResponsePacket(
+    bytes,
+    OutgoingPacketType.GET_FIRMWARE_INFO
+) {
+    val firmware: String = bytes.copyOfRange(2, bytes.size)
+        .toString(Charsets.UTF_8)
+        .trim { it <= ' ' }
+
+    override fun toString(): String {
+        return "${type} => ${firmware}"
+    }
+}
+
+class UnknownGlassesInfoResponsePacket(bytes: ByteArray): GlassesInfoResponsePacket(
+    bytes,
+    null
+)
 
 // send text
 

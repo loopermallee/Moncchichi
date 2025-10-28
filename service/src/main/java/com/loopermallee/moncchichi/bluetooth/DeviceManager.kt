@@ -233,21 +233,25 @@ internal class DeviceManager(
                         logTelemetry("DEVICE", "[STATE]", "Connection state = $state")
                     }
                 } else {
-                    when {
-                        value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_BATTERY -> {
-                            val battery = value.getOrNull(1)?.toInt() ?: -1
-                            logTelemetry("DEVICE", "[BATTERY]", "Battery update: ${battery}%")
-                            if (battery in 0..100) {
-                                completePendingQuery(QueryToken.BATTERY)
-                                updateBatteryLevel(battery)
+                    if (value.firstOrNull() == BluetoothConstants.OPCODE_GLASSES_INFO) {
+                        when (value.getOrNull(1)?.toUByte()?.toInt()) {
+                            0x01, 0x66 -> {
+                                val battery = value.getOrNull(2)?.toUByte()?.toInt() ?: -1
+                                logTelemetry("DEVICE", "[BATTERY]", "Battery update: ${battery}%")
+                                if (battery in 0..100) {
+                                    completePendingQuery(QueryToken.BATTERY)
+                                    updateBatteryLevel(battery)
+                                }
                             }
-                        }
-                        value.isNotEmpty() && value[0] == BluetoothConstants.OPCODE_FIRMWARE -> {
-                            val fw = value.drop(1).toByteArray().decodeToString().trim()
-                            logTelemetry("DEVICE", "[FIRMWARE]", "Firmware: v$fw")
-                            if (fw.isNotEmpty()) {
-                                completePendingQuery(QueryToken.FIRMWARE)
-                                _vitals.value = _vitals.value.copy(firmwareVersion = fw)
+                            0x02 -> {
+                                val fw = value.copyOfRange(2, value.size)
+                                    .toString(Charsets.UTF_8)
+                                    .trim { it <= ' ' }
+                                logTelemetry("DEVICE", "[FIRMWARE]", "Firmware: v$fw")
+                                if (fw.isNotEmpty()) {
+                                    completePendingQuery(QueryToken.FIRMWARE)
+                                    _vitals.value = _vitals.value.copy(firmwareVersion = fw)
+                                }
                             }
                         }
                     }
@@ -604,11 +608,7 @@ internal class DeviceManager(
         if (!fromRetry) {
             prepareQuery(QueryToken.BATTERY)
         }
-        val ascii = "BAT?\n".toByteArray()
-        val binary = byteArrayOf(0xF1.toByte(), 0x10, 0x00)
-        val success = sendCommand(ascii)
-        val fallback = if (!success) sendCommand(binary) else true
-        val result = success || fallback
+        val result = sendCommand(BluetoothConstants.BATTERY_QUERY)
         if (result) {
             scheduleQueryTimeout(QueryToken.BATTERY)
         } else {
@@ -621,11 +621,7 @@ internal class DeviceManager(
         if (!fromRetry) {
             prepareQuery(QueryToken.FIRMWARE)
         }
-        val ascii = "FW?\n".toByteArray()
-        val binary = byteArrayOf(0xF1.toByte(), 0x11, 0x00)
-        val success = sendCommand(ascii)
-        val fallback = if (!success) sendCommand(binary) else true
-        val result = success || fallback
+        val result = sendCommand(BluetoothConstants.FIRMWARE_QUERY)
         if (result) {
             scheduleQueryTimeout(QueryToken.FIRMWARE)
         } else {
