@@ -33,7 +33,13 @@ internal class BluetoothManager(
     private val scanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
     private val deviceManager = DeviceManager(context, scope)
     private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
-    private val headsets: MutableMap<PairKey, HeadsetOrchestrator> = mutableMapOf()
+    private data class RegisteredHeadset(
+        val orchestrator: HeadsetOrchestrator,
+        val leftMac: String,
+        val rightMac: String,
+    )
+
+    private val headsets: MutableMap<PairKey, RegisteredHeadset> = mutableMapOf()
     private val headsetJobs: MutableMap<PairKey, Job> = mutableMapOf()
 
     private data class LensObservation(
@@ -89,17 +95,16 @@ internal class BluetoothManager(
     private var scanCallback: ScanCallback? = null
     private var scanJob: Job? = null
 
-    fun registerHeadset(orchestrator: HeadsetOrchestrator) {
-        val key = orchestrator.headset.value.pair
-        headsets[key] = orchestrator
-        headsetJobs.remove(key)?.cancel()
-        headsetStates.update { current -> current + (key to orchestrator.headset.value) }
+    fun registerHeadset(pairKey: PairKey, leftMac: String, rightMac: String, orchestrator: HeadsetOrchestrator) {
+        headsets[pairKey] = RegisteredHeadset(orchestrator, leftMac, rightMac)
+        headsetJobs.remove(pairKey)?.cancel()
+        headsetStates.update { current -> current + (pairKey to orchestrator.headset.value) }
         val job = scope.launch {
             orchestrator.headset.collectLatest { state ->
-                headsetStates.update { current -> current + (key to state) }
+                headsetStates.update { current -> current + (pairKey to state) }
             }
         }
-        headsetJobs[key] = job
+        headsetJobs[pairKey] = job
     }
 
     fun unregisterHeadset(pairKey: PairKey) {
@@ -109,20 +114,20 @@ internal class BluetoothManager(
     }
 
     fun headsetFlow(pairToken: String): StateFlow<HeadsetState>? {
-        return headsets[PairKey(pairToken)]?.headset
+        return headsets[PairKey(pairToken)]?.orchestrator?.headset
     }
 
     fun connectHeadset(pairToken: String): Boolean {
         val key = PairKey(pairToken)
-        val orchestrator = headsets[key] ?: return false
-        scope.launch { orchestrator.connectBoth() }
+        val registered = headsets[key] ?: return false
+        scope.launch { registered.orchestrator.connectHeadset(key, registered.leftMac, registered.rightMac) }
         return true
     }
 
     fun disconnectHeadset(pairToken: String): Boolean {
         val key = PairKey(pairToken)
-        val orchestrator = headsets[key] ?: return false
-        scope.launch { orchestrator.disconnectBoth() }
+        val registered = headsets[key] ?: return false
+        scope.launch { registered.orchestrator.disconnectHeadset() }
         return true
     }
 
@@ -146,6 +151,7 @@ internal class BluetoothManager(
         stopScan()
         headsetJobs.values.forEach { it.cancel() }
         headsetJobs.clear()
+        headsets.values.forEach { it.orchestrator.close() }
         headsets.clear()
         headsetStates.value = emptyMap()
     }

@@ -47,6 +47,8 @@ class G1DisplayService : Service() {
     private var heartbeatJob: Job? = null
     private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
     private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
+    private val demoLeftMac = "00:00:00:00:00:01"
+    private val demoRightMac = "00:00:00:00:00:02"
     private val bluetoothManagerLazy = lazy(LazyThreadSafetyMode.NONE) { BluetoothManager(this, serviceScope) }
     private val bluetoothManager: BluetoothManager?
         get() = if (pairBleEnabled) bluetoothManagerLazy.value else null
@@ -55,13 +57,22 @@ class G1DisplayService : Service() {
             null
         } else {
             val pair = PairKey("demo-pair")
-            val leftClient = BleClientStub(
-                LensState(LensId("00:00:00:00:00:01", LensSide.LEFT)),
+            HeadsetOrchestrator(
+                pair,
+                bleFactory = { mac ->
+                    val side = when (mac) {
+                        demoLeftMac -> LensSide.LEFT
+                        demoRightMac -> LensSide.RIGHT
+                        else -> null
+                    }
+                    BleClientStub(
+                        LensState(
+                            id = LensId(mac, side),
+                        ),
+                    )
+                },
+                scope = serviceScope,
             )
-            val rightClient = BleClientStub(
-                LensState(LensId("00:00:00:00:00:02", LensSide.RIGHT)),
-            )
-            HeadsetOrchestrator(pair, leftClient, rightClient, serviceScope)
         }
     }
     private val demoHeadset: HeadsetOrchestrator?
@@ -81,7 +92,8 @@ class G1DisplayService : Service() {
         monitorReconnection()
         if (pairBleEnabled) {
             demoHeadset?.let { headset ->
-                bluetoothManager?.registerHeadset(headset)
+                val pair = headset.headset.value.pair
+                bluetoothManager?.registerHeadset(pair, demoLeftMac, demoRightMac, headset)
             }
         }
         serviceScope.launch {
