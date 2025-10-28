@@ -25,6 +25,11 @@ import java.util.Locale
 
 private const val TAG = "BluetoothManager"
 private const val PAIR_WINDOW_TIMEOUT_MS = 10_000L
+private const val STABILITY_SAMPLE_RETENTION_MS = 5_000L
+private const val STABILITY_MIN_SAMPLE_SPAN_MS = 1_500L
+private const val STABILITY_MIN_SAMPLES_PER_LENS = 3
+private const val STABILITY_MAX_RSSI_VARIANCE_DB = 8
+private const val MAX_RSSI_SAMPLES_PER_LENS = 12
 
 internal class BluetoothManager(
     context: Context,
@@ -45,12 +50,51 @@ internal class BluetoothManager(
     private val headsets: MutableMap<PairKey, RegisteredHeadset> = mutableMapOf()
     private val headsetJobs: MutableMap<PairKey, Job> = mutableMapOf()
 
+    private data class RssiSample(
+        val timestamp: Long,
+        val rssi: Int,
+    )
+
     private data class LensObservation(
         val id: LensId,
         val result: ScanResult,
         val firstSeenAt: Long,
         val lastSeenAt: Long,
-    )
+        val rssiSamples: List<RssiSample>,
+    ) {
+        fun updatedWith(result: ScanResult, timestamp: Long): LensObservation {
+            val appended = rssiSamples + RssiSample(timestamp, result.rssi)
+            val filtered = appended.filter { timestamp - it.timestamp <= STABILITY_SAMPLE_RETENTION_MS }
+            val limited = if (filtered.size > MAX_RSSI_SAMPLES_PER_LENS) {
+                filtered.takeLast(MAX_RSSI_SAMPLES_PER_LENS)
+            } else {
+                filtered
+            }
+            return copy(
+                result = result,
+                lastSeenAt = timestamp,
+                rssiSamples = limited,
+            )
+        }
+
+        fun isStable(now: Long): Boolean {
+            val recent = rssiSamples.filter { now - it.timestamp <= STABILITY_SAMPLE_RETENTION_MS }
+            if (recent.size < STABILITY_MIN_SAMPLES_PER_LENS) {
+                return false
+            }
+            val earliest = recent.minByOrNull { it.timestamp } ?: return false
+            val latest = recent.maxByOrNull { it.timestamp } ?: return false
+            if (latest.timestamp - earliest.timestamp < STABILITY_MIN_SAMPLE_SPAN_MS) {
+                return false
+            }
+            val minRssi = recent.minOf { it.rssi }
+            val maxRssi = recent.maxOf { it.rssi }
+            if (maxRssi - minRssi > STABILITY_MAX_RSSI_VARIANCE_DB) {
+                return false
+            }
+            return true
+        }
+    }
 
     private data class PairCorrelationWindow(
         val key: PairKey,
@@ -68,12 +112,21 @@ internal class BluetoothManager(
                 lenses = updated,
             )
         }
+
+        fun isStable(now: Long): Boolean {
+            if (!isComplete) {
+                return false
+            }
+            return lenses.values.all { it.isStable(now) }
+        }
     }
 
     private val pairWindows: MutableMap<PairKey, PairCorrelationWindow> = mutableMapOf()
 
     private var pairWindowDeadlineJob: Job? = null
     private var pairWindowExpiryAt: Long? = null
+
+    private val pendingPairConnections: MutableSet<PairKey> = mutableSetOf()
 
     private val headsetStates = MutableStateFlow<Map<PairKey, HeadsetState>>(emptyMap())
     val headsetsFlow: StateFlow<Map<PairKey, HeadsetState>> = headsetStates.asStateFlow()
@@ -318,6 +371,7 @@ internal class BluetoothManager(
         pairWindowDeadlineJob = null
         pairWindowExpiryAt = null
         pairWindows.clear()
+        pendingPairConnections.clear()
     }
 
     private fun logScannerUnavailable(operation: String) {
@@ -338,19 +392,28 @@ internal class BluetoothManager(
         pairWindowDeadlineJob?.cancel()
         pairWindowDeadlineJob = null
         pairWindowExpiryAt = null
+        pendingPairConnections.clear()
     }
 
     private fun handlePairScanResult(result: ScanResult) {
         val pairKey = derivePairKey(result) ?: return
+        if (pendingPairConnections.contains(pairKey)) {
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         val existingWindow = pairWindows[pairKey]
         val existingObservation = existingWindow?.lenses?.get(result.device.address)
-        val observation = LensObservation(
-            id = LensId(result.device.address, inferSide(result.device.name)),
-            result = result,
-            firstSeenAt = existingObservation?.firstSeenAt ?: now,
-            lastSeenAt = now,
-        )
+        val observation = if (existingObservation == null) {
+            LensObservation(
+                id = LensId(result.device.address, inferSide(result.device.name)),
+                result = result,
+                firstSeenAt = now,
+                lastSeenAt = now,
+                rssiSamples = listOf(RssiSample(now, result.rssi)),
+            )
+        } else {
+            existingObservation.updatedWith(result, now)
+        }
         val window = if (existingWindow == null) {
             val created = PairCorrelationWindow(
                 key = pairKey,
@@ -387,13 +450,14 @@ internal class BluetoothManager(
     }
 
     private fun onPairWindowSatisfied(window: PairCorrelationWindow) {
-        pairWindowExpiryAt = null
-        pairWindowDeadlineJob?.cancel()
-        pairWindowDeadlineJob = null
         headsetStates.update { current ->
             val base = mergeHeadsetStates(current[window.key], buildDiscoveryState(window))
             val updated = base.copy(status = HeadsetStatus.PAIRING)
             current + (window.key to updated)
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (!window.isStable(now)) {
+            return
         }
         if (headsets.containsKey(window.key)) {
             Log.i(TAG, "Pair ${window.key.token} already registered; skipping duplicate discovery")
@@ -403,9 +467,14 @@ internal class BluetoothManager(
         val (leftObservation, rightObservation) = selectLensObservations(window)
         if (leftObservation == null || rightObservation == null) {
             Log.w(TAG, "Pair ${window.key.token} discovered but could not resolve both lenses; ignoring")
-            stopPairScan()
             return
         }
+        if (!pendingPairConnections.add(window.key)) {
+            return
+        }
+        pairWindowExpiryAt = null
+        pairWindowDeadlineJob?.cancel()
+        pairWindowDeadlineJob = null
         val leftMac = leftObservation.id.mac
         val rightMac = rightObservation.id.mac
         val orchestrator = HeadsetOrchestrator(
@@ -414,6 +483,14 @@ internal class BluetoothManager(
             scope = scope,
         )
         registerHeadset(window.key, leftMac, rightMac, orchestrator)
+        headsetStates.update { current ->
+            val base = mergeHeadsetStates(current[window.key], buildDiscoveryState(window))
+            val updated = base.copy(status = HeadsetStatus.CONNECTING)
+            current + (window.key to updated)
+        }
+        scope.launch {
+            orchestrator.connectHeadset(window.key, leftMac, rightMac)
+        }
         stopPairScan()
     }
 
