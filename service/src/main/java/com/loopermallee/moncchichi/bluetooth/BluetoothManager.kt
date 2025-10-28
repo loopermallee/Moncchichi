@@ -75,8 +75,22 @@ internal class BluetoothManager(
         headsetStates.update { current -> current - pairKey }
     }
 
-    fun getHeadsetState(pairToken: String): HeadsetState? {
-        return headsetStates.value[PairKey(pairToken)]
+    fun headsetFlow(pairToken: String): StateFlow<HeadsetState>? {
+        return headsets[PairKey(pairToken)]?.headset
+    }
+
+    fun connectHeadset(pairToken: String): Boolean {
+        val key = PairKey(pairToken)
+        val orchestrator = headsets[key] ?: return false
+        scope.launch { orchestrator.connectBoth() }
+        return true
+    }
+
+    fun disconnectHeadset(pairToken: String): Boolean {
+        val key = PairKey(pairToken)
+        val orchestrator = headsets[key] ?: return false
+        scope.launch { orchestrator.disconnectBoth() }
+        return true
     }
 
     fun startPairDiscovery() {
