@@ -171,24 +171,40 @@ class DeviceManager(
 
     suspend fun sendText(message: String): Boolean {
         val payload = message.encodeToByteArray()
-        val page = 1
-        val totalPages = 1
         val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
-        val chunkCapacity = (BluetoothConstants.MAX_CHUNK_SIZE - SendTextPacketBuilder.HEADER_SIZE).coerceAtLeast(1)
+        val chunkCapacity = (BluetoothConstants.MAX_CHUNK_SIZE - SendTextPacketBuilder.HEADER_SIZE)
+            .coerceAtLeast(1)
+        val frameCount = if (payload.isEmpty()) {
+            1
+        } else {
+            (payload.size + chunkCapacity - 1) / chunkCapacity
+        }
 
         if (payload.isEmpty()) {
-            val frame = textPacketBuilder.buildSendText(page, totalPages, screenStatus, ByteArray(0))
+            val frame = textPacketBuilder.buildSendText(
+                currentPage = 1,
+                totalPages = frameCount,
+                screenStatus = screenStatus,
+                textBytes = ByteArray(0),
+            )
             return sendCommand(frame, "SendTextEmpty")
         }
 
         var offset = 0
+        var page = 1
         while (offset < payload.size) {
             val chunkLength = min(chunkCapacity, payload.size - offset)
             val chunk = payload.copyOfRange(offset, offset + chunkLength)
-            val frame = textPacketBuilder.buildSendText(page, totalPages, screenStatus, chunk)
+            val frame = textPacketBuilder.buildSendText(
+                currentPage = page,
+                totalPages = frameCount,
+                screenStatus = screenStatus,
+                textBytes = chunk,
+            )
             val success = sendCommand(frame, "SendTextChunk")
             if (!success) return false
             offset += chunkLength
+            page += 1
         }
         return true
     }
