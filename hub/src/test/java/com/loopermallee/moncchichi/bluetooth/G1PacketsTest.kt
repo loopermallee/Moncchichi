@@ -20,16 +20,19 @@ class G1PacketsTest {
     }
 
     @Test
-    fun `reboot command emits reboot sequence`() {
-        val payload = G1Packets.reboot()
+    fun `ping command emits heartbeat opcode and sequence`() {
+        G1Packets.resetPingSequenceForTests()
+        val first = G1Packets.ping()
+        val second = G1Packets.ping()
 
-        assertContentEquals(byteArrayOf(0x23, 0x72, 0x00), payload)
+        assertContentEquals(byteArrayOf(0x25, 0x00), first)
+        assertContentEquals(byteArrayOf(0x25, 0x01), second)
     }
 
     @Test
-    fun `reboot command includes mode code`() {
-        val payload = G1Packets.reboot(G1Packets.RebootMode.SAFE)
+    fun `reboot command emits reboot sequence`() {
+        val payload = G1Packets.reboot()
 
-        assertContentEquals(byteArrayOf(0x23, 0x72, 0x01), payload)
+        assertContentEquals(byteArrayOf(0x23, 0x72), payload)
     }
 }

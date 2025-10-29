@@ -79,7 +79,7 @@ class BleToolLiveImpl(
     }
 
     override suspend fun send(command: String): String {
-        val (payload, target) = mapCommand(command)
+        val (payload, target) = Companion.mapCommand(command)
         return if (service.send(payload, target)) "OK" else "ERR"
     }
 
@@ -119,21 +119,23 @@ class BleToolLiveImpl(
         }
     }
 
-    private fun mapCommand(cmd: String): Pair<ByteArray, MoncchichiBleService.Target> {
-        val c = cmd.trim().uppercase(Locale.getDefault())
-        return when (c) {
-            "PING" -> G1Packets.ping() to MoncchichiBleService.Target.Both
-            "BATTERY" -> G1Packets.batteryQuery() to MoncchichiBleService.Target.Both
-            "FIRMWARE" -> G1Packets.firmwareQuery() to MoncchichiBleService.Target.Both
-            "REBOOT" -> G1Packets.reboot() to MoncchichiBleService.Target.Both
-            "BRIGHTNESS_UP" -> G1Packets.brightness(80) to MoncchichiBleService.Target.Both
-            "BRIGHTNESS_DOWN" -> G1Packets.brightness(30) to MoncchichiBleService.Target.Both
-            "LENS_LEFT_ON" -> G1Packets.brightness(80, G1Packets.BrightnessTarget.LEFT) to MoncchichiBleService.Target.Left
-            "LENS_LEFT_OFF" -> G1Packets.brightness(0, G1Packets.BrightnessTarget.LEFT) to MoncchichiBleService.Target.Left
-            "LENS_RIGHT_ON" -> G1Packets.brightness(80, G1Packets.BrightnessTarget.RIGHT) to MoncchichiBleService.Target.Right
-            "LENS_RIGHT_OFF" -> G1Packets.brightness(0, G1Packets.BrightnessTarget.RIGHT) to MoncchichiBleService.Target.Right
-            "DISPLAY_RESET" -> G1Packets.textPageUtf8("") to MoncchichiBleService.Target.Both
-            else -> G1Packets.textPageUtf8(cmd) to MoncchichiBleService.Target.Both
+    internal companion object {
+        fun mapCommand(cmd: String): Pair<ByteArray, MoncchichiBleService.Target> {
+            val c = cmd.trim().uppercase(Locale.getDefault())
+            return when (c) {
+                "PING" -> G1Packets.ping() to MoncchichiBleService.Target.Both
+                "BATTERY" -> G1Packets.batteryQuery() to MoncchichiBleService.Target.Both
+                "FIRMWARE" -> G1Packets.firmwareQuery() to MoncchichiBleService.Target.Both
+                "REBOOT" -> G1Packets.reboot() to MoncchichiBleService.Target.Both
+                "BRIGHTNESS_UP" -> G1Packets.brightness(80) to MoncchichiBleService.Target.Both
+                "BRIGHTNESS_DOWN" -> G1Packets.brightness(30) to MoncchichiBleService.Target.Both
+                "LENS_LEFT_ON" -> G1Packets.brightness(80, G1Packets.BrightnessTarget.LEFT) to MoncchichiBleService.Target.Left
+                "LENS_LEFT_OFF" -> G1Packets.brightness(0, G1Packets.BrightnessTarget.LEFT) to MoncchichiBleService.Target.Left
+                "LENS_RIGHT_ON" -> G1Packets.brightness(80, G1Packets.BrightnessTarget.RIGHT) to MoncchichiBleService.Target.Right
+                "LENS_RIGHT_OFF" -> G1Packets.brightness(0, G1Packets.BrightnessTarget.RIGHT) to MoncchichiBleService.Target.Right
+                "DISPLAY_RESET" -> G1Packets.textPageUtf8("") to MoncchichiBleService.Target.Both
+                else -> G1Packets.textPageUtf8(cmd) to MoncchichiBleService.Target.Both
+            }
         }
     }
 }
