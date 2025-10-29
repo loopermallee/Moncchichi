@@ -1,5 +1,7 @@
 package com.loopermallee.moncchichi.core
 
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.text.Charsets
 
 // bluetooth device name ---------------------------------------------------------------------------
@@ -19,6 +21,7 @@ enum class OutgoingPacketType(val label: String) {
     GET_BATTERY_LEVEL("GET_BATTERY_LEVEL"),                                                   // x2C 01
     GET_FIRMWARE_INFO("GET_FIRMWARE_INFO"),                                                   // x2C 02
     SEND_AI_RESULT("SEND_AI_RESULT"),                                                         // x4E
+    SEND_HEARTBEAT("SEND_HEARTBEAT"),                                                         // x25
     ;
     override fun toString() = label
 }
@@ -123,6 +126,26 @@ class FirmwareInfoRequestPacket: OutgoingPacket(
     OutgoingPacketType.GET_FIRMWARE_INFO,
     byteArrayOf(0x2C, 0x02)
 )
+
+class HeartbeatPacket private constructor(sequence: Int): OutgoingPacket(
+    OutgoingPacketType.SEND_HEARTBEAT,
+    byteArrayOf(0x25, sequence.toByte())
+) {
+    companion object {
+        private val sequences = ConcurrentHashMap<String, AtomicInteger>()
+
+        fun forDevice(identifier: String): HeartbeatPacket {
+            val next = sequences
+                .getOrPut(identifier) { AtomicInteger(0) }
+                .getAndUpdate { (it + 1) and 0xFF } and 0xFF
+            return HeartbeatPacket(next)
+        }
+
+        fun resetSequence(identifier: String) {
+            sequences[identifier]?.set(0)
+        }
+    }
+}
 
 // send text
 
