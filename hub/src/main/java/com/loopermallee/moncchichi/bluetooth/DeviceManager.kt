@@ -38,6 +38,8 @@ import kotlin.math.min
 
 private const val DEVICE_MANAGER_TAG = "[DeviceManager]"
 private const val RECONNECT_TAG = "[Reconnect]"
+private const val MTU_COMMAND_MAX_RETRIES = 3
+private const val MTU_COMMAND_RETRY_DELAY_MS = 150L
 
 class DeviceManager(
     private val context: Context,
@@ -86,6 +88,8 @@ class DeviceManager(
     private var scanCallback: ScanCallback? = null
     private var reconnectJob: Job? = null
     private var heartbeatSequence = 0
+    private var clientMtuJob: Job? = null
+    private var currentMtu = BluetoothConstants.DEFAULT_MTU
 
     // ✅ Tracks whether a real connection has ever succeeded
     private var wasConnectedBefore = false
@@ -129,6 +133,7 @@ class DeviceManager(
         clientStateJob?.cancel()
         incomingJob?.cancel()
         clientRssiJob?.cancel()
+        clientMtuJob?.cancel()
         bleClient?.close()
         bleClient = null
         _rssi.value = null
@@ -136,6 +141,7 @@ class DeviceManager(
         G1ReplyParser.resetVitals()
         textPacketBuilder.resetSequence()
         resetHeartbeatSequence()
+        currentMtu = BluetoothConstants.DEFAULT_MTU
     }
 
     @SuppressLint("MissingPermission")
@@ -172,7 +178,8 @@ class DeviceManager(
     suspend fun sendText(message: String): Boolean {
         val payload = message.encodeToByteArray()
         val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
-        val chunkCapacity = (BluetoothConstants.MAX_CHUNK_SIZE - SendTextPacketBuilder.HEADER_SIZE)
+        val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
+        val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
         val frameCount = if (payload.isEmpty()) {
             1
@@ -333,6 +340,7 @@ class DeviceManager(
         incomingJob?.cancel()
         clientStateJob?.cancel()
         clientRssiJob?.cancel()
+        clientMtuJob?.cancel()
         bleClient?.close()
         bleClient = client
 
@@ -376,6 +384,10 @@ class DeviceManager(
                 _rssi.value = value
             }
         }
+
+        clientMtuJob = client.mtu.onEach { mtu ->
+            handleNegotiatedMtu(mtu)
+        }.launchIn(scope)
     }
 
     private suspend fun sendCommand(payload: ByteArray, label: String): Boolean {
@@ -394,6 +406,36 @@ class DeviceManager(
             logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload failed to enqueue")
         }
         return ok
+    }
+
+    private suspend fun handleNegotiatedMtu(mtu: Int) {
+        if (mtu <= 0) return
+        val previous = currentMtu
+        currentMtu = mtu
+        logTelemetry("BLE", "[MTU]", "Negotiated MTU=$mtu")
+        if (mtu == previous) return
+        sendSetMtuCommand(mtu)
+    }
+
+    private suspend fun sendSetMtuCommand(mtu: Int) {
+        val payload = BluetoothConstants.buildSetMtuPayload(mtu)
+        repeat(MTU_COMMAND_MAX_RETRIES) { attempt ->
+            val attemptNumber = attempt + 1
+            val success = sendCommand(payload, "SetMtu")
+            logTelemetry(
+                "BLE",
+                "[MTU]",
+                "Set MTU attempt #$attemptNumber for mtu=$mtu → ${if (success) "queued" else "failed"}",
+            )
+            if (success) {
+                return
+            }
+            delay(MTU_COMMAND_RETRY_DELAY_MS)
+        }
+        logger.w(
+            DEVICE_MANAGER_TAG,
+            "${tt()} Failed to enqueue Set MTU command for mtu=$mtu after $MTU_COMMAND_MAX_RETRIES attempts",
+        )
     }
 
     private fun buildHeartbeatPayload(): ByteArray {

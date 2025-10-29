@@ -12,13 +12,25 @@ internal object BluetoothConstants {
 
     const val OPCODE_CLEAR_SCREEN: Byte = 0x18
     const val OPCODE_HEARTBEAT: Byte = 0x25
+    const val OPCODE_SET_MTU: Byte = 0x4D
     const val OPCODE_SEND_TEXT: Byte = 0x4E
 
     const val OPCODE_GLASSES_INFO: Byte = 0x2C
     val BATTERY_QUERY: ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, 0x01)
     val FIRMWARE_QUERY: ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, 0x02)
 
-    const val MAX_CHUNK_SIZE = 20
+    const val DEFAULT_MTU = 23
+    const val DESIRED_MTU = 498
+    private const val ATT_HEADER_OVERHEAD = 3
+
+    fun payloadCapacityFor(mtu: Int): Int = (mtu - ATT_HEADER_OVERHEAD).coerceAtLeast(1)
+
+    fun buildSetMtuPayload(mtu: Int): ByteArray {
+        val lower = (mtu and 0xFF).toByte()
+        val upper = ((mtu shr 8) and 0xFF).toByte()
+        return byteArrayOf(OPCODE_SET_MTU, lower, upper)
+    }
+
     const val HEARTBEAT_INTERVAL_SECONDS = 28L
     const val HEARTBEAT_TIMEOUT_SECONDS = 10L
 }

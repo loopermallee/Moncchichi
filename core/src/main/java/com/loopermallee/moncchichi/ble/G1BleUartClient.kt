@@ -40,6 +40,8 @@ class G1BleUartClient(
         val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private val ENABLE_NOTIFY = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
         private val ENABLE_NOTIFY_IND = byteArrayOf(0x03, 0x00)
+        private const val DEFAULT_ATT_MTU = 23
+        private const val DESIRED_ATT_MTU = 498
     }
 
     enum class ConnectionState {
@@ -64,6 +66,8 @@ class G1BleUartClient(
 
     private val _rssi = MutableStateFlow<Int?>(null)
     val rssi: StateFlow<Int?> = _rssi.asStateFlow()
+    private val _mtu = MutableStateFlow(DEFAULT_ATT_MTU)
+    val mtu: StateFlow<Int> = _mtu.asStateFlow()
 
     private val notifyArmed = AtomicBoolean(false)
     private val connecting = AtomicBoolean(false)
@@ -94,6 +98,7 @@ class G1BleUartClient(
         connecting.set(false)
         _connectionState.value = ConnectionState.DISCONNECTED
         _rssi.value = null
+        _mtu.value = DEFAULT_ATT_MTU
     }
 
     private fun maybeSendWarmupAfterNotifyArmed() {
@@ -161,6 +166,8 @@ class G1BleUartClient(
                 logger("[SERVICE] Service discovery failed with status=$status")
                 return
             }
+            val requested = g.requestMtu(DESIRED_ATT_MTU)
+            logger("[BLE][MTU] requestMtu($DESIRED_ATT_MTU) queued=$requested")
             val svc = g.getService(NUS_SERVICE)
             if (svc == null) {
                 logger("[ERROR] NUS service not found")
@@ -204,6 +211,9 @@ class G1BleUartClient(
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
             logger("[BLE][MTU] onMtuChanged mtu=$mtu status=$status")
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                _mtu.value = mtu
+            }
         }
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
