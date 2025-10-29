@@ -22,6 +22,7 @@ enum class OutgoingPacketType(val label: String) {
     GET_FIRMWARE_INFO("GET_FIRMWARE_INFO"),                                                   // x2C 02
     SEND_AI_RESULT("SEND_AI_RESULT"),                                                         // x4E
     SEND_HEARTBEAT("SEND_HEARTBEAT"),                                                         // x25
+    MIC_CONTROL("MIC_CONTROL"),                                                              // x0E
     ;
     override fun toString() = label
 }
@@ -79,6 +80,7 @@ enum class IncomingPacketType(
     EXIT("EXIT", hasFirst(0x18), { ExitResponsePacket(it) }),
     GLASSES_INFO("GLASSES_INFO", hasFirst(0x2C), { GlassesInfoResponsePacket.from(it) }),
     AI_RESULT_RECEIVED("AI_RESULT_RECEIVED", hasFirst(0x4E), { SendTextResponsePacket(it) }),
+    LC3_AUDIO("LC3_AUDIO", hasFirst(0xF1.toByte()), { Lc3AudioPacket.from(it) }),
 ;
     override fun toString() = label
 }
@@ -172,6 +174,11 @@ class SendTextPacket(
     }
 }
 
+class MicControlPacket(enabled: Boolean) : OutgoingPacket(
+    OutgoingPacketType.MIC_CONTROL,
+    byteArrayOf(0x0E, if (enabled) 0x01 else 0x00)
+)
+
 // incoming ////////////////////////////////////////////////////////////////////////////////////////
 
 abstract class IncomingPacket(val type: IncomingPacketType, val bytes: ByteArray, val responseTo: OutgoingPacketType? = null) {
@@ -252,3 +259,18 @@ class SendTextResponsePacket(bytes: ByteArray): IncomingPacket(
     bytes,
     OutgoingPacketType.SEND_AI_RESULT
 )
+
+class Lc3AudioPacket private constructor(
+    bytes: ByteArray,
+    val sequence: Int,
+    val payload: ByteArray,
+) : IncomingPacket(IncomingPacketType.LC3_AUDIO, bytes, null) {
+    companion object {
+        fun from(bytes: ByteArray): IncomingPacket? {
+            if (bytes.isEmpty() || bytes[0] != 0xF1.toByte()) return null
+            val sequence = bytes.getOrNull(1)?.toUByte()?.toInt() ?: 0
+            val payload = if (bytes.size > 2) bytes.copyOfRange(2, bytes.size) else byteArrayOf()
+            return Lc3AudioPacket(bytes, sequence, payload)
+        }
+    }
+}

@@ -6,6 +6,7 @@ import androidx.preference.PreferenceManager
 import androidx.room.Room
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import com.loopermallee.moncchichi.hub.assistant.EvenAiCoordinator
 import com.loopermallee.moncchichi.hub.data.db.MemoryDb
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.diagnostics.DiagnosticRepository
@@ -61,6 +62,7 @@ object AppLocator {
     private lateinit var appScope: CoroutineScope
     private lateinit var bleService: MoncchichiBleService
     private lateinit var bleScanner: BluetoothScanner
+    private lateinit var evenAiCoordinator: EvenAiCoordinator
 
     fun init(ctx: Context) {
         if (initialized) return
@@ -85,6 +87,10 @@ object AppLocator {
         }
         llm = LlmToolImpl(appCtx)
         display = DisplayToolImpl(appCtx)
+        if (useLiveBle) {
+            evenAiCoordinator = EvenAiCoordinator(bleService, llm, display, appScope)
+            evenAiCoordinator.start()
+        }
         perms = PermissionToolImpl(appCtx)
         tts = TtsToolImpl(appCtx)
         diagnostics = DiagnosticRepository(appCtx, memory)
