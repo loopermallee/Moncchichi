@@ -50,6 +50,8 @@ class G1BleClient(
         CONNECTED,
     }
 
+    data class AudioFrame(val sequence: Int, val payload: ByteArray)
+
     data class State(
         val status: ConnectionState = ConnectionState.DISCONNECTED,
         val rssi: Int? = null,
@@ -67,6 +69,8 @@ class G1BleClient(
     val ackEvents: SharedFlow<Long> = _ackEvents.asSharedFlow()
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val incoming: SharedFlow<ByteArray> = _incoming.asSharedFlow()
+    private val _audioFrames = MutableSharedFlow<AudioFrame>(extraBufferCapacity = 64)
+    val audioFrames: SharedFlow<AudioFrame> = _audioFrames.asSharedFlow()
     private val _state = MutableStateFlow(
         State(bonded = device.bondState == BluetoothDevice.BOND_BONDED)
     )
@@ -107,7 +111,9 @@ class G1BleClient(
                     _ackEvents.tryEmit(lastAckTimestamp.get())
                     ackSignals.trySend(Unit)
                 }
-                _incoming.tryEmit(payload.copyOf())
+                val copy = payload.copyOf()
+                copy.toAudioFrameOrNull()?.let { frame -> _audioFrames.tryEmit(frame) }
+                _incoming.tryEmit(copy)
             }
         }
 
@@ -184,6 +190,15 @@ class G1BleClient(
     fun readRemoteRssi(): Boolean = uartClient.readRemoteRssi()
 
     fun lastAckTimestamp(): Long = lastAckTimestamp.get()
+
+    private fun ByteArray.toAudioFrameOrNull(): AudioFrame? {
+        if (isEmpty()) return null
+        val opcode = this[0].toInt() and 0xFF
+        if (opcode != 0xF1) return null
+        val sequence = this.getOrNull(1)?.toUByte()?.toInt() ?: 0
+        val payload = if (size > 2) copyOfRange(2, size) else ByteArray(0)
+        return AudioFrame(sequence, payload)
+    }
 
     internal fun ByteArray.detectAck(): Boolean {
         if (size >= 2) {

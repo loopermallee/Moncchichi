@@ -3,6 +3,8 @@ package com.loopermallee.moncchichi.bluetooth
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.MicControlPacket
+import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,6 +59,9 @@ class MoncchichiBleService(
 
     data class IncomingFrame(val lens: Lens, val payload: ByteArray)
 
+    data class EvenAiEvent(val lens: Lens, val event: G1ReplyParser.EvenAiEvent)
+    data class AudioFrame(val lens: Lens, val sequence: Int, val payload: ByteArray)
+
     private data class ClientRecord(
         val lens: Lens,
         val client: G1BleClient,
@@ -74,6 +79,10 @@ class MoncchichiBleService(
 
     private val _incoming = MutableSharedFlow<IncomingFrame>(extraBufferCapacity = 64)
     val incoming: SharedFlow<IncomingFrame> = _incoming.asSharedFlow()
+    private val _evenAiEvents = MutableSharedFlow<EvenAiEvent>(extraBufferCapacity = 32)
+    val evenAiEvents: SharedFlow<EvenAiEvent> = _evenAiEvents.asSharedFlow()
+    private val _audioFrames = MutableSharedFlow<AudioFrame>(extraBufferCapacity = 128)
+    val audioFrames: SharedFlow<AudioFrame> = _audioFrames.asSharedFlow()
 
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
     private val sendMutex = Mutex()
@@ -157,6 +166,27 @@ class MoncchichiBleService(
         return success
     }
 
+    suspend fun setMicEnabled(
+        lens: Lens,
+        enabled: Boolean,
+        ackTimeoutMs: Long = ACK_TIMEOUT_MS,
+        retries: Int = COMMAND_RETRY_COUNT,
+        retryDelayMs: Long = COMMAND_RETRY_DELAY_MS,
+    ): Boolean {
+        val packet = MicControlPacket(enabled)
+        return send(packet.bytes, lens.toTarget(), ackTimeoutMs, retries, retryDelayMs)
+    }
+
+    suspend fun sendEvenAiStop(
+        lens: Lens,
+        ackTimeoutMs: Long = ACK_TIMEOUT_MS,
+        retries: Int = COMMAND_RETRY_COUNT,
+        retryDelayMs: Long = COMMAND_RETRY_DELAY_MS,
+    ): Boolean {
+        val payload = byteArrayOf(0xF5.toByte(), 0x24)
+        return send(payload, lens.toTarget(), ackTimeoutMs, retries, retryDelayMs)
+    }
+
     fun shutdown() {
         heartbeatJob?.cancel()
         heartbeatJob = null
@@ -187,11 +217,24 @@ class MoncchichiBleService(
         jobs += scope.launch {
             client.incoming.collect { payload ->
                 _incoming.tryEmit(IncomingFrame(lens, payload))
+                when (val parsed = G1ReplyParser.parseNotify(payload)) {
+                    is G1ReplyParser.Parsed.EvenAi -> {
+                        val event = EvenAiEvent(lens, parsed.event)
+                        _evenAiEvents.tryEmit(event)
+                        log("Even AI event from $lens -> ${describeEvenAi(parsed.event)}")
+                    }
+                    else -> Unit
+                }
             }
         }
         jobs += scope.launch {
             client.ackEvents.collect { timestamp ->
                 updateLens(lens) { it.copy(lastAckAt = timestamp, degraded = false) }
+            }
+        }
+        jobs += scope.launch {
+            client.audioFrames.collect { frame ->
+                _audioFrames.tryEmit(AudioFrame(lens, frame.sequence, frame.payload))
             }
         }
         return ClientRecord(lens, client, jobs)
@@ -271,6 +314,20 @@ class MoncchichiBleService(
     }
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
+
+    private fun Lens.toTarget(): Target = when (this) {
+        Lens.LEFT -> Target.Left
+        Lens.RIGHT -> Target.Right
+    }
+
+    private fun describeEvenAi(event: G1ReplyParser.EvenAiEvent): String = when (event) {
+        is G1ReplyParser.EvenAiEvent.ActivationRequested -> "activation"
+        is G1ReplyParser.EvenAiEvent.ManualExit -> "manual exit"
+        is G1ReplyParser.EvenAiEvent.ManualPaging -> "manual page"
+        is G1ReplyParser.EvenAiEvent.RecordingStopped -> "recording stopped"
+        is G1ReplyParser.EvenAiEvent.SilentModeToggle -> "silent toggle"
+        is G1ReplyParser.EvenAiEvent.Unknown -> "unknown(${"0x%02X".format(event.subcommand)})"
+    }
 
     companion object {
         private const val TAG = "[MoncchichiBle]"

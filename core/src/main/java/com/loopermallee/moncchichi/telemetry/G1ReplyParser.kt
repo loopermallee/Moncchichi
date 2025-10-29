@@ -28,7 +28,23 @@ object G1ReplyParser {
             val sequence: Int?,
             val payload: ByteArray,
         ) : Parsed()
+        data class EvenAi(val event: EvenAiEvent) : Parsed()
         data class Unknown(val op: Int, val frame: ByteArray) : Parsed()
+    }
+
+    sealed class EvenAiEvent {
+        data object ActivationRequested : EvenAiEvent()
+        data object RecordingStopped : EvenAiEvent()
+        data class ManualExit(val gesture: TapGesture = TapGesture.DOUBLE) : EvenAiEvent()
+        data class ManualPaging(val gesture: TapGesture = TapGesture.SINGLE) : EvenAiEvent()
+        data class SilentModeToggle(val gesture: TapGesture = TapGesture.TRIPLE) : EvenAiEvent()
+        data class Unknown(val subcommand: Int, val payload: ByteArray) : EvenAiEvent()
+    }
+
+    enum class TapGesture {
+        SINGLE,
+        DOUBLE,
+        TRIPLE,
     }
 
     val vitalsFlow = MutableStateFlow(DeviceVitals())
@@ -47,9 +63,27 @@ object G1ReplyParser {
             0x4E -> Parsed.Mode("Text")
             0x25 -> Parsed.Mode("Idle")
             0x15, 0x20, 0x16 -> Parsed.Mode("Image")
-            0xF5 -> Parsed.Mode("Dashboard")
+            0xF5 -> parseEvenAi(frame)
             else -> Parsed.Unknown(frame.opcode, frame.raw)
         }
+    }
+
+    private fun parseEvenAi(frame: Frame): Parsed {
+        val payload = frame.payload
+        val subcommand = payload.firstOrNull()?.toUnsignedInt()
+            ?: frame.status?.toUnsignedInt()
+            ?: return Parsed.Unknown(frame.opcode, frame.raw)
+
+        val event = when (subcommand) {
+            0x17, 0x23 -> EvenAiEvent.ActivationRequested
+            0x24 -> EvenAiEvent.RecordingStopped
+            0x00 -> EvenAiEvent.ManualExit()
+            0x01 -> EvenAiEvent.ManualPaging()
+            0x04, 0x05 -> EvenAiEvent.SilentModeToggle()
+            else -> EvenAiEvent.Unknown(subcommand, payload.copyOf())
+        }
+
+        return Parsed.EvenAi(event)
     }
 
     private fun parseBatteryOrStatus(frame: Frame): Parsed {

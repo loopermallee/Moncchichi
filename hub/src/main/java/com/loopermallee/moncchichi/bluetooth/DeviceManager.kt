@@ -488,6 +488,17 @@ class DeviceManager(
             is G1ReplyParser.Parsed.Mode -> {
                 recordTelemetry(G1TelemetryEvent("DEVICE", "[MODE]", parsed.name))
             }
+            is G1ReplyParser.Parsed.EvenAi -> {
+                val label = when (val event = parsed.event) {
+                    is G1ReplyParser.EvenAiEvent.ActivationRequested -> "Activation requested"
+                    is G1ReplyParser.EvenAiEvent.RecordingStopped -> "Recording stopped"
+                    is G1ReplyParser.EvenAiEvent.ManualExit -> "Manual exit gesture"
+                    is G1ReplyParser.EvenAiEvent.ManualPaging -> "Manual paging gesture"
+                    is G1ReplyParser.EvenAiEvent.SilentModeToggle -> "Silent mode toggle"
+                    is G1ReplyParser.EvenAiEvent.Unknown -> "Unknown 0x%02X".format(event.subcommand)
+                }
+                recordTelemetry(G1TelemetryEvent("DEVICE", "[EVENAI]", label))
+            }
             is G1ReplyParser.Parsed.Ack -> {
                 val status = if (parsed.success) "✅" else "❌"
                 val seq = parsed.sequence?.let { " seq=${"0x%04X".format(it)}" } ?: ""

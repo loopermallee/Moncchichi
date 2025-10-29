@@ -33,4 +33,24 @@ class G1ReplyParserTest {
         assertNull(ack.sequence)
         assertContentEquals(byteArrayOf(0xCA.toByte()), ack.payload)
     }
+
+    @Test
+    fun `parseNotify surfaces Even AI activation`() {
+        val bytes = byteArrayOf(0xF5.toByte(), 0x17)
+
+        val result = G1ReplyParser.parseNotify(bytes)
+
+        val event = assertIs<G1ReplyParser.Parsed.EvenAi>(result)
+        assertIs<G1ReplyParser.EvenAiEvent.ActivationRequested>(event.event)
+    }
+
+    @Test
+    fun `parseNotify surfaces Even AI recording stop`() {
+        val bytes = byteArrayOf(0xF5.toByte(), 0x24)
+
+        val result = G1ReplyParser.parseNotify(bytes)
+
+        val event = assertIs<G1ReplyParser.Parsed.EvenAi>(result)
+        assertIs<G1ReplyParser.EvenAiEvent.RecordingStopped>(event.event)
+    }
 }
