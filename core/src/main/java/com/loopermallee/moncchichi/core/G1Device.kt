@@ -44,13 +44,16 @@ internal class G1Device(
     @SuppressLint("MissingPermission")
     suspend fun connect(context: Context, scope: CoroutineScope): Boolean {
         if(this::manager.isInitialized.not()) {
-            manager = G1BLEManager(scanResult.device.name, context, scope)
+            manager = G1BLEManager(scanResult.device.name, scanResult.device.address, context, scope)
             scope.launch {
                 manager.connectionState.collect {
                     Log.d("G1Device", "CONNECTION_STATUS ${scanResult.device.name} = ${it}")
                     writableState.value = state.value.copy(
                         connectionState = it
                     )
+                    if(it == G1.ConnectionState.CONNECTED || it == G1.ConnectionState.DISCONNECTED) {
+                        HeartbeatPacket.resetSequence(address)
+                    }
                 }
             }
             scope.launch {
@@ -160,10 +163,13 @@ internal class G1Device(
 
     private val batteryCheckScheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(1)
     private var batteryCheckTask: ScheduledFuture<*>? = null
+    private var heartbeatTask: ScheduledFuture<*>? = null
 
     private fun startPeriodicBatteryCheck() {
         batteryCheckTask?.cancel(true)
+        heartbeatTask?.cancel(true)
         batteryCheckTask = batteryCheckScheduler.scheduleWithFixedDelay(this::sendBatteryCheck, 0, 15, TimeUnit.SECONDS)
+        heartbeatTask = batteryCheckScheduler.scheduleWithFixedDelay(this::sendHeartbeat, 28, 28, TimeUnit.SECONDS)
     }
 
     private fun sendBatteryCheck() {
@@ -171,7 +177,18 @@ internal class G1Device(
             // TODO: log error
         }
 
-        // if current request has expired, return failure and advance queue
+        expireCurrentRequestIfNeeded()
+    }
+
+    private fun sendHeartbeat() {
+        if(!manager.send(HeartbeatPacket.forDevice(address))) {
+            // TODO: log error
+        }
+
+        expireCurrentRequestIfNeeded()
+    }
+
+    private fun expireCurrentRequestIfNeeded() {
         val request = currentRequest
         if(request != null && request.expires < Date().time) {
             request.callback(null)
@@ -181,6 +198,8 @@ internal class G1Device(
 
     private fun stopHeartbeat() {
         batteryCheckTask?.cancel(true)
+        heartbeatTask?.cancel(true)
         batteryCheckTask = null
+        heartbeatTask = null
     }
 }

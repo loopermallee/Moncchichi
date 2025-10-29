@@ -27,7 +27,12 @@ private fun Data.toByteArray(): ByteArray {
 }
 
 @SuppressLint("MissingPermission")
-internal class G1BLEManager(private val deviceName: String, context: Context, private val coroutineScope: CoroutineScope): BleManager(context) {
+internal class G1BLEManager(
+    private val deviceName: String,
+    private val deviceAddress: String,
+    context: Context,
+    private val coroutineScope: CoroutineScope,
+): BleManager(context) {
 
     private val writableConnectionState = MutableStateFlow<G1.ConnectionState>(G1.ConnectionState.CONNECTING)
     val connectionState = writableConnectionState.asStateFlow()
@@ -61,6 +66,7 @@ internal class G1BLEManager(private val deviceName: String, context: Context, pr
             override fun onDeviceReady(device: BluetoothDevice) {
                 writableConnectionState.value = G1.ConnectionState.CONNECTED
                 SendTextPacket.resetSequence()
+                HeartbeatPacket.resetSequence(deviceAddress)
             }
 
             override fun onDeviceDisconnecting(device: BluetoothDevice) {
@@ -73,6 +79,7 @@ internal class G1BLEManager(private val deviceName: String, context: Context, pr
             ) {
                 writableConnectionState.value = G1.ConnectionState.DISCONNECTED
                 SendTextPacket.resetSequence()
+                HeartbeatPacket.resetSequence(deviceAddress)
             }
         })
         val notificationCharacteristic = readCharacteristic
