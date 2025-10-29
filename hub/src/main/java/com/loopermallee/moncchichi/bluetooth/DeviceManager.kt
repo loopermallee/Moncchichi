@@ -85,6 +85,7 @@ class DeviceManager(
     private var rssiJob: Job? = null
     private var scanCallback: ScanCallback? = null
     private var reconnectJob: Job? = null
+    private var heartbeatSequence = 0
 
     // ✅ Tracks whether a real connection has ever succeeded
     private var wasConnectedBefore = false
@@ -134,6 +135,7 @@ class DeviceManager(
         updateState(G1ConnectionState.DISCONNECTED)
         G1ReplyParser.resetVitals()
         textPacketBuilder.resetSequence()
+        resetHeartbeatSequence()
     }
 
     @SuppressLint("MissingPermission")
@@ -155,7 +157,12 @@ class DeviceManager(
     }
 
     suspend fun sendHeartbeat(): Boolean {
-        return sendCommand(byteArrayOf(BluetoothConstants.OPCODE_HEARTBEAT), "Heartbeat")
+        val payload = buildHeartbeatPayload()
+        val success = sendCommand(payload, "Heartbeat")
+        if (success) {
+            logTelemetry("APP", "[HEARTBEAT]", "Sent heartbeat seq=${formatHeartbeatSequence()}")
+        }
+        return success
     }
 
     suspend fun clearScreen(): Boolean {
@@ -325,6 +332,7 @@ class DeviceManager(
                     val address = trackedDevice?.address ?: "unknown"
                     logTelemetry("BLE", "[STATE]", "Connected to $address")
                     textPacketBuilder.resetSequence()
+                    resetHeartbeatSequence()
                 }
                 G1BleUartClient.ConnectionState.CONNECTING -> {
                     updateState(G1ConnectionState.CONNECTING)
@@ -342,6 +350,7 @@ class DeviceManager(
                     }
                     _rssi.value = null
                     G1ReplyParser.resetVitals()
+                    resetHeartbeatSequence()
                 }
             }
         }.launchIn(scope)
@@ -370,6 +379,24 @@ class DeviceManager(
         }
         return ok
     }
+
+    private fun buildHeartbeatPayload(): ByteArray {
+        return byteArrayOf(
+            BluetoothConstants.OPCODE_HEARTBEAT,
+            nextHeartbeatSequence(),
+        )
+    }
+
+    private fun nextHeartbeatSequence(): Byte {
+        heartbeatSequence = (heartbeatSequence + 1) and 0xFF
+        return heartbeatSequence.toByte()
+    }
+
+    private fun resetHeartbeatSequence() {
+        heartbeatSequence = 0
+    }
+
+    private fun formatHeartbeatSequence(): String = "0x%02X".format(heartbeatSequence)
 
     private fun logTelemetry(source: String, tag: String, message: String) {
         val event = G1TelemetryEvent(source = source, tag = tag, message = message)

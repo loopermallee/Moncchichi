@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.MoncchichiCrashReporter
 import com.loopermallee.moncchichi.TestActivity
+import com.loopermallee.moncchichi.bluetooth.BluetoothConstants
 import com.loopermallee.moncchichi.bluetooth.DeviceIoFacade
 import com.loopermallee.moncchichi.bluetooth.DeviceManager
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
@@ -231,7 +232,7 @@ class G1DisplayService : Service() {
 
     private suspend fun heartbeatLoop() {
         while (coroutineContext.isActive) {
-            delay(8_000L)
+            delay(BluetoothConstants.HEARTBEAT_INTERVAL_SECONDS * 1000)
             if (deviceManager.state.value == G1ConnectionState.CONNECTED) {
                 val success = deviceManager.sendHeartbeat()
                 if (success) {

@@ -92,6 +92,7 @@ internal class DeviceManager(
 
     private var heartbeatJob: Job? = null
     private var heartbeatTimeoutJob: Job? = null
+    private var heartbeatSequence = 0
     private val awaitingAck = AtomicBoolean(false)
     private val manualDisconnect = AtomicBoolean(false)
     private val reconnecting = AtomicBoolean(false)
@@ -131,6 +132,7 @@ internal class DeviceManager(
                     clearReconnectFailures()
                     gatt.discoverServices()
                     textPacketBuilder.resetSequence()
+                    resetHeartbeatSequence()
                 }
                 BluetoothProfile.STATE_CONNECTING -> {
                     setConnectionState(ConnectionState.CONNECTING)
@@ -159,6 +161,7 @@ internal class DeviceManager(
                     }
                     updateState(gatt.device, targetState)
                     textPacketBuilder.resetSequence()
+                    resetHeartbeatSequence()
                     if (shouldAttemptReconnect && isBluetoothEnabled()) {
                         scope.launch {
                             tryReconnect(context.applicationContext)
@@ -398,9 +401,12 @@ internal class DeviceManager(
         lastAckTimestamp = SystemClock.elapsedRealtime()
         heartbeatJob = scope.launch {
             while (true) {
-                val success = sendCommand(byteArrayOf(BluetoothConstants.OPCODE_HEARTBEAT))
+                val success = sendCommand(buildHeartbeatPayload())
                 if (success) {
-                    logger.heartbeat(TAG, "${tt()} heartbeat sent")
+                    logger.heartbeat(
+                        TAG,
+                        "${tt()} heartbeat sent seq=${formatHeartbeatSequence()}"
+                    )
                     awaitingAck.set(true)
                     monitorHeartbeatTimeout()
                 }
@@ -408,6 +414,24 @@ internal class DeviceManager(
             }
         }
     }
+
+    private fun buildHeartbeatPayload(): ByteArray {
+        return byteArrayOf(
+            BluetoothConstants.OPCODE_HEARTBEAT,
+            nextHeartbeatSequence(),
+        )
+    }
+
+    private fun nextHeartbeatSequence(): Byte {
+        heartbeatSequence = (heartbeatSequence + 1) and 0xFF
+        return heartbeatSequence.toByte()
+    }
+
+    private fun resetHeartbeatSequence() {
+        heartbeatSequence = 0
+    }
+
+    private fun formatHeartbeatSequence(): String = "0x%02X".format(heartbeatSequence)
 
     private fun monitorHeartbeatTimeout() {
         heartbeatTimeoutJob?.cancel()
@@ -451,6 +475,7 @@ internal class DeviceManager(
         clearConnection()
         setConnectionState(ConnectionState.DISCONNECTED)
         address?.let { deviceStates[it] = G1ConnectionState.DISCONNECTED }
+        resetHeartbeatSequence()
         logger.i(TAG, "${tt()} disconnect requested")
     }
 
