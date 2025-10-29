@@ -42,6 +42,8 @@ import kotlin.text.Charsets
 import kotlin.concurrent.withLock
 
 private const val TAG = "DeviceManager"
+private const val MTU_COMMAND_MAX_RETRIES = 3
+private const val MTU_COMMAND_RETRY_DELAY_MS = 150L
 
 internal class DeviceManager(
     private val context: Context,
@@ -85,6 +87,7 @@ internal class DeviceManager(
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
     private var readCharacteristic: BluetoothGattCharacteristic? = null
     private var batteryCharacteristic: BluetoothGattCharacteristic? = null
+    private var currentMtu = BluetoothConstants.DEFAULT_MTU
 
     private var periodicVitalsJob: Job? = null
     private val queryStateLock = ReentrantLock()
@@ -181,6 +184,13 @@ internal class DeviceManager(
                 logger.w(TAG, "${tt()} onServicesDiscovered: failure status=$status")
                 setConnectionState(ConnectionState.ERROR)
                 return
+            }
+            val desiredMtu = BluetoothConstants.DESIRED_MTU
+            val requested = gatt.requestMtu(desiredMtu)
+            if (requested) {
+                logTelemetry("SERVICE", "[MTU]", "Requested MTU negotiation to $desiredMtu")
+            } else {
+                logTelemetry("SERVICE", "[MTU]", "Failed to request MTU $desiredMtu")
             }
             initializeCharacteristics(gatt)
         }
@@ -281,6 +291,19 @@ internal class DeviceManager(
                 val level = characteristic.value?.firstOrNull()?.toInt() ?: return
                 completePendingQuery(QueryToken.BATTERY)
                 updateBatteryLevel(level)
+            }
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            logger.debug(TAG, "${tt()} onMtuChanged mtu=$mtu status=$status")
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                currentMtu = mtu
+                logTelemetry("SERVICE", "[MTU]", "Negotiated MTU=$mtu")
+                scope.launch {
+                    sendSetMtuCommand(mtu)
+                }
+            } else {
+                logTelemetry("SERVICE", "[MTU]", "MTU negotiation failed with status=$status")
             }
         }
     }
@@ -476,6 +499,7 @@ internal class DeviceManager(
         setConnectionState(ConnectionState.DISCONNECTED)
         address?.let { deviceStates[it] = G1ConnectionState.DISCONNECTED }
         resetHeartbeatSequence()
+        currentMtu = BluetoothConstants.DEFAULT_MTU
         logger.i(TAG, "${tt()} disconnect requested")
     }
 
@@ -485,6 +509,7 @@ internal class DeviceManager(
         readCharacteristic = null
         batteryCharacteristic = null
         currentDeviceAddress = null
+        currentMtu = BluetoothConstants.DEFAULT_MTU
     }
 
     private fun startPeriodicVitals() {
@@ -605,7 +630,8 @@ internal class DeviceManager(
     suspend fun sendText(message: String): Boolean {
         val payload = message.encodeToByteArray()
         val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
-        val chunkCapacity = (BluetoothConstants.MAX_CHUNK_SIZE - SendTextPacketBuilder.HEADER_SIZE)
+        val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
+        val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
         val frameCount = if (payload.isEmpty()) {
             1
@@ -641,6 +667,24 @@ internal class DeviceManager(
             success = sendCommand(frame)
         }
         return success
+    }
+
+    private suspend fun sendSetMtuCommand(mtu: Int) {
+        val payload = BluetoothConstants.buildSetMtuPayload(mtu)
+        repeat(MTU_COMMAND_MAX_RETRIES) { attempt ->
+            val attemptNumber = attempt + 1
+            val success = sendCommand(payload)
+            logTelemetry(
+                "SERVICE",
+                "[MTU]",
+                "Set MTU write attempt #$attemptNumber for mtu=$mtu → ${if (success) "queued" else "failed"}",
+            )
+            if (success) {
+                return
+            }
+            delay(MTU_COMMAND_RETRY_DELAY_MS)
+        }
+        logger.w(TAG, "${tt()} Failed to enqueue Set MTU command for mtu=$mtu after $MTU_COMMAND_MAX_RETRIES attempts")
     }
 
     suspend fun clearScreen(): Boolean = sendCommand(byteArrayOf(BluetoothConstants.OPCODE_CLEAR_SCREEN))
