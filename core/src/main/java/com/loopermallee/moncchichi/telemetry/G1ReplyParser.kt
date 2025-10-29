@@ -94,7 +94,9 @@ object G1ReplyParser {
     }
 
     private fun detectAck(frame: Frame): Parsed.Ack? {
-        val status = frame.payload.lastOrNull { it.toInt() != 0 } ?: return null
+        val status = frame.payload.lastOrNull { it.toInt() != 0 }
+            ?: frame.raw.drop(1).lastOrNull { it.toInt() != 0 }
+            ?: return null
         val success = when (status) {
             0xC9.toByte() -> true
             0xCA.toByte() -> false
@@ -106,10 +108,22 @@ object G1ReplyParser {
     private fun parseFrame(bytes: ByteArray): Frame? {
         if (bytes.isEmpty()) return null
         val opcode = bytes[0].toUnsignedInt()
-        val length = bytes.getOrNull(1)?.toUnsignedInt()
-        if (length == null) {
+        val lengthByte = bytes.getOrNull(1)
+        if (lengthByte == null) {
             return Frame(opcode = opcode, length = null, sequence = null, payload = ByteArray(0), raw = bytes)
         }
+
+        if (bytes.size == 2) {
+            return Frame(
+                opcode = opcode,
+                length = null,
+                sequence = null,
+                payload = byteArrayOf(lengthByte),
+                raw = bytes,
+            )
+        }
+
+        val length = lengthByte.toUnsignedInt()
 
         var payloadStart = 2
         var payloadLength = length
