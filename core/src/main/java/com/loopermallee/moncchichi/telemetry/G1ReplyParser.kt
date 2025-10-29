@@ -1,8 +1,11 @@
 package com.loopermallee.moncchichi.telemetry
 
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 
 object G1ReplyParser {
+
+    private const val TAG = "G1ReplyParser"
 
     data class DeviceVitals(
         val batteryPercent: Int? = null,
@@ -94,13 +97,17 @@ object G1ReplyParser {
     }
 
     private fun detectAck(frame: Frame): Parsed.Ack? {
-        val status = frame.payload.lastOrNull { it.toInt() != 0 }
+        val status = frame.status
+            ?: frame.payload.lastOrNull { it.toInt() != 0 }
             ?: frame.raw.drop(1).lastOrNull { it.toInt() != 0 }
             ?: return null
         val success = when (status) {
             0xC9.toByte() -> true
             0xCA.toByte() -> false
             else -> return null
+        }
+        if (!success) {
+            Log.w(TAG, "Command 0x${frame.opcode.toString(16)} failed with status 0xCA")
         }
         return Parsed.Ack(frame.opcode, success, frame.sequence, frame.payload)
     }
@@ -110,7 +117,14 @@ object G1ReplyParser {
         val opcode = bytes[0].toUnsignedInt()
         val lengthByte = bytes.getOrNull(1)
         if (lengthByte == null) {
-            return Frame(opcode = opcode, length = null, sequence = null, payload = ByteArray(0), raw = bytes)
+            return Frame(
+                opcode = opcode,
+                length = null,
+                sequence = null,
+                payload = ByteArray(0),
+                status = null,
+                raw = bytes,
+            )
         }
 
         if (bytes.size == 2) {
@@ -119,6 +133,7 @@ object G1ReplyParser {
                 length = null,
                 sequence = null,
                 payload = byteArrayOf(lengthByte),
+                status = lengthByte,
                 raw = bytes,
             )
         }
@@ -142,7 +157,7 @@ object G1ReplyParser {
             ByteArray(0)
         }
 
-        return Frame(opcode, length, sequence, payload, bytes)
+        return Frame(opcode, length, sequence, payload, null, bytes)
     }
 
     private fun Byte.toUnsignedInt(): Int = this.toUByte().toInt()
@@ -152,6 +167,7 @@ object G1ReplyParser {
         val length: Int?,
         val sequence: Int?,
         val payload: ByteArray,
+        val status: Byte?,
         val raw: ByteArray,
     )
 }
