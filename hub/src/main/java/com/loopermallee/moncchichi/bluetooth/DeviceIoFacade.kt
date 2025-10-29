@@ -66,7 +66,15 @@ class DeviceIoFacade(
             return false
         }
         scope.launch {
-            val ok = deviceManager.sendRawCommand(G1Packets.textPageUtf8(text), "TextPage")
+            val frames = G1Packets.textPagesUtf8(text)
+            var ok = true
+            frames.forEachIndexed { index, frame ->
+                val label = if (frames.size == 1) "TextPage" else "TextPage#${index + 1}"
+                if (!deviceManager.sendRawCommand(frame, label)) {
+                    ok = false
+                    return@forEachIndexed
+                }
+            }
             if (!ok) {
                 _inbound.emit(G1Inbound.Error(-1, "Send text failed"))
             }
