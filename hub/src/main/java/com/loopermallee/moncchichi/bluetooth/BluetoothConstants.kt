@@ -15,4 +15,5 @@ internal object BluetoothConstants {
     const val OPCODE_SEND_TEXT: Byte = 0x4E
 
     const val MAX_CHUNK_SIZE = 20
+    const val HEARTBEAT_INTERVAL_SECONDS = 28L
 }

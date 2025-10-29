@@ -227,7 +227,7 @@ class G1DisplayService : Service() {
         }
         heartbeatJob = serviceScope.launch {
             while (true) {
-                delay(8_000)
+                delay(BluetoothConstants.HEARTBEAT_INTERVAL_SECONDS * 1000)
                 try {
                     if (binder.checkBinderHeartbeat()) {
                         logger.debug(TAG, "${tt()} Heartbeat OK")

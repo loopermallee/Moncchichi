@@ -19,6 +19,6 @@ internal object BluetoothConstants {
     val FIRMWARE_QUERY: ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, 0x02)
 
     const val MAX_CHUNK_SIZE = 20
-    const val HEARTBEAT_INTERVAL_SECONDS = 8L
+    const val HEARTBEAT_INTERVAL_SECONDS = 28L
     const val HEARTBEAT_TIMEOUT_SECONDS = 10L
 }
