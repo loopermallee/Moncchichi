@@ -10,8 +10,9 @@ object G1Packets {
     private val textPacketBuilder = SendTextPacketBuilder()
 
     private const val OP_PING: Byte = 0x01
-    private const val OP_BRIGHTNESS: Byte = 0x05
-    private const val OP_REBOOT: Byte = 0x06
+    private const val OP_BRIGHTNESS: Byte = 0x01
+    private const val OPCODE_SYSTEM_COMMAND: Byte = 0x23
+    private const val SYSTEM_COMMAND_REBOOT: Byte = 0x72
 
     private const val SUBCOMMAND_BATTERY: Byte = 0x01
     private const val SUBCOMMAND_FIRMWARE: Byte = 0x02
@@ -33,7 +34,8 @@ object G1Packets {
         return byteArrayOf(OP_BRIGHTNESS, target.mask, clamped.toByte())
     }
 
-    fun reboot(mode: RebootMode = RebootMode.NORMAL): ByteArray = byteArrayOf(OP_REBOOT, mode.code)
+    fun reboot(mode: RebootMode = RebootMode.NORMAL): ByteArray =
+        byteArrayOf(OPCODE_SYSTEM_COMMAND, SYSTEM_COMMAND_REBOOT, mode.code)
 
     enum class BrightnessTarget(val mask: Byte) {
         BOTH(0x03),
