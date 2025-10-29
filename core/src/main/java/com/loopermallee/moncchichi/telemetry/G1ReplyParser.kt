@@ -19,6 +19,12 @@ object G1ReplyParser {
     sealed class Parsed {
         data class Vitals(val vitals: DeviceVitals) : Parsed()
         data class Mode(val name: String) : Parsed()
+        data class Ack(
+            val op: Int,
+            val success: Boolean,
+            val sequence: Int?,
+            val payload: ByteArray,
+        ) : Parsed()
         data class Unknown(val op: Int, val frame: ByteArray) : Parsed()
     }
 
@@ -28,50 +34,46 @@ object G1ReplyParser {
         vitalsFlow.value = DeviceVitals()
     }
 
-    /** Parse a single notify frame like: 55 <op> <len_hi> <len_lo> <payload...> <chk> */
     fun parseNotify(bytes: ByteArray): Parsed? {
-        if (bytes.isEmpty()) return null
-        val opIndex = when {
-            bytes.size > 1 && bytes[0] == HEADER -> 1
-            else -> 0
-        }
-        val op = bytes.getOrNull(opIndex)?.toUByte()?.toInt() ?: return null
+        val frame = parseFrame(bytes) ?: return null
 
-        return when (op) {
-            0x06 -> parseBatteryOrStatus(bytes)
+        detectAck(frame)?.let { return it }
+
+        return when (frame.opcode) {
+            0x06 -> parseBatteryOrStatus(frame)
             0x4E -> Parsed.Mode("Text")
             0x25 -> Parsed.Mode("Idle")
             0x15, 0x20, 0x16 -> Parsed.Mode("Image")
             0xF5 -> Parsed.Mode("Dashboard")
-            else -> Parsed.Unknown(op, bytes)
+            else -> Parsed.Unknown(frame.opcode, frame.raw)
         }
     }
 
-    private fun parseBatteryOrStatus(bytes: ByteArray): Parsed {
-        return when {
-            bytes.size >= 6 && bytes[0] == HEADER && bytes[1] == 0x06.toByte() -> {
-                val percent = bytes.getOrNull(4)?.toUnsignedInt()
-                val vitals = updateVitals(DeviceVitals(batteryPercent = percent))
-                Parsed.Vitals(vitals)
-            }
-            bytes.size >= 6 && bytes[0] == 0x06.toByte() && bytes.getOrNull(1) == 0x90.toByte() -> {
-                val flags = bytes.getOrNull(4)?.toInt() ?: 0
-                val wearing = flags and 0x01 != 0
-                val inCradle = flags and 0x02 != 0
-                val charging = flags and 0x04 != 0
-                val battery = bytes.getOrNull(5)?.toUnsignedInt()
-                val vitals = updateVitals(
-                    DeviceVitals(
-                        batteryPercent = battery,
-                        wearing = wearing,
-                        inCradle = inCradle,
-                        charging = charging
-                    )
-                )
-                Parsed.Vitals(vitals)
-            }
-            else -> Parsed.Unknown(0x06, bytes)
+    private fun parseBatteryOrStatus(frame: Frame): Parsed {
+        if (frame.payload.isEmpty()) return Parsed.Unknown(frame.opcode, frame.raw)
+
+        val flagsByte = frame.payload.getOrNull(0)?.toInt() ?: 0
+        val hasStatusFlags = frame.payload.size >= 2
+        val wearing = hasStatusFlags && (flagsByte and 0x01) != 0
+        val inCradle = hasStatusFlags && (flagsByte and 0x02) != 0
+        val charging = hasStatusFlags && (flagsByte and 0x04) != 0
+        val batteryIndex = if (hasStatusFlags) 1 else 0
+        val battery = frame.payload.getOrNull(batteryIndex)?.toUnsignedInt()
+
+        if (!hasStatusFlags && battery == null) {
+            return Parsed.Unknown(frame.opcode, frame.raw)
         }
+
+        val vitals = updateVitals(
+            DeviceVitals(
+                batteryPercent = battery,
+                wearing = if (hasStatusFlags) wearing else null,
+                inCradle = if (hasStatusFlags) inCradle else null,
+                charging = if (hasStatusFlags) charging else null,
+            )
+        )
+
+        return Parsed.Vitals(vitals)
     }
 
     private fun updateVitals(partial: DeviceVitals): DeviceVitals {
@@ -91,7 +93,51 @@ object G1ReplyParser {
         return next
     }
 
+    private fun detectAck(frame: Frame): Parsed.Ack? {
+        val status = frame.payload.lastOrNull { it.toInt() != 0 } ?: return null
+        val success = when (status) {
+            0xC9.toByte() -> true
+            0xCA.toByte() -> false
+            else -> return null
+        }
+        return Parsed.Ack(frame.opcode, success, frame.sequence, frame.payload)
+    }
+
+    private fun parseFrame(bytes: ByteArray): Frame? {
+        if (bytes.isEmpty()) return null
+        val opcode = bytes[0].toUnsignedInt()
+        val length = bytes.getOrNull(1)?.toUnsignedInt()
+        if (length == null) {
+            return Frame(opcode = opcode, length = null, sequence = null, payload = ByteArray(0), raw = bytes)
+        }
+
+        var payloadStart = 2
+        var payloadLength = length
+        var sequence: Int? = null
+        if (length >= 2 && bytes.size >= 4) {
+            sequence = (bytes[2].toUnsignedInt() shl 8) or bytes[3].toUnsignedInt()
+            payloadStart = 4
+            payloadLength = (length - 2).coerceAtLeast(0)
+        }
+
+        val available = (bytes.size - payloadStart).coerceAtLeast(0)
+        val actualLength = minOf(available, payloadLength)
+        val payload = if (actualLength > 0) {
+            bytes.copyOfRange(payloadStart, payloadStart + actualLength)
+        } else {
+            ByteArray(0)
+        }
+
+        return Frame(opcode, length, sequence, payload, bytes)
+    }
+
     private fun Byte.toUnsignedInt(): Int = this.toUByte().toInt()
 
-    private const val HEADER: Byte = 0x55
+    private data class Frame(
+        val opcode: Int,
+        val length: Int?,
+        val sequence: Int?,
+        val payload: ByteArray,
+        val raw: ByteArray,
+    )
 }
