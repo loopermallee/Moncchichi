@@ -2,8 +2,16 @@ package com.loopermallee.moncchichi.bluetooth
 
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
 
 class G1PacketsTest {
+
+    @Test
+    fun `uuids mirror nordic uart service`() {
+        assertEquals("6e400001-b5a3-f393-e0a9-e50e24dcca9e", G1Uuids.service.toString().lowercase())
+        assertEquals("6e400002-b5a3-f393-e0a9-e50e24dcca9e", G1Uuids.writeCharacteristic.toString().lowercase())
+        assertEquals("6e400003-b5a3-f393-e0a9-e50e24dcca9e", G1Uuids.notifyCharacteristic.toString().lowercase())
+    }
 
     @Test
     fun `brightness command uses documented opcode`() {
