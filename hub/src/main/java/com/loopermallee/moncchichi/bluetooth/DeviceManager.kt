@@ -9,6 +9,7 @@ import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
+import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
@@ -94,6 +95,7 @@ class DeviceManager(
     // ✅ Tracks whether a real connection has ever succeeded
     private var wasConnectedBefore = false
     private val textPacketBuilder = SendTextPacketBuilder()
+    private val textPaginator = TextPaginator()
 
     init {
         logger.i(
@@ -176,41 +178,24 @@ class DeviceManager(
     }
 
     suspend fun sendText(message: String): Boolean {
-        val payload = message.encodeToByteArray()
         val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
         val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
         val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
-        val frameCount = if (payload.isEmpty()) {
-            1
-        } else {
-            (payload.size + chunkCapacity - 1) / chunkCapacity
-        }
-
-        if (payload.isEmpty()) {
-            val frame = textPacketBuilder.buildSendText(
-                currentPage = 1,
-                totalPages = frameCount,
-                screenStatus = screenStatus,
-                textBytes = ByteArray(0),
-            )
-            return sendCommand(frame, "SendTextEmpty")
-        }
-
-        var offset = 0
+        val pagination = textPaginator.paginate(message)
+        val frames = pagination.toByteArrays(chunkCapacity)
+        val totalPages = frames.size.coerceAtLeast(1)
         var page = 1
-        while (offset < payload.size) {
-            val chunkLength = min(chunkCapacity, payload.size - offset)
-            val chunk = payload.copyOfRange(offset, offset + chunkLength)
+        for (bytes in frames) {
             val frame = textPacketBuilder.buildSendText(
                 currentPage = page,
-                totalPages = frameCount,
+                totalPages = totalPages,
                 screenStatus = screenStatus,
-                textBytes = chunk,
+                textBytes = bytes,
             )
-            val success = sendCommand(frame, "SendTextChunk")
+            val label = if (bytes.isEmpty()) "SendTextEmpty" else "SendTextPacket"
+            val success = sendCommand(frame, label)
             if (!success) return false
-            offset += chunkLength
             page += 1
         }
         return true

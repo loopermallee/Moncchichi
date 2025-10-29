@@ -14,6 +14,7 @@ import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
+import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
 import com.loopermallee.moncchichi.core.ble.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
@@ -111,6 +112,7 @@ internal class DeviceManager(
         preferences.getInt(KEY_RECONNECT_FAILURES, 0)
     private var notifyCallback: ((service: UUID, characteristic: UUID, value: ByteArray) -> Unit)? = null
     private val textPacketBuilder = SendTextPacketBuilder()
+    private val textPaginator = TextPaginator()
 
     private enum class QueryToken { BATTERY, FIRMWARE }
 
@@ -628,45 +630,27 @@ internal class DeviceManager(
     }
 
     suspend fun sendText(message: String): Boolean {
-        val payload = message.encodeToByteArray()
         val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
         val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
         val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
-        val frameCount = if (payload.isEmpty()) {
-            1
-        } else {
-            (payload.size + chunkCapacity - 1) / chunkCapacity
-        }
-
-        if (payload.isEmpty()) {
-            val frame = textPacketBuilder.buildSendText(
-                currentPage = 1,
-                totalPages = frameCount,
-                screenStatus = screenStatus,
-                textBytes = ByteArray(0),
-            )
-            return sendCommand(frame)
-        }
-
-        var index = 0
+        val pagination = textPaginator.paginate(message)
+        val frames = pagination.toByteArrays(chunkCapacity)
+        val totalPages = frames.size.coerceAtLeast(1)
         var page = 1
-        var success = true
-        while (index < payload.size && success) {
-            val remaining = payload.size - index
-            val chunkSize = min(chunkCapacity, remaining)
-            val chunk = payload.copyOfRange(index, index + chunkSize)
+        for (bytes in frames) {
             val frame = textPacketBuilder.buildSendText(
                 currentPage = page,
-                totalPages = frameCount,
+                totalPages = totalPages,
                 screenStatus = screenStatus,
-                textBytes = chunk,
+                textBytes = bytes,
             )
-            index += chunkSize
+            if (!sendCommand(frame)) {
+                return false
+            }
             page += 1
-            success = sendCommand(frame)
         }
-        return success
+        return true
     }
 
     private suspend fun sendSetMtuCommand(mtu: Int) {

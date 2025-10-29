@@ -1,8 +1,10 @@
 package com.loopermallee.moncchichi.hub.assistant
 
 import android.util.Log
+import com.loopermallee.moncchichi.bluetooth.BluetoothConstants
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
+import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
 import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
@@ -30,6 +32,7 @@ class EvenAiCoordinator(
     private var session: Session? = null
     private var audioGuard: Job? = null
     private val textBuilder = SendTextPacketBuilder()
+    private val textPaginator = TextPaginator()
 
     private data class Session(
         val lens: MoncchichiBleService.Lens,
@@ -145,15 +148,23 @@ class EvenAiCoordinator(
     private suspend fun sendTextToGlasses(text: String) {
         val normalized = text.trim().ifEmpty { "(no response)" }
         val truncated = if (normalized.length > 200) normalized.take(197) + "…" else normalized
-        val payload = textBuilder.buildSendText(
-            currentPage = 1,
-            totalPages = 1,
-            screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
-            textBytes = truncated.encodeToByteArray()
-        )
-        val sent = service.send(payload, MoncchichiBleService.Target.Both)
-        if (!sent) {
-            log("Failed to send AI response to glasses")
+        val mtuCapacity = BluetoothConstants.payloadCapacityFor(BluetoothConstants.DESIRED_MTU)
+        val chunkCapacity = (mtuCapacity - SendTextPacketBuilder.HEADER_SIZE).coerceAtLeast(1)
+        val pagination = textPaginator.paginate(truncated)
+        val frames = pagination.toByteArrays(chunkCapacity)
+        val totalPages = frames.size.coerceAtLeast(1)
+        frames.forEachIndexed { index, bytes ->
+            val payload = textBuilder.buildSendText(
+                currentPage = index + 1,
+                totalPages = totalPages,
+                screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+                textBytes = bytes,
+            )
+            val sent = service.send(payload, MoncchichiBleService.Target.Both)
+            if (!sent) {
+                log("Failed to send AI response frame ${index + 1}/$totalPages")
+                return
+            }
         }
     }
 

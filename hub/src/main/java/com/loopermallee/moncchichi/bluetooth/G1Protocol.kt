@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.bluetooth
 
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
+import com.loopermallee.moncchichi.core.text.TextPaginator
 import kotlin.text.Charsets
 
 /**
@@ -15,6 +16,7 @@ object G1Uuids {
 
 object G1Packets {
     private val textPacketBuilder = SendTextPacketBuilder()
+    private val textPaginator = TextPaginator()
 
     private const val OP_PING: Byte = 0x25
     private const val OP_BRIGHTNESS: Byte = 0x01
@@ -28,12 +30,21 @@ object G1Packets {
 
     fun batteryQuery(): ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, SUBCOMMAND_BATTERY)
     fun firmwareQuery(): ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, SUBCOMMAND_FIRMWARE)
-    fun textPageUtf8(text: String): ByteArray = textPacketBuilder.buildSendText(
-        currentPage = 1,
-        totalPages = 1,
-        screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
-        textBytes = text.toByteArray(Charsets.UTF_8),
-    )
+    fun textPagesUtf8(text: String): List<ByteArray> {
+        val mtuCapacity = BluetoothConstants.payloadCapacityFor(BluetoothConstants.DESIRED_MTU)
+        val chunkCapacity = (mtuCapacity - SendTextPacketBuilder.HEADER_SIZE).coerceAtLeast(1)
+        val pagination = textPaginator.paginate(text)
+        val frames = pagination.toByteArrays(chunkCapacity)
+        val totalPages = frames.size.coerceAtLeast(1)
+        return frames.mapIndexed { index, bytes ->
+            textPacketBuilder.buildSendText(
+                currentPage = index + 1,
+                totalPages = totalPages,
+                screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+                textBytes = bytes,
+            )
+        }
+    }
 
     fun ping(): ByteArray {
         val seq = pingSequence
