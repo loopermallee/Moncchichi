@@ -33,12 +33,36 @@ class EvenAiCoordinator(
     private var audioGuard: Job? = null
     private val textBuilder = SendTextPacketBuilder()
     private val textPaginator = TextPaginator()
+    private val evenAiStateMutex = Mutex()
+    private var evenAiManualMode = false
+    private var evenAiNetworkError = false
 
     private data class Session(
         val lens: MoncchichiBleService.Lens,
         val startedAt: Long,
         val audio: ByteArrayOutputStream = ByteArrayOutputStream(),
     )
+
+    private data class EvenAiDisplayState(val manualMode: Boolean, val networkError: Boolean)
+
+    private suspend fun resetEvenAiState() {
+        evenAiStateMutex.withLock {
+            evenAiManualMode = false
+            evenAiNetworkError = false
+        }
+    }
+
+    private suspend fun setManualMode(enabled: Boolean) {
+        evenAiStateMutex.withLock { evenAiManualMode = enabled }
+    }
+
+    private suspend fun setNetworkError(hasError: Boolean) {
+        evenAiStateMutex.withLock { evenAiNetworkError = hasError }
+    }
+
+    private suspend fun snapshotEvenAiState(): EvenAiDisplayState = evenAiStateMutex.withLock {
+        EvenAiDisplayState(evenAiManualMode, evenAiNetworkError)
+    }
 
     fun start() {
         scope.launch { collectEvents() }
@@ -48,10 +72,22 @@ class EvenAiCoordinator(
     private suspend fun collectEvents() {
         service.evenAiEvents.collect { event ->
             when (val type = event.event) {
-                is G1ReplyParser.EvenAiEvent.ActivationRequested -> handleActivation(event.lens)
-                is G1ReplyParser.EvenAiEvent.RecordingStopped -> finishSession("device-stop")
-                is G1ReplyParser.EvenAiEvent.ManualExit -> finishSession("manual-exit")
-                is G1ReplyParser.EvenAiEvent.ManualPaging -> log("Manual page tap from ${event.lens}")
+                is G1ReplyParser.EvenAiEvent.ActivationRequested -> {
+                    resetEvenAiState()
+                    handleActivation(event.lens)
+                }
+                is G1ReplyParser.EvenAiEvent.RecordingStopped -> {
+                    resetEvenAiState()
+                    finishSession("device-stop")
+                }
+                is G1ReplyParser.EvenAiEvent.ManualExit -> {
+                    resetEvenAiState()
+                    finishSession("manual-exit")
+                }
+                is G1ReplyParser.EvenAiEvent.ManualPaging -> {
+                    setManualMode(true)
+                    log("Manual page tap from ${event.lens}")
+                }
                 is G1ReplyParser.EvenAiEvent.SilentModeToggle -> log("Silent mode toggle gesture on ${event.lens}")
                 is G1ReplyParser.EvenAiEvent.Unknown -> log("Unknown Even AI event 0x%02X".format(Locale.US, type.subcommand))
             }
@@ -145,7 +181,7 @@ class EvenAiCoordinator(
         }
     }
 
-    private suspend fun sendTextToGlasses(text: String) {
+    private suspend fun sendTextToGlasses(text: String, isError: Boolean = false) {
         val normalized = text.trim().ifEmpty { "(no response)" }
         val truncated = if (normalized.length > 200) normalized.take(197) + "…" else normalized
         val mtuCapacity = BluetoothConstants.payloadCapacityFor(BluetoothConstants.DESIRED_MTU)
@@ -153,16 +189,27 @@ class EvenAiCoordinator(
         val pagination = textPaginator.paginate(truncated)
         val frames = pagination.toByteArrays(chunkCapacity)
         val totalPages = frames.size.coerceAtLeast(1)
+        setNetworkError(isError)
         frames.forEachIndexed { index, bytes ->
+            val page = index + 1
+            val hasMorePages = page < totalPages
+            val state = snapshotEvenAiState()
+            val status = when {
+                state.networkError -> SendTextPacketBuilder.ScreenStatus.EvenAi.NetworkError
+                state.manualMode -> SendTextPacketBuilder.ScreenStatus.EvenAi.Manual
+                hasMorePages -> SendTextPacketBuilder.ScreenStatus.EvenAi.Automatic
+                else -> SendTextPacketBuilder.ScreenStatus.EvenAi.AutomaticComplete
+            }
             val payload = textBuilder.buildSendText(
-                currentPage = index + 1,
+                currentPage = page,
                 totalPages = totalPages,
-                screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+                screenStatus = status,
                 textBytes = bytes,
             )
             val sent = service.send(payload, MoncchichiBleService.Target.Both)
             if (!sent) {
                 log("Failed to send AI response frame ${index + 1}/$totalPages")
+                setNetworkError(true)
                 return
             }
         }

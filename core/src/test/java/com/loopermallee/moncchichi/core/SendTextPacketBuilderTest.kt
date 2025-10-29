@@ -41,4 +41,17 @@ class SendTextPacketBuilderTest {
         assertEquals(0, first[1].toUByte().toInt())
         assertEquals(1, second[1].toUByte().toInt())
     }
+
+    @Test
+    fun `even ai screen statuses use expected nibbles`() {
+        val auto = SendTextPacketBuilder.ScreenStatus.EvenAi.Automatic
+        val complete = SendTextPacketBuilder.ScreenStatus.EvenAi.AutomaticComplete
+        val manual = SendTextPacketBuilder.ScreenStatus.EvenAi.Manual
+        val error = SendTextPacketBuilder.ScreenStatus.EvenAi.NetworkError
+
+        assertEquals(0x31, auto.value)
+        assertEquals(0x41, complete.value)
+        assertEquals(0x51, manual.value)
+        assertEquals(0x61, error.value)
+    }
 }

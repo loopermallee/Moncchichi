@@ -630,25 +630,29 @@ internal class DeviceManager(
     }
 
     suspend fun sendText(message: String): Boolean {
-        val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
         val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
         val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
         val pagination = textPaginator.paginate(message)
         val frames = pagination.toByteArrays(chunkCapacity)
         val totalPages = frames.size.coerceAtLeast(1)
-        var page = 1
-        for (bytes in frames) {
+        for ((index, bytes) in frames.withIndex()) {
+            val page = index + 1
+            val hasMorePages = page < totalPages
+            val status = if (hasMorePages) {
+                SendTextPacketBuilder.ScreenStatus.EvenAi.Automatic
+            } else {
+                SendTextPacketBuilder.ScreenStatus.EvenAi.AutomaticComplete
+            }
             val frame = textPacketBuilder.buildSendText(
                 currentPage = page,
                 totalPages = totalPages,
-                screenStatus = screenStatus,
+                screenStatus = status,
                 textBytes = bytes,
             )
             if (!sendCommand(frame)) {
                 return false
             }
-            page += 1
         }
         return true
     }
