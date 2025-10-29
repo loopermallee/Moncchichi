@@ -9,10 +9,11 @@ import kotlin.text.Charsets
 object G1Packets {
     private val textPacketBuilder = SendTextPacketBuilder()
 
-    private const val OP_PING: Byte = 0x01
+    private const val OP_PING: Byte = 0x25
     private const val OP_BRIGHTNESS: Byte = 0x01
     private const val OPCODE_SYSTEM_COMMAND: Byte = 0x23
     private const val SYSTEM_COMMAND_REBOOT: Byte = 0x72
+    private var pingSequence: Byte = 0x00
 
     private const val SUBCOMMAND_BATTERY: Byte = 0x01
     private const val SUBCOMMAND_FIRMWARE: Byte = 0x02
@@ -27,15 +28,23 @@ object G1Packets {
         textBytes = text.toByteArray(Charsets.UTF_8),
     )
 
-    fun ping(): ByteArray = byteArrayOf(OP_PING)
+    fun ping(): ByteArray {
+        val seq = pingSequence
+        pingSequence = (seq + 1).toInt().and(0xFF).toByte()
+        return byteArrayOf(OP_PING, seq)
+    }
+
+    internal fun resetPingSequenceForTests() {
+        pingSequence = 0x00
+    }
 
     fun brightness(level: Int, target: BrightnessTarget = BrightnessTarget.BOTH): ByteArray {
         val clamped = level.coerceIn(0, 100)
         return byteArrayOf(OP_BRIGHTNESS, target.mask, clamped.toByte())
     }
 
-    fun reboot(mode: RebootMode = RebootMode.NORMAL): ByteArray =
-        byteArrayOf(OPCODE_SYSTEM_COMMAND, SYSTEM_COMMAND_REBOOT, mode.code)
+    fun reboot(): ByteArray =
+        byteArrayOf(OPCODE_SYSTEM_COMMAND, SYSTEM_COMMAND_REBOOT)
 
     enum class BrightnessTarget(val mask: Byte) {
         BOTH(0x03),
@@ -43,10 +52,6 @@ object G1Packets {
         RIGHT(0x02),
     }
 
-    enum class RebootMode(val code: Byte) {
-        NORMAL(0x00),
-        SAFE(0x01),
-    }
 }
 
 sealed class G1Inbound {
