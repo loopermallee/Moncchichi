@@ -430,6 +430,17 @@ class DeviceManager(
             is G1ReplyParser.Parsed.Mode -> {
                 recordTelemetry(G1TelemetryEvent("DEVICE", "[MODE]", parsed.name))
             }
+            is G1ReplyParser.Parsed.Ack -> {
+                val status = if (parsed.success) "✅" else "❌"
+                val seq = parsed.sequence?.let { " seq=${"0x%04X".format(it)}" } ?: ""
+                recordTelemetry(
+                    G1TelemetryEvent(
+                        "DEVICE",
+                        "[ACK]",
+                        "$status op=0x${"%02X".format(parsed.op)}$seq"
+                    )
+                )
+            }
             is G1ReplyParser.Parsed.Unknown -> {
                 val hex = parsed.frame.joinToString("") { byte -> "%02X".format(byte) }
                 recordTelemetry(
