@@ -6,6 +6,13 @@ import kotlin.text.Charsets
 /**
  * Minimal G1 protocol helpers used by the in-app Data Console.
  */
+object G1Uuids {
+    val service = BluetoothConstants.UART_SERVICE_UUID
+    val writeCharacteristic = BluetoothConstants.UART_WRITE_CHARACTERISTIC_UUID
+    val notifyCharacteristic = BluetoothConstants.UART_READ_CHARACTERISTIC_UUID
+    val clientConfig = BluetoothConstants.CCCD_UUID
+}
+
 object G1Packets {
     private val textPacketBuilder = SendTextPacketBuilder()
 
