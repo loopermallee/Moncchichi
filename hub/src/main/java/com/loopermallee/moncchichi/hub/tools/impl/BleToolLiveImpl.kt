@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import com.loopermallee.moncchichi.bluetooth.BluetoothConstants
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
+import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1Packets
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
@@ -234,7 +235,7 @@ class BleToolLiveImpl(
         return connected
     }
 
-    private fun updateInventory(device: BluetoothScanner.DiscoveredDevice) {
+    private fun updateInventory(device: DiscoveredDevice) {
         val now = System.currentTimeMillis()
         val descriptor = describeDevice(device.name, device.address)
         cacheDescriptor(device.address, descriptor)
