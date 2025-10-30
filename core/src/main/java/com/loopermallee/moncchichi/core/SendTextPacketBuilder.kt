@@ -109,12 +109,15 @@ class SendTextPacketBuilder {
 }
 
 object EvenAiScreenStatus {
+    private fun combine(context: SendTextPacketBuilder.ScreenContext) =
+        SendTextPacketBuilder.ScreenStatus.combine(context)
+
     val AUTOMATIC: SendTextPacketBuilder.ScreenStatus =
-        SendTextPacketBuilder.ScreenStatus.EvenAI.Automatic
+        combine(SendTextPacketBuilder.ScreenContext.EvenAiAutomatic)
     val AUTOMATIC_COMPLETE: SendTextPacketBuilder.ScreenStatus =
-        SendTextPacketBuilder.ScreenStatus.EvenAI.AutomaticComplete
+        combine(SendTextPacketBuilder.ScreenContext.EvenAiAutomaticComplete)
     val MANUAL: SendTextPacketBuilder.ScreenStatus =
-        SendTextPacketBuilder.ScreenStatus.EvenAI.Manual
+        combine(SendTextPacketBuilder.ScreenContext.EvenAiManual)
     val NETWORK_ERROR: SendTextPacketBuilder.ScreenStatus =
-        SendTextPacketBuilder.ScreenStatus.EvenAI.NetworkError
+        combine(SendTextPacketBuilder.ScreenContext.EvenAiNetworkError)
 }
