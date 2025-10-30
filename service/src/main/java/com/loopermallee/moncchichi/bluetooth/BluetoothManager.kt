@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.loopermallee.moncchichi.core.BleNameParser
 import java.util.Locale
 
 private const val TAG = "BluetoothManager"
@@ -469,6 +470,10 @@ internal class BluetoothManager(
             Log.w(TAG, "Pair ${window.key.token} discovered but could not resolve both lenses; ignoring")
             return
         }
+        Log.i(
+            TAG,
+            "[PAIR] Matched headset token ${window.key.token} with L=${leftObservation.id.mac}, R=${rightObservation.id.mac}",
+        )
         if (!pendingPairConnections.add(window.key)) {
             return
         }
@@ -508,52 +513,35 @@ internal class BluetoothManager(
 
     private fun derivePairKey(result: ScanResult): PairKey? {
         val name = result.device.name ?: return null
-        if (!name.startsWith(BluetoothConstants.DEVICE_PREFIX)) {
+        if (!name.startsWith(BluetoothConstants.DEVICE_PREFIX, ignoreCase = true)) {
             return null
         }
-        val rawToken = name.removePrefix(BluetoothConstants.DEVICE_PREFIX).trim()
-        if (rawToken.isEmpty()) {
-            return null
+        val token = BleNameParser.derivePairToken(name).ifBlank {
+            result.device.address.uppercase(Locale.US)
         }
-        val withoutSide = dropTrailingSideSuffix(rawToken)
-        val sanitized = withoutSide
-            .split('_', '-', ' ')
-            .firstOrNull { it.isNotEmpty() }
-            ?: withoutSide
-        if (sanitized.isEmpty()) {
-            return null
-        }
-        val normalized = sanitized.uppercase(Locale.US)
-        val token = normalized.ifEmpty { result.device.address }
+        val lens = BleNameParser.inferLensSide(name)
+        Log.i(
+            TAG,
+            "[PAIR] Token=$token | Side=${lens.toLogLabel()} | MAC=${result.device.address}",
+        )
         return PairKey(token)
-    }
-
-    private fun dropTrailingSideSuffix(token: String): String {
-        val trimmed = token.trim()
-        val lower = trimmed.lowercase(Locale.US)
-        return when {
-            lower.endsWith("_l") || lower.endsWith("-l") || lower.endsWith(" l") ->
-                trimmed.dropLast(2).trimEnd('_', '-', ' ')
-            lower.endsWith("_r") || lower.endsWith("-r") || lower.endsWith(" r") ->
-                trimmed.dropLast(2).trimEnd('_', '-', ' ')
-            lower.endsWith(" left") || lower.endsWith("left") ->
-                trimmed.removeSuffix("left").trimEnd('_', '-', ' ')
-            lower.endsWith(" right") || lower.endsWith("right") ->
-                trimmed.removeSuffix("right").trimEnd('_', '-', ' ')
-            else -> trimmed
-        }
     }
 
     private fun inferSide(name: String?): LensSide? {
         if (name.isNullOrEmpty()) {
             return null
         }
-        val lower = name.lowercase(Locale.US)
-        return when {
-            lower.endsWith("_l") || lower.endsWith("-l") || lower.endsWith(" left") || lower.endsWith("left") -> LensSide.LEFT
-            lower.endsWith("_r") || lower.endsWith("-r") || lower.endsWith(" right") || lower.endsWith("right") -> LensSide.RIGHT
-            else -> null
+        return when (BleNameParser.inferLensSide(name)) {
+            BleNameParser.Lens.LEFT -> LensSide.LEFT
+            BleNameParser.Lens.RIGHT -> LensSide.RIGHT
+            BleNameParser.Lens.UNKNOWN -> null
         }
+    }
+
+    private fun BleNameParser.Lens.toLogLabel(): String = when (this) {
+        BleNameParser.Lens.LEFT -> "L"
+        BleNameParser.Lens.RIGHT -> "R"
+        BleNameParser.Lens.UNKNOWN -> "?"
     }
 
     private fun updateHeadsetDiscovery(window: PairCorrelationWindow) {
