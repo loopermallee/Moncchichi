@@ -1,7 +1,9 @@
 package com.loopermallee.moncchichi.core
 
+import com.loopermallee.moncchichi.core.crc.Crc32Xz
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.min
 import kotlin.text.Charsets
 
 // bluetooth device name ---------------------------------------------------------------------------
@@ -23,6 +25,9 @@ enum class OutgoingPacketType(val label: String) {
     SEND_AI_RESULT("SEND_AI_RESULT"),                                                         // x4E
     SEND_HEARTBEAT("SEND_HEARTBEAT"),                                                         // x25
     MIC_CONTROL("MIC_CONTROL"),                                                              // x0E
+    SEND_BMP_DATA("SEND_BMP_DATA"),                                                          // x15
+    SEND_BMP_TERMINATOR("SEND_BMP_TERMINATOR"),                                              // x20
+    SEND_BMP_CRC("SEND_BMP_CRC"),                                                            // x16
     ;
     override fun toString() = label
 }
@@ -178,6 +183,58 @@ class MicControlPacket(enabled: Boolean) : OutgoingPacket(
     OutgoingPacketType.MIC_CONTROL,
     byteArrayOf(0x0E, if (enabled) 0x01 else 0x00)
 )
+
+// bmp/image frames --------------------------------------------------------------------------------
+
+class BmpPacketBuilder(
+    private val chunkSize: Int = DATA_CHUNK_SIZE,
+    private val addressPrefix: ByteArray = ADDRESS_PREFIX,
+) {
+    init {
+        require(chunkSize > 0) { "chunkSize must be positive" }
+    }
+
+    fun buildFrames(imageBytes: ByteArray): List<ByteArray> {
+        if (imageBytes.isEmpty()) {
+            return emptyList()
+        }
+        val frames = mutableListOf<ByteArray>()
+        var offset = 0
+        var sequence = 0
+        while (offset < imageBytes.size) {
+            val end = min(offset + chunkSize, imageBytes.size)
+            val slice = imageBytes.copyOfRange(offset, end)
+            val header = if (sequence == 0) {
+                byteArrayOf(OPCODE_BMP, sequence.toByte()) + addressPrefix
+            } else {
+                byteArrayOf(OPCODE_BMP, sequence.toByte())
+            }
+            frames += header + slice
+            offset = end
+            sequence = (sequence + 1) and 0xFF
+        }
+        return frames
+    }
+
+    fun buildTerminator(): ByteArray = TERMINATOR.copyOf()
+
+    fun buildCrcFrame(imageBytes: ByteArray): ByteArray {
+        val crcInput = ByteArray(addressPrefix.size + imageBytes.size)
+        addressPrefix.copyInto(crcInput)
+        imageBytes.copyInto(crcInput, destinationOffset = addressPrefix.size)
+        val crcValue = Crc32Xz.compute(crcInput)
+        val crcBytes = Crc32Xz.toBigEndianBytes(crcValue)
+        return byteArrayOf(OPCODE_CRC) + crcBytes
+    }
+
+    companion object {
+        private const val OPCODE_BMP: Byte = 0x15
+        private const val OPCODE_CRC: Byte = 0x16
+        private val TERMINATOR: ByteArray = byteArrayOf(0x20, 0x0D, 0x0E)
+        private val ADDRESS_PREFIX: ByteArray = byteArrayOf(0x00, 0x1C, 0x00, 0x00)
+        const val DATA_CHUNK_SIZE: Int = 194
+    }
+}
 
 // incoming ////////////////////////////////////////////////////////////////////////////////////////
 

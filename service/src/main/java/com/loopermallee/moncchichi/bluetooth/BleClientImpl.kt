@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import com.loopermallee.moncchichi.core.BmpPacketBuilder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,6 +54,14 @@ class BleClientImpl(initialState: LensState) : BleClient {
                 rssi = ready.lastSeenRssi,
             ),
         )
+        return true
+    }
+
+    override suspend fun sendImage(imageBytes: ByteArray): Boolean {
+        BmpPacketBuilder().apply {
+            buildFrames(imageBytes)
+            buildCrcFrame(imageBytes)
+        }
         return true
     }
 
