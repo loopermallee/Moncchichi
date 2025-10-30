@@ -136,7 +136,7 @@ class G1 {
         if(left.sendRequestForResponse(
                 SendTextPacket(
                     singleStringPage,
-                    1,
+                    0,
                     1
                 )
             ) == null) {
@@ -145,7 +145,7 @@ class G1 {
         if(right.sendRequestForResponse(
                 SendTextPacket(
                     singleStringPage,
-                    1,
+                    0,
                     1
                 )
             ) == null) {

@@ -189,11 +189,10 @@ class DeviceManager(
         val frames = pagination.toByteArrays(chunkCapacity)
         val totalPages = frames.size.coerceAtLeast(1)
         for ((index, bytes) in frames.withIndex()) {
-            val page = index + 1
-            val hasMorePages = page < totalPages
+            val hasMorePages = index < totalPages - 1
             val status = determineEvenAiStatus(hasMorePages)
             val frame = textPacketBuilder.buildSendText(
-                currentPage = page,
+                currentPage = index,
                 totalPages = totalPages,
                 screenStatus = status,
                 textBytes = bytes,

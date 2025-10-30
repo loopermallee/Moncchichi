@@ -38,7 +38,7 @@ object G1Packets {
         val totalPages = frames.size.coerceAtLeast(1)
         return frames.mapIndexed { index, bytes ->
             textPacketBuilder.buildSendText(
-                currentPage = index + 1,
+                currentPage = index,
                 totalPages = totalPages,
                 screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
                 textBytes = bytes,

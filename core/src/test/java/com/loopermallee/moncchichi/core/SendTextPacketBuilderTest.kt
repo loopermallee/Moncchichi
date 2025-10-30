@@ -11,14 +11,14 @@ class SendTextPacketBuilderTest {
         val payload = "Hello".encodeToByteArray()
 
         val frame = builder.buildSendText(
-            currentPage = 3,
-            totalPages = 5,
+            currentPage = 0,
+            totalPages = 4,
             screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
             textBytes = payload,
         )
 
-        assertEquals(3, frame[7].toUByte().toInt())
-        assertEquals(5, frame[8].toUByte().toInt())
+        assertEquals(0, frame[7].toUByte().toInt())
+        assertEquals(4, frame[8].toUByte().toInt())
     }
 
     @Test
@@ -26,13 +26,13 @@ class SendTextPacketBuilderTest {
         val builder = SendTextPacketBuilder()
 
         val first = builder.buildSendText(
-            currentPage = 1,
+            currentPage = 0,
             totalPages = 2,
             screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
             textBytes = "Page1".encodeToByteArray(),
         )
         val second = builder.buildSendText(
-            currentPage = 2,
+            currentPage = 1,
             totalPages = 2,
             screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
             textBytes = "Page2".encodeToByteArray(),
