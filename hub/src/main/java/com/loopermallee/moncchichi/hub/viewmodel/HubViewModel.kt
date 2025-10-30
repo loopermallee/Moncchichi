@@ -33,6 +33,11 @@ import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
 import com.loopermallee.moncchichi.hub.tools.ScanResult
 import com.loopermallee.moncchichi.hub.tools.TtsTool
+import com.loopermallee.moncchichi.hub.ui.scanner.LensChipState
+import com.loopermallee.moncchichi.hub.ui.scanner.LensConnectionPhase
+import com.loopermallee.moncchichi.hub.ui.scanner.PairingProgress
+import com.loopermallee.moncchichi.hub.ui.scanner.ScanBannerState
+import com.loopermallee.moncchichi.hub.ui.scanner.ScanStage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -145,7 +150,10 @@ class HubViewModel(
     fun post(event: AppEvent) = viewModelScope.launch {
         when (event) {
             is AppEvent.StartScan -> startScanFlow()
-            is AppEvent.StopScan -> ble.stopScan()
+            is AppEvent.StopScan -> {
+                ble.stopScan()
+                clearScanningState()
+            }
             is AppEvent.Connect -> connectFlow(event.deviceId)
             is AppEvent.Disconnect -> disconnectFlow()
             is AppEvent.SendBleCommand -> commandFlow(event.command)
@@ -172,6 +180,7 @@ class HubViewModel(
         val connectLaunched = AtomicBoolean(false)
         val discoveries = mutableMapOf<String, PairDiscovery>()
         val timeoutJobs = mutableMapOf<String, Job>()
+        val countdowns = mutableMapOf<String, Int>()
 
         _state.update { st ->
             st.copy(
@@ -184,14 +193,22 @@ class HubViewModel(
                     firmwareVersion = null,
                     signalRssi = null,
                     connectionState = "Scanning for headsets…",
-                )
+                ),
+                scanBanner = ScanBannerState(
+                    stage = ScanStage.Searching,
+                    headline = "Scanning for headsets",
+                    supporting = "Looking for both left and right lenses nearby.",
+                    showSpinner = true,
+                    tip = "The G1 has left and right radios – we’ll connect to both automatically.",
+                ),
+                pairingProgress = emptyMap(),
             )
         }
         updateDeviceStatus(state.value.device)
 
         ble.scanDevices { result ->
             viewModelScope.launch {
-                handleScanResult(result, connectLaunched, discoveries, timeoutJobs)
+                handleScanResult(result, connectLaunched, discoveries, timeoutJobs, countdowns)
             }
         }
     }
@@ -201,6 +218,7 @@ class HubViewModel(
         connectLaunched: AtomicBoolean,
         discoveries: MutableMap<String, PairDiscovery>,
         timeoutJobs: MutableMap<String, Job>,
+        countdowns: MutableMap<String, Int>,
     ) {
         val lens = result.lens
         val pairToken = result.pairToken
@@ -216,7 +234,14 @@ class HubViewModel(
                             isConnected = false,
                             connectionState = "Connecting…",
                             signalRssi = result.rssi,
-                        )
+                        ),
+                        scanBanner = ScanBannerState(
+                            stage = ScanStage.Connecting,
+                            headline = "Connecting to ${result.name ?: "headset"}",
+                            supporting = "Establishing links to both lenses…",
+                            showSpinner = true,
+                        ),
+                        pairingProgress = emptyMap(),
                     )
                 }
                 updateDeviceStatus(state.value.device)
@@ -236,26 +261,17 @@ class HubViewModel(
 
         val waitingLens = discovery.missingLens()
         val displayName = discovery.displayName() ?: result.name ?: "headset"
-        val connectionState = when (waitingLens) {
-            null -> "Discovered both lenses – connecting…"
-            else -> "Found ${lens.readable()} lens – waiting for ${waitingLens.readable()}"
-        }
-
-        _state.update { st ->
-            st.copy(
-                device = st.device.copy(
-                    name = displayName,
-                    id = discovery.primaryId(),
-                    isConnected = false,
-                    signalRssi = discovery.strongestRssi(),
-                    connectionState = connectionState,
-                )
-            )
-        }
-        updateDeviceStatus(state.value.device)
 
         if (waitingLens == null) {
             timeoutJobs.remove(pairToken)?.cancel()
+            countdowns.remove(pairToken)
+            updatePairingProgress(
+                token = pairToken,
+                discovery = discovery,
+                waitingLens = null,
+                remainingSeconds = null,
+                stageOverride = ScanStage.Connecting,
+            )
             if (connectLaunched.compareAndSet(false, true)) {
                 val label = displayName.ifBlank { "headset" }
                 hubAddLog("[SCAN] $label ready – attempting dual connect")
@@ -263,46 +279,35 @@ class HubViewModel(
                     st.copy(
                         device = st.device.copy(
                             connectionState = "Connecting to $label…",
-                        )
+                        ),
+                        scanBanner = ScanBannerState(
+                            stage = ScanStage.Connecting,
+                            headline = "Connecting to $label",
+                            supporting = "Pairing both lenses now…",
+                            showSpinner = true,
+                        ),
                     )
                 }
                 updateDeviceStatus(state.value.device)
                 ble.stopScan()
                 val connectId = discovery.primaryId() ?: result.id
+                hubAddLog("[SCAN] Connecting companion lens links")
                 connectFlow(connectId)
             }
             return
         }
 
+        val remainingSeconds = countdowns.getOrPut(pairToken) { secondsForTimeout() }
+        updatePairingProgress(pairToken, discovery, waitingLens, remainingSeconds)
+
         if (wasNewLens && timeoutJobs.containsKey(pairToken).not()) {
-            timeoutJobs[pairToken] = viewModelScope.launch {
-                try {
-                    delay(PAIR_DISCOVERY_TIMEOUT_MS)
-                    val pending = discoveries[pairToken]
-                    if (!connectLaunched.get() && pending?.isComplete() != true) {
-                        val missing = pending?.missingLens()
-                        val missingLabel = missing?.readable() ?: "companion"
-                        val pendingLabel = pending?.displayName()
-                        val label = pendingLabel?.ifBlank { "headset" } ?: displayName.ifBlank { "headset" }
-                        hubAddLog("[SCAN] Timeout waiting for $missingLabel lens of $label – pairing deferred")
-                        _state.update { st ->
-                            st.copy(
-                                device = st.device.copy(
-                                    name = pendingLabel ?: displayName,
-                                    id = pending?.primaryId(),
-                                    isConnected = false,
-                                    signalRssi = pending?.strongestRssi(),
-                                    connectionState = "Timed out waiting for $missingLabel lens",
-                                )
-                            )
-                        }
-                        updateDeviceStatus(state.value.device)
-                        ble.stopScan()
-                    }
-                } finally {
-                    timeoutJobs.remove(pairToken)
-                }
-            }
+            timeoutJobs[pairToken] = launchCountdownJob(
+                pairToken = pairToken,
+                discoveries = discoveries,
+                connectLaunched = connectLaunched,
+                countdowns = countdowns,
+                timeoutJobs = timeoutJobs,
+            )
         }
     }
 
@@ -340,6 +345,327 @@ class HubViewModel(
         Lens.RIGHT -> "right"
     }
 
+    private fun secondsForTimeout(): Int = (PAIR_DISCOVERY_TIMEOUT_MS / 1000).toInt()
+
+    private fun launchCountdownJob(
+        pairToken: String,
+        discoveries: MutableMap<String, PairDiscovery>,
+        connectLaunched: AtomicBoolean,
+        countdowns: MutableMap<String, Int>,
+        timeoutJobs: MutableMap<String, Job>,
+    ): Job = viewModelScope.launch {
+        try {
+            var remaining = countdowns[pairToken] ?: secondsForTimeout()
+            while (remaining >= 0 && isActive) {
+                val pending = discoveries[pairToken] ?: break
+                if (pending.isComplete() || connectLaunched.get()) {
+                    break
+                }
+                countdowns[pairToken] = remaining
+                updatePairingProgress(pairToken, pending, pending.missingLens(), remaining)
+                delay(1_000)
+                remaining--
+            }
+            countdowns.remove(pairToken)
+            val pending = discoveries[pairToken] ?: return@launch
+            if (pending.isComplete() || connectLaunched.get()) {
+                return@launch
+            }
+            handlePairTimeout(pairToken, pending, pending.missingLens())
+        } finally {
+            countdowns.remove(pairToken)
+            timeoutJobs.remove(pairToken)
+        }
+    }
+
+    private suspend fun handlePairTimeout(
+        pairToken: String,
+        pending: PairDiscovery,
+        missing: Lens?,
+    ) {
+        val missingLabel = missing?.readable() ?: "companion"
+        val label = pending.displayName()?.ifBlank { "headset" } ?: "headset"
+        val tip = tipForMissingLens(missing)
+        hubAddLog("[SCAN] Timeout waiting for $missingLabel lens of $label – pairing deferred")
+        updatePairingProgress(
+            token = pairToken,
+            discovery = pending,
+            waitingLens = missing,
+            remainingSeconds = 0,
+            stageOverride = ScanStage.Timeout,
+            tipOverride = tip,
+            timedOutLens = missing,
+        )
+        _state.update { st ->
+            st.copy(
+                device = st.device.copy(
+                    name = pending.displayName() ?: st.device.name,
+                    id = pending.primaryId(),
+                    isConnected = false,
+                    signalRssi = pending.strongestRssi(),
+                    connectionState = "Timed out waiting for $missingLabel lens",
+                )
+            )
+        }
+        updateDeviceStatus(state.value.device)
+        ble.stopScan()
+    }
+
+    private fun updatePairingProgress(
+        token: String,
+        discovery: PairDiscovery,
+        waitingLens: Lens?,
+        remainingSeconds: Int?,
+        stageOverride: ScanStage? = null,
+        tipOverride: String? = null,
+        timedOutLens: Lens? = null,
+    ) {
+        val displayName = discovery.displayName() ?: "G1 headset"
+        val stage = stageOverride ?: when {
+            discovery.isComplete() -> ScanStage.Ready
+            waitingLens == null -> ScanStage.LensDetected
+            else -> ScanStage.WaitingForCompanion
+        }
+        val banner = buildBannerState(
+            stage = stage,
+            displayName = displayName,
+            waitingLens = waitingLens,
+            remainingSeconds = remainingSeconds,
+            tip = tipOverride,
+        )
+        val candidateIds = buildSet {
+            add(token.lowercase(Locale.US))
+            discovery.primaryId()?.let { add(it.lowercase(Locale.US)) }
+            discovery.ids.values.forEach { id -> add(id.lowercase(Locale.US)) }
+            val name = displayName.lowercase(Locale.US)
+            if (name.isNotBlank()) add(name)
+        }
+        val leftChip = buildLensChip(
+            lens = Lens.LEFT,
+            discovery = discovery,
+            waitingLens = waitingLens,
+            remainingSeconds = remainingSeconds,
+            stage = stage,
+            timedOutLens = timedOutLens,
+            tipOverride = tipOverride,
+        )
+        val rightChip = buildLensChip(
+            lens = Lens.RIGHT,
+            discovery = discovery,
+            waitingLens = waitingLens,
+            remainingSeconds = remainingSeconds,
+            stage = stage,
+            timedOutLens = timedOutLens,
+            tipOverride = tipOverride,
+        )
+        _state.update { st ->
+            val updatedDevice = st.device.copy(
+                name = displayName,
+                id = discovery.primaryId() ?: st.device.id,
+                isConnected = false,
+                signalRssi = discovery.strongestRssi(),
+                connectionState = connectionStateLabel(stage, waitingLens, remainingSeconds),
+            )
+            val progress = st.pairingProgress.toMutableMap()
+            progress[token] = PairingProgress(
+                token = token,
+                displayName = displayName,
+                stage = stage,
+                countdownSeconds = remainingSeconds,
+                leftChip = leftChip,
+                rightChip = rightChip,
+                tip = tipOverride,
+                candidateIds = candidateIds,
+            )
+            st.copy(
+                device = updatedDevice,
+                scanBanner = banner,
+                pairingProgress = progress,
+            )
+        }
+        updateDeviceStatus(state.value.device)
+    }
+
+    private fun buildBannerState(
+        stage: ScanStage,
+        displayName: String,
+        waitingLens: Lens?,
+        remainingSeconds: Int?,
+        tip: String?,
+    ): ScanBannerState {
+        val label = displayName.ifBlank { "headset" }
+        return when (stage) {
+            ScanStage.Searching -> ScanBannerState(
+                stage = stage,
+                headline = "Scanning for headsets",
+                supporting = "Looking for both left and right lenses nearby.",
+                showSpinner = true,
+                tip = tip,
+            )
+
+            ScanStage.LensDetected, ScanStage.WaitingForCompanion -> {
+                val missingLabel = waitingLens?.readable() ?: "companion"
+                val countdownText = remainingSeconds?.let { " — ${it}s left" } ?: ""
+                ScanBannerState(
+                    stage = stage,
+                    headline = "Waiting for $missingLabel lens",
+                    supporting = "Found ${waitingLens?.opposite()?.readable() ?: "a"} lens for $label$countdownText.",
+                    countdownSeconds = remainingSeconds,
+                    showSpinner = true,
+                    tip = tip ?: tipForMissingLens(waitingLens),
+                )
+            }
+
+            ScanStage.Connecting -> ScanBannerState(
+                stage = stage,
+                headline = "Connecting to $label",
+                supporting = "Pairing both lenses now…",
+                showSpinner = true,
+                tip = tip,
+            )
+
+            ScanStage.Ready -> ScanBannerState(
+                stage = stage,
+                headline = "Both lenses detected",
+                supporting = "Preparing to connect to $label…",
+                showSpinner = true,
+                tip = tip,
+            )
+
+            ScanStage.Timeout -> ScanBannerState(
+                stage = stage,
+                headline = "Missing lens",
+                supporting = "Timed out waiting for the ${waitingLens?.readable() ?: "companion"} lens.",
+                countdownSeconds = remainingSeconds,
+                isWarning = true,
+                showSpinner = false,
+                tip = tip ?: tipForMissingLens(waitingLens),
+            )
+
+            ScanStage.Completed -> ScanBannerState(
+                stage = stage,
+                headline = "Both lenses ready",
+                supporting = "Connected to $label.",
+                showSpinner = false,
+                tip = tip,
+            )
+
+            ScanStage.Idle -> ScanBannerState()
+        }
+    }
+
+    private fun buildLensChip(
+        lens: Lens,
+        discovery: PairDiscovery,
+        waitingLens: Lens?,
+        remainingSeconds: Int?,
+        stage: ScanStage,
+        timedOutLens: Lens?,
+        tipOverride: String?,
+    ): LensChipState {
+        val titleBase = if (lens == Lens.LEFT) "Left" else "Right"
+        val detected = discovery.ids.containsKey(lens)
+        val rssi = discovery.rssis[lens]
+        val name = discovery.names[lens]
+        val detailParts = buildList {
+            if (!name.isNullOrBlank()) add(name)
+            rssi?.let { add("Signal ${it} dBm") }
+        }
+        val detail = detailParts.joinToString(" • ")
+        return when {
+            timedOutLens == lens -> LensChipState(
+                title = "$titleBase retry needed",
+                status = LensConnectionPhase.Timeout,
+                detail = tipOverride ?: "Keep the case open and tap retry.",
+                isWarning = true,
+            )
+
+            detected && stage == ScanStage.Connecting -> LensChipState(
+                title = "$titleBase detected",
+                status = LensConnectionPhase.Connecting,
+                detail = detail.ifBlank { "Linking…" },
+            )
+
+            detected && (stage == ScanStage.Ready || stage == ScanStage.Completed) -> LensChipState(
+                title = "$titleBase connected",
+                status = LensConnectionPhase.Connected,
+                detail = detail.ifBlank { "Ready" },
+            )
+
+            detected -> LensChipState(
+                title = "$titleBase detected",
+                status = LensConnectionPhase.Connecting,
+                detail = detail.ifBlank { "Identified" },
+            )
+
+            waitingLens == lens -> {
+                val searchingDetail = buildString {
+                    append("Searching…")
+                    if (remainingSeconds != null) {
+                        append(" ${remainingSeconds}s left")
+                    }
+                }
+                LensChipState(
+                    title = "$titleBase searching",
+                    status = LensConnectionPhase.Searching,
+                    detail = searchingDetail,
+                )
+            }
+
+            else -> LensChipState(
+                title = "$titleBase idle",
+                status = LensConnectionPhase.Idle,
+                detail = "Waiting for signal",
+            )
+        }
+    }
+
+    private fun connectionStateLabel(
+        stage: ScanStage,
+        waitingLens: Lens?,
+        remainingSeconds: Int?,
+    ): String = when (stage) {
+        ScanStage.WaitingForCompanion, ScanStage.LensDetected -> {
+            val missingLabel = waitingLens?.readable() ?: "companion"
+            val suffix = remainingSeconds?.let { " – ${it}s left" } ?: ""
+            "Waiting for $missingLabel lens$suffix"
+        }
+
+        ScanStage.Connecting -> "Connecting…"
+        ScanStage.Timeout -> {
+            val missingLabel = waitingLens?.readable() ?: "companion"
+            "Timed out waiting for $missingLabel lens"
+        }
+        ScanStage.Completed -> "CONNECTED"
+        ScanStage.Ready -> "Preparing to connect"
+        ScanStage.Searching -> "Scanning for headsets…"
+        ScanStage.Idle -> state.value.device.connectionState ?: "Idle"
+    }
+
+    private fun tipForMissingLens(lens: Lens?): String = when (lens) {
+        Lens.LEFT -> "Keep the case open and wake the left lens."
+        Lens.RIGHT -> "Cycle power on the right lens and keep it near the hub."
+        null -> "Ensure both lenses are awake and advertising."
+    }
+
+    private fun Lens.opposite(): Lens = when (this) {
+        Lens.LEFT -> Lens.RIGHT
+        Lens.RIGHT -> Lens.LEFT
+    }
+
+    private fun clearScanningState() {
+        _state.update { st ->
+            if (st.scanBanner.stage == ScanStage.Idle && st.pairingProgress.isEmpty()) {
+                st
+            } else {
+                st.copy(
+                    scanBanner = ScanBannerState(),
+                    pairingProgress = emptyMap(),
+                )
+            }
+        }
+    }
+
     private suspend fun connectFlow(deviceId: String) = hubLog("Connecting…") {
         val ok = ble.connect(deviceId)
         _state.update { st ->
@@ -357,17 +683,29 @@ class HubViewModel(
         }
         updateDeviceStatus(state.value.device)
         if (ok) {
-            val label = "Connected to ${state.value.device.name ?: "My G1"}"
-            hubAddLog(label)
+            val connectedName = state.value.device.name ?: "My G1"
+            hubAddLog("Connected to $connectedName")
+            _state.update { st ->
+                st.copy(
+                    scanBanner = ScanBannerState(
+                        stage = ScanStage.Completed,
+                        headline = "Both lenses ready",
+                        supporting = "Connected to $connectedName.",
+                    ),
+                    pairingProgress = emptyMap(),
+                )
+            }
             refreshDeviceVitals()
         } else {
             hubAddLog("Connection failed")
+            clearScanningState()
         }
     }
 
     private suspend fun disconnectFlow() = hubLog("Disconnecting…") {
         ble.disconnect()
         _state.update { it.copy(device = DeviceInfo()) }
+        clearScanningState()
         updateDeviceStatus(state.value.device)
         hubAddLog("Disconnected")
         lastTelemetryDigest = null

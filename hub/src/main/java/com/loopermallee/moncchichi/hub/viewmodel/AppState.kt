@@ -1,6 +1,8 @@
 package com.loopermallee.moncchichi.hub.viewmodel
 
 import com.loopermallee.moncchichi.core.model.ChatMessage
+import com.loopermallee.moncchichi.hub.ui.scanner.PairingProgress
+import com.loopermallee.moncchichi.hub.ui.scanner.ScanBannerState
 
 data class DeviceInfo(
     val name: String? = null,
@@ -28,5 +30,7 @@ data class AppState(
     val device: DeviceInfo = DeviceInfo(),
     val consoleLines: List<String> = emptyList(),
     val permissionsOk: Boolean = false,
-    val assistant: AssistantPane = AssistantPane()
+    val assistant: AssistantPane = AssistantPane(),
+    val scanBanner: ScanBannerState = ScanBannerState(),
+    val pairingProgress: Map<String, PairingProgress> = emptyMap(),
 )
