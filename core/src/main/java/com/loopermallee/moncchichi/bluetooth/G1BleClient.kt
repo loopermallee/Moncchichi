@@ -21,11 +21,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.jvm.Volatile
 
 /**
  * Thin wrapper around [G1BleUartClient] that adds command sequencing and ACK tracking.
@@ -43,6 +45,12 @@ class G1BleClient(
         CoroutineScope,
     ) -> G1BleUartClient = ::G1BleUartClient,
 ) {
+
+    private companion object {
+        private const val MTU_COMMAND_ACK_TIMEOUT_MS = 1_500L
+        private const val MTU_COMMAND_RETRY_COUNT = 3
+        private const val MTU_COMMAND_RETRY_DELAY_MS = 200L
+    }
 
     enum class ConnectionState {
         DISCONNECTED,
@@ -79,12 +87,16 @@ class G1BleClient(
     private val writeMutex = Mutex()
     private var monitorJob: Job? = null
     private var rssiJob: Job? = null
+    private var mtuJob: Job? = null
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionInitiated = false
 
     private val lastAckTimestamp = AtomicLong(0L)
+    private val mtuCommandMutex = Mutex()
+    @Volatile private var lastAckedMtu: Int? = null
 
     fun connect() {
+        lastAckedMtu = null
         monitorJob?.cancel()
         monitorJob = scope.launch {
             uartClient.connectionState.collectLatest { connection ->
@@ -102,6 +114,35 @@ class G1BleClient(
             uartClient.rssi.collectLatest { value ->
                 _state.value = _state.value.copy(rssi = value)
             }
+        }
+
+        mtuJob?.cancel()
+        mtuJob = scope.launch {
+            var previousMtu: Int? = null
+            var previousArmed = false
+            combine(
+                uartClient.connectionState,
+                uartClient.mtu,
+                uartClient.notificationsArmed,
+            ) { state, mtu, armed -> Triple(state, mtu, armed) }
+                .collect { (connectionState, mtu, armed) ->
+                    if (connectionState != G1BleUartClient.ConnectionState.CONNECTED) {
+                        lastAckedMtu = null
+                        previousMtu = null
+                        previousArmed = false
+                        return@collect
+                    }
+
+                    val mtuChanged = previousMtu?.let { it != mtu } ?: false
+                    val armedBecameTrue = armed && !previousArmed
+                    previousMtu = mtu
+                    previousArmed = armed
+
+                    val alreadyAcked = lastAckedMtu == mtu
+                    if (!alreadyAcked && (mtuChanged || armedBecameTrue)) {
+                        sendMtuCommandIfNeeded(mtu)
+                    }
+                }
         }
 
         scope.launch {
@@ -136,12 +177,15 @@ class G1BleClient(
     fun close() {
         monitorJob?.cancel()
         rssiJob?.cancel()
+        mtuJob?.cancel()
         monitorJob = null
         rssiJob = null
+        mtuJob = null
         unregisterBondReceiver()
         connectionInitiated = false
         ackSignals.trySend(Unit) // unblock waiters before closing
         uartClient.close()
+        lastAckedMtu = null
         _state.value = State(
             status = ConnectionState.DISCONNECTED,
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
@@ -190,6 +234,33 @@ class G1BleClient(
     fun readRemoteRssi(): Boolean = uartClient.readRemoteRssi()
 
     fun lastAckTimestamp(): Long = lastAckTimestamp.get()
+
+    private suspend fun sendMtuCommandIfNeeded(mtu: Int) {
+        if (lastAckedMtu == mtu) return
+        mtuCommandMutex.withLock {
+            if (lastAckedMtu == mtu) return
+            logger.i(label, "${tt()} Sending MTU command mtu=$mtu")
+            val acked = sendMtuCommand(mtu)
+            if (acked) {
+                lastAckedMtu = mtu
+                logger.i(label, "${tt()} MTU command acknowledged mtu=$mtu")
+            } else {
+                logger.w(label, "${tt()} MTU command failed mtu=$mtu")
+            }
+        }
+    }
+
+    private suspend fun sendMtuCommand(mtu: Int): Boolean {
+        val mtuLow = (mtu and 0xFF).toByte()
+        val mtuHigh = ((mtu ushr 8) and 0xFF).toByte()
+        val payload = byteArrayOf(0x4D, mtuLow, mtuHigh)
+        return sendCommand(
+            payload = payload,
+            ackTimeoutMs = MTU_COMMAND_ACK_TIMEOUT_MS,
+            retries = MTU_COMMAND_RETRY_COUNT,
+            retryDelayMs = MTU_COMMAND_RETRY_DELAY_MS,
+        )
+    }
 
     private fun ByteArray.toAudioFrameOrNull(): AudioFrame? {
         if (isEmpty()) return null

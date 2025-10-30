@@ -68,6 +68,8 @@ class G1BleUartClient(
     val rssi: StateFlow<Int?> = _rssi.asStateFlow()
     private val _mtu = MutableStateFlow(DEFAULT_ATT_MTU)
     val mtu: StateFlow<Int> = _mtu.asStateFlow()
+    private val _notificationsArmed = MutableStateFlow(false)
+    val notificationsArmed: StateFlow<Boolean> = _notificationsArmed.asStateFlow()
 
     private val notifyArmed = AtomicBoolean(false)
     private val connecting = AtomicBoolean(false)
@@ -88,6 +90,7 @@ class G1BleUartClient(
         warmupSentOnce = false
         warmupPending = false
         notifyArmed.set(false)
+        _notificationsArmed.value = false
         try {
             gatt?.close()
         } catch (_: Throwable) {
@@ -203,6 +206,7 @@ class G1BleUartClient(
                 logger("[SERVICE][CCCD] Write status=$status value=${d.value?.toHex()}")
                 val armed = status == BluetoothGatt.GATT_SUCCESS
                 notifyArmed.set(armed)
+                _notificationsArmed.value = armed
                 if (armed) {
                     maybeSendWarmupAfterNotifyArmed()
                 }
