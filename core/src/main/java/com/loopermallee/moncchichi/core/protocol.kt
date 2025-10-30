@@ -166,6 +166,8 @@ class SendTextPacket(
     builder.buildSendText(
         currentPage = pageNumber,
         totalPages = maxPages,
+        totalPackageCount = 1,
+        currentPackageIndex = 0,
         screenStatus = screenStatus,
         textBytes = text.encodeToByteArray(),
     )

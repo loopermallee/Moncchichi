@@ -2,6 +2,7 @@ package com.loopermallee.moncchichi.bluetooth
 
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
+import kotlin.math.min
 import kotlin.text.Charsets
 
 /**
@@ -34,16 +35,46 @@ object G1Packets {
         val mtuCapacity = BluetoothConstants.payloadCapacityFor(BluetoothConstants.DESIRED_MTU)
         val chunkCapacity = (mtuCapacity - SendTextPacketBuilder.HEADER_SIZE).coerceAtLeast(1)
         val pagination = textPaginator.paginate(text)
-        val frames = pagination.toByteArrays(chunkCapacity)
-        val totalPages = frames.size.coerceAtLeast(1)
-        return frames.mapIndexed { index, bytes ->
-            textPacketBuilder.buildSendText(
-                currentPage = index,
-                totalPages = totalPages,
-                screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
-                textBytes = bytes,
-            )
+        val packets = pagination.packets
+        val totalPages = packets.size.coerceAtLeast(1)
+        fun chunkPacket(bytes: ByteArray): List<ByteArray> {
+            if (bytes.isEmpty()) return listOf(ByteArray(0))
+            val chunks = mutableListOf<ByteArray>()
+            var offset = 0
+            while (offset < bytes.size) {
+                val end = min(bytes.size, offset + chunkCapacity)
+                chunks += bytes.copyOfRange(offset, end)
+                offset = end
+            }
+            return chunks
         }
+        val frames = mutableListOf<ByteArray>()
+        if (packets.isEmpty()) {
+            frames += textPacketBuilder.buildSendText(
+                currentPage = 0,
+                totalPages = totalPages,
+                totalPackageCount = 1,
+                currentPackageIndex = 0,
+                screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+                textBytes = ByteArray(0),
+            )
+        } else {
+            packets.forEachIndexed { pageIndex, packet ->
+                val chunks = chunkPacket(packet.toByteArray())
+                val totalPackages = chunks.size.coerceAtLeast(1)
+                chunks.forEachIndexed { packageIndex, chunk ->
+                    frames += textPacketBuilder.buildSendText(
+                        currentPage = pageIndex,
+                        totalPages = totalPages,
+                        totalPackageCount = totalPackages,
+                        currentPackageIndex = packageIndex,
+                        screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+                        textBytes = chunk,
+                    )
+                }
+            }
+        }
+        return frames
     }
 
     fun ping(): ByteArray {

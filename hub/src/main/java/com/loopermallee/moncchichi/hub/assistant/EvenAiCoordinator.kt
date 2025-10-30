@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.math.min
 
 private const val TAG = "EvenAiCoordinator"
 private const val MAX_AUDIO_DURATION_MS = 30_000L
@@ -188,27 +189,59 @@ class EvenAiCoordinator(
         val mtuCapacity = BluetoothConstants.payloadCapacityFor(BluetoothConstants.DESIRED_MTU)
         val chunkCapacity = (mtuCapacity - SendTextPacketBuilder.HEADER_SIZE).coerceAtLeast(1)
         val pagination = textPaginator.paginate(truncated)
-        val frames = pagination.toByteArrays(chunkCapacity)
-        val totalPages = frames.size.coerceAtLeast(1)
+        val packets = pagination.packets
+        val totalPages = packets.size.coerceAtLeast(1)
+        data class PageFrame(
+            val pageIndex: Int,
+            val totalPages: Int,
+            val packageIndex: Int,
+            val totalPackages: Int,
+            val bytes: ByteArray,
+        )
+        fun chunkPacket(bytes: ByteArray): List<ByteArray> {
+            if (bytes.isEmpty()) return listOf(ByteArray(0))
+            val chunks = mutableListOf<ByteArray>()
+            var offset = 0
+            while (offset < bytes.size) {
+                val end = min(bytes.size, offset + chunkCapacity)
+                chunks += bytes.copyOfRange(offset, end)
+                offset = end
+            }
+            return chunks
+        }
+        val frames = mutableListOf<PageFrame>()
+        if (packets.isEmpty()) {
+            frames += PageFrame(0, totalPages, 0, 1, ByteArray(0))
+        } else {
+            packets.forEachIndexed { pageIndex, packet ->
+                val chunks = chunkPacket(packet.toByteArray())
+                val totalPackages = chunks.size.coerceAtLeast(1)
+                chunks.forEachIndexed { packageIndex, chunk ->
+                    frames += PageFrame(pageIndex, totalPages, packageIndex, totalPackages, chunk)
+                }
+            }
+        }
         setNetworkError(isError)
-        frames.forEachIndexed { index, bytes ->
-            val hasMorePages = index < totalPages - 1
+        frames.forEachIndexed { index, frame ->
+            val hasMoreFrames = index < frames.lastIndex
             val state = snapshotEvenAiState()
             val status = when {
                 state.networkError -> EvenAiScreenStatus.NETWORK_ERROR
                 state.manualMode -> EvenAiScreenStatus.MANUAL
-                hasMorePages -> EvenAiScreenStatus.AUTOMATIC
+                hasMoreFrames -> EvenAiScreenStatus.AUTOMATIC
                 else -> EvenAiScreenStatus.AUTOMATIC_COMPLETE
             }
             val payload = textBuilder.buildSendText(
-                currentPage = index,
-                totalPages = totalPages,
+                currentPage = frame.pageIndex,
+                totalPages = frame.totalPages,
+                totalPackageCount = frame.totalPackages,
+                currentPackageIndex = frame.packageIndex,
                 screenStatus = status,
-                textBytes = bytes,
+                textBytes = frame.bytes,
             )
             val sent = service.send(payload, MoncchichiBleService.Target.Both)
             if (!sent) {
-                log("Failed to send AI response frame ${index + 1}/$totalPages")
+                log("Failed to send AI response frame ${index + 1}/${frames.size}")
                 setNetworkError(true)
                 return
             }

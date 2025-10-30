@@ -642,22 +642,54 @@ internal class DeviceManager(
         val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
         val pagination = textPaginator.paginate(message)
-        val frames = pagination.toByteArrays(chunkCapacity)
-        val totalPages = frames.size.coerceAtLeast(1)
-        for ((index, bytes) in frames.withIndex()) {
-            val hasMorePages = index < totalPages - 1
-            val status = if (hasMorePages) {
+        val packets = pagination.packets
+        val totalPages = packets.size.coerceAtLeast(1)
+        data class PageFrame(
+            val pageIndex: Int,
+            val totalPages: Int,
+            val packageIndex: Int,
+            val totalPackages: Int,
+            val bytes: ByteArray,
+        )
+        fun chunkPacket(bytes: ByteArray): List<ByteArray> {
+            if (bytes.isEmpty()) return listOf(ByteArray(0))
+            val chunks = mutableListOf<ByteArray>()
+            var offset = 0
+            while (offset < bytes.size) {
+                val end = min(bytes.size, offset + chunkCapacity)
+                chunks += bytes.copyOfRange(offset, end)
+                offset = end
+            }
+            return chunks
+        }
+        val frames = mutableListOf<PageFrame>()
+        if (packets.isEmpty()) {
+            frames += PageFrame(0, totalPages, 0, 1, ByteArray(0))
+        } else {
+            packets.forEachIndexed { pageIndex, packet ->
+                val chunks = chunkPacket(packet.toByteArray())
+                val totalPackages = chunks.size.coerceAtLeast(1)
+                chunks.forEachIndexed { packageIndex, chunk ->
+                    frames += PageFrame(pageIndex, totalPages, packageIndex, totalPackages, chunk)
+                }
+            }
+        }
+        frames.forEachIndexed { index, frame ->
+            val hasMoreFrames = index < frames.lastIndex
+            val status = if (hasMoreFrames) {
                 EvenAiScreenStatus.AUTOMATIC
             } else {
                 EvenAiScreenStatus.AUTOMATIC_COMPLETE
             }
-            val frame = textPacketBuilder.buildSendText(
-                currentPage = index,
-                totalPages = totalPages,
+            val payload = textPacketBuilder.buildSendText(
+                currentPage = frame.pageIndex,
+                totalPages = frame.totalPages,
+                totalPackageCount = frame.totalPackages,
+                currentPackageIndex = frame.packageIndex,
                 screenStatus = status,
-                textBytes = bytes,
+                textBytes = frame.bytes,
             )
-            if (!sendCommand(frame)) {
+            if (!sendCommand(payload)) {
                 return false
             }
         }

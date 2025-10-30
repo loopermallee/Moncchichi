@@ -16,18 +16,22 @@ class SendTextPacketBuilder {
     fun buildSendText(
         currentPage: Int,
         totalPages: Int,
+        totalPackageCount: Int,
+        currentPackageIndex: Int,
         screenStatus: ScreenStatus = DEFAULT_SCREEN_STATUS,
         textBytes: ByteArray,
     ): ByteArray {
         val safePage = currentPage.coerceIn(0, 0xFF)
         val safeTotal = totalPages.coerceIn(0, 0xFF)
+        val safeTotalPackages = totalPackageCount.coerceIn(0, 0xFF)
+        val safePackageIndex = currentPackageIndex.coerceIn(0, 0xFF)
         val status = screenStatus.toByte()
 
         val payload = ByteArray(HEADER_SIZE + textBytes.size)
         payload[0] = COMMAND
         payload[1] = nextSequence()
-        payload[2] = FLAGS
-        payload[3] = RESERVED
+        payload[2] = safeTotalPackages.toByte()
+        payload[3] = safePackageIndex.toByte()
         payload[4] = status
         payload[5] = RESERVED
         payload[6] = RESERVED
@@ -103,7 +107,6 @@ class SendTextPacketBuilder {
         const val HEADER_SIZE = 9
         val DEFAULT_SCREEN_STATUS: ScreenStatus = ScreenStatus.DEFAULT
         private val COMMAND: Byte = 0x4E
-        private val FLAGS: Byte = 0x01
         private val RESERVED: Byte = 0x00
     }
 }
