@@ -744,12 +744,18 @@ internal class DeviceManager(
         }
     }
 
+    private suspend fun sendAndAwaitAck(
+        payload: ByteArray,
+        opcode: Byte,
+        timeoutMs: Long = IMAGE_ACK_TIMEOUT_MS,
+    ): Boolean = sendAndAwaitAck(payload, opcode, timeoutMs, ::sendCommand)
+
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     internal suspend fun sendAndAwaitAck(
         payload: ByteArray,
         opcode: Byte,
         timeoutMs: Long = IMAGE_ACK_TIMEOUT_MS,
-        commandSender: suspend (ByteArray) -> Boolean = ::sendCommand,
+        commandSender: suspend (ByteArray) -> Boolean,
     ): Boolean = coroutineScope {
         if (payload.isEmpty()) {
             return@coroutineScope false
