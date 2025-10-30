@@ -10,7 +10,10 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.loopermallee.moncchichi.core.ui.components.StatusBarView
 import com.loopermallee.moncchichi.core.ui.state.AssistantConnInfo
 import com.loopermallee.moncchichi.core.ui.state.DeviceConnInfo
@@ -24,6 +27,7 @@ import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class HubFragment : Fragment() {
     private var bluetoothReceiver: BluetoothStateReceiver? = null
@@ -57,6 +61,12 @@ class HubFragment : Fragment() {
         val deviceBattery = view.findViewById<TextView>(R.id.text_device_battery)
         val deviceFirmware = view.findViewById<TextView>(R.id.text_device_firmware)
         val deviceSignal = view.findViewById<TextView>(R.id.text_device_signal)
+        val scanCard = view.findViewById<MaterialCardView>(R.id.card_scan_status)
+        val scanProgress = view.findViewById<CircularProgressIndicator>(R.id.progress_scan)
+        val scanStage = view.findViewById<TextView>(R.id.text_scan_stage)
+        val scanCountdown = view.findViewById<TextView>(R.id.text_scan_countdown)
+        val scanMessage = view.findViewById<TextView>(R.id.text_scan_message)
+        val scanHint = view.findViewById<TextView>(R.id.text_scan_hint)
         val btnPair = view.findViewById<MaterialButton>(R.id.btn_pair)
         val btnDisconnect = view.findViewById<MaterialButton>(R.id.btn_disconnect)
         val btnPing = view.findViewById<MaterialButton>(R.id.btn_ping)
@@ -77,6 +87,32 @@ class HubFragment : Fragment() {
                     assistant to device
                 }.collectLatest { (assistant, device) ->
                     statusBar.render(assistant, device)
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                vm.state.collectLatest { appState ->
+                    val scan = appState.scan
+                    scanCard.isVisible = scan.isVisible
+                    scanStage.text = scan.title
+                    scanProgress.isVisible = scan.showSpinner
+                    val showCountdown = scan.showCountdown && scan.countdownSeconds > 0
+                    scanCountdown.isVisible = showCountdown
+                    if (showCountdown) {
+                        scanCountdown.text = String.format(Locale.US, "%02ds left", scan.countdownSeconds)
+                    } else {
+                        scanCountdown.text = ""
+                    }
+                    val message = scan.message
+                    scanMessage.isVisible = message.isNotBlank()
+                    scanMessage.text = message
+                    val hintText = scan.hint
+                    scanHint.isVisible = !hintText.isNullOrBlank()
+                    if (!hintText.isNullOrBlank()) {
+                        scanHint.text = hintText
+                    }
                 }
             }
         }

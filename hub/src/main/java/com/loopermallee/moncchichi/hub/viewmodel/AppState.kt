@@ -24,9 +24,30 @@ data class AssistantPane(
     val isThinking: Boolean = false,
 )
 
+enum class ScanStage {
+    Idle,
+    Searching,
+    WaitingForCompanion,
+    BothDetected,
+    Connected,
+    Timeout,
+}
+
+data class ScanStatus(
+    val isVisible: Boolean = false,
+    val stage: ScanStage = ScanStage.Idle,
+    val title: String = "",
+    val message: String = "",
+    val hint: String? = null,
+    val countdownSeconds: Int = 0,
+    val showCountdown: Boolean = false,
+    val showSpinner: Boolean = false,
+)
+
 data class AppState(
     val device: DeviceInfo = DeviceInfo(),
     val consoleLines: List<String> = emptyList(),
     val permissionsOk: Boolean = false,
-    val assistant: AssistantPane = AssistantPane()
+    val assistant: AssistantPane = AssistantPane(),
+    val scan: ScanStatus = ScanStatus(),
 )

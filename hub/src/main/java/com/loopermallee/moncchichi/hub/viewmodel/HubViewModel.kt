@@ -31,7 +31,9 @@ import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
 import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
+import com.loopermallee.moncchichi.hub.tools.ScanResult
 import com.loopermallee.moncchichi.hub.tools.TtsTool
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,9 +47,11 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.text.RegexOption
 
 private const val MAX_HISTORY = 60
 private const val MAX_OFFLINE_QUEUE = 10
+private const val SCAN_PAIR_TIMEOUT_SECONDS = 10
 
 class HubViewModel(
     private val router: IntentRouter,
@@ -62,6 +66,8 @@ class HubViewModel(
     private val telemetry: BleTelemetryRepository,
 ) : ViewModel() {
     private var lastTelemetryDigest: String? = null
+    private var scanCountdownJob: Job? = null
+    private var activeScanContext: PairScanContext? = null
 
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -141,7 +147,13 @@ class HubViewModel(
     fun post(event: AppEvent) = viewModelScope.launch {
         when (event) {
             is AppEvent.StartScan -> startScanFlow()
-            is AppEvent.StopScan -> ble.stopScan()
+            is AppEvent.StopScan -> {
+                scanCountdownJob?.cancel()
+                scanCountdownJob = null
+                activeScanContext = null
+                ble.stopScan()
+                hideScanBanner()
+            }
             is AppEvent.Connect -> connectFlow(event.deviceId)
             is AppEvent.Disconnect -> disconnectFlow()
             is AppEvent.SendBleCommand -> commandFlow(event.command)
@@ -165,7 +177,35 @@ class HubViewModel(
     }
 
     private suspend fun startScanFlow() = hubLog("Scanning…") {
-        var connected = false
+        scanCountdownJob?.cancel()
+        scanCountdownJob = null
+        hideScanBanner()
+        val context = PairScanContext()
+        activeScanContext = context
+        context.remainingSeconds = SCAN_PAIR_TIMEOUT_SECONDS
+        publishScanState(context, forceStage = ScanStage.Searching)
+
+        val countdownJob = viewModelScope.launch {
+            val jobRef = coroutineContext[Job]
+            var remaining = SCAN_PAIR_TIMEOUT_SECONDS
+            while (isActive && remaining >= 0) {
+                context.remainingSeconds = remaining
+                publishScanState(context)
+                delay(1_000)
+                remaining--
+            }
+            if (!context.isComplete) {
+                context.remainingSeconds = 0
+                publishScanState(context, timedOut = true)
+                runCatching { ble.stopScan() }
+                activeScanContext = null
+            }
+            if (scanCountdownJob == jobRef) {
+                scanCountdownJob = null
+            }
+        }
+        scanCountdownJob = countdownJob
+
         ble.scanDevices { d ->
             _state.update {
                 it.copy(
@@ -177,11 +217,37 @@ class HubViewModel(
                 )
             }
             updateDeviceStatus(state.value.device)
-            hubAddLog("[SCAN] ${d.name ?: "Unnamed"} (${d.id}) rssi=${d.rssi}")
-            if (!connected) {
-                connected = true
-                viewModelScope.launch { ble.stopScan() }
+
+            val metadata = mapScanResult(d)
+            val accepted = context.registerDetection(metadata)
+            if (accepted) {
+                publishScanState(context)
+            }
+
+            val stageLabel = if (accepted) {
+                state.value.scan.title.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+            val logMessage = buildString {
+                append("[SCAN] ${d.name ?: "Unnamed"} (${d.id}) rssi=${d.rssi}")
+                if (!metadata.displayName.isNullOrBlank()) {
+                    append(" • ${metadata.displayName}")
+                }
+                stageLabel?.let { append(" • $it") }
+            }
+            hubAddLog(logMessage)
+
+            if (accepted && !context.connectionLaunched) {
+                context.connectionLaunched = true
                 viewModelScope.launch { connectFlow(d.id) }
+            }
+
+            if (accepted && context.isComplete) {
+                scanCountdownJob?.cancel()
+                scanCountdownJob = null
+                publishScanState(context, forceStage = ScanStage.BothDetected)
+                viewModelScope.launch { ble.stopScan() }
             }
         }
     }
@@ -205,9 +271,11 @@ class HubViewModel(
         if (ok) {
             val label = "Connected to ${state.value.device.name ?: "My G1"}"
             hubAddLog(label)
+            markScanConnected()
             refreshDeviceVitals()
         } else {
             hubAddLog("Connection failed")
+            markScanFailed()
         }
     }
 
@@ -252,6 +320,211 @@ class HubViewModel(
             lastTelemetryDigest = digest
         }
     }
+
+    private fun markScanConnected() {
+        val context = activeScanContext ?: return
+        scanCountdownJob?.cancel()
+        scanCountdownJob = null
+        context.remainingSeconds = 0
+        publishScanState(context, forceStage = ScanStage.Connected)
+        activeScanContext = null
+        viewModelScope.launch { ble.stopScan() }
+    }
+
+    private fun markScanFailed() {
+        val context = activeScanContext ?: return
+        scanCountdownJob?.cancel()
+        scanCountdownJob = null
+        context.remainingSeconds = 0
+        publishScanState(context, forceStage = ScanStage.Timeout)
+        activeScanContext = null
+    }
+
+    private fun hideScanBanner() {
+        _state.update { it.copy(scan = ScanStatus()) }
+    }
+
+    private fun publishScanState(
+        context: PairScanContext,
+        timedOut: Boolean = false,
+        forceStage: ScanStage? = null,
+    ) {
+        val stage = forceStage ?: when {
+            timedOut -> ScanStage.Timeout
+            context.isComplete -> ScanStage.BothDetected
+            context.leftDetected || context.rightDetected -> ScanStage.WaitingForCompanion
+            else -> ScanStage.Searching
+        }
+        val countdown = context.remainingSeconds.coerceAtLeast(0)
+        val awaitingLabel = context.awaitingLabel()
+        val displayName = context.displayName()
+        val title = when (stage) {
+            ScanStage.Searching -> "Scanning for headset"
+            ScanStage.WaitingForCompanion -> when {
+                context.leftDetected && !context.rightDetected -> "Left lens detected"
+                context.rightDetected && !context.leftDetected -> "Right lens detected"
+                else -> "Lens detected"
+            }
+            ScanStage.BothDetected -> "Both lenses ready"
+            ScanStage.Connected -> "Headset connected"
+            ScanStage.Timeout -> "Companion lens not found"
+            ScanStage.Idle -> ""
+        }
+        val message = when (stage) {
+            ScanStage.Searching -> "Looking for both lenses nearby…"
+            ScanStage.WaitingForCompanion -> "Searching for the $awaitingLabel — ${countdown}s left"
+            ScanStage.BothDetected -> "We found both lenses for $displayName. Finalizing the connection…"
+            ScanStage.Connected -> "$displayName is connected and ready."
+            ScanStage.Timeout -> "We couldn’t locate the $awaitingLabel. Keep the case open and try again."
+            ScanStage.Idle -> ""
+        }
+        val hint = when (stage) {
+            ScanStage.WaitingForCompanion -> "Keep the case open so the $awaitingLabel can wake up."
+            ScanStage.Timeout -> "Keep the case open or power cycle the missing lens, then restart the scan."
+            else -> null
+        }
+        val showCountdown = stage == ScanStage.Searching || stage == ScanStage.WaitingForCompanion
+        val showSpinner = when (stage) {
+            ScanStage.Timeout, ScanStage.Connected, ScanStage.Idle -> false
+            else -> true
+        }
+        _state.update { current ->
+            current.copy(
+                scan = ScanStatus(
+                    isVisible = stage != ScanStage.Idle,
+                    stage = stage,
+                    title = title,
+                    message = message,
+                    hint = hint,
+                    countdownSeconds = countdown,
+                    showCountdown = showCountdown,
+                    showSpinner = showSpinner,
+                )
+            )
+        }
+    }
+
+    private data class PairScanContext(
+        var pairToken: String? = null,
+        var friendlyName: String? = null,
+        var leftDetected: Boolean = false,
+        var rightDetected: Boolean = false,
+        var remainingSeconds: Int = SCAN_PAIR_TIMEOUT_SECONDS,
+        var connectionLaunched: Boolean = false,
+    )
+
+    private enum class CompanionSide { LEFT, RIGHT, UNKNOWN }
+
+    private data class DetectionMetadata(
+        val pairToken: String,
+        val side: CompanionSide,
+        val displayName: String?,
+    )
+
+    private fun PairScanContext.registerDetection(metadata: DetectionMetadata): Boolean {
+        if (pairToken == null) {
+            pairToken = metadata.pairToken
+        }
+        if (pairToken != metadata.pairToken) {
+            return false
+        }
+        if (friendlyName.isNullOrBlank() && !metadata.displayName.isNullOrBlank()) {
+            friendlyName = metadata.displayName
+        }
+        when (metadata.side) {
+            CompanionSide.LEFT -> leftDetected = true
+            CompanionSide.RIGHT -> rightDetected = true
+            CompanionSide.UNKNOWN -> {
+                if (!leftDetected) {
+                    leftDetected = true
+                } else if (!rightDetected) {
+                    rightDetected = true
+                }
+            }
+        }
+        return true
+    }
+
+    private val PairScanContext.isComplete: Boolean
+        get() = leftDetected && rightDetected
+
+    private fun PairScanContext.displayName(): String {
+        val raw = when {
+            !friendlyName.isNullOrBlank() -> friendlyName
+            !pairToken.isNullOrBlank() -> pairToken
+            else -> null
+        }
+        return raw?.let(::formatDisplayName) ?: "your headset"
+    }
+
+    private fun PairScanContext.awaitingLabel(): String = when {
+        leftDetected && !rightDetected -> "right lens"
+        rightDetected && !leftDetected -> "left lens"
+        else -> "companion lens"
+    }
+
+    private fun mapScanResult(result: ScanResult): DetectionMetadata {
+        val rawName = result.name?.takeIf { it.isNotBlank() }
+        val sanitized = sanitizePairLabel(rawName)
+        val tokenSource = sanitized.ifBlank { rawName ?: result.id }
+        val normalizedToken = nonTokenRegex.replace(tokenSource.uppercase(Locale.US), "-").trim('-')
+        val token = normalizedToken.ifBlank { result.id.uppercase(Locale.US) }
+        val side = inferSide(rawName)
+        val displayName = sanitized.takeIf { it.isNotBlank() }?.let(::formatDisplayName)
+        return DetectionMetadata(pairToken = token, side = side, displayName = displayName)
+    }
+
+    private fun inferSide(label: String?): CompanionSide {
+        if (label.isNullOrBlank()) return CompanionSide.UNKNOWN
+        val lower = label.lowercase(Locale.US)
+        return when {
+            lower.startsWith("left ") || lower.startsWith("left-") || lower.startsWith("left_") -> CompanionSide.LEFT
+            lower.startsWith("right ") || lower.startsWith("right-") || lower.startsWith("right_") -> CompanionSide.RIGHT
+            lower.endsWith(" left") || lower.endsWith("-l") || lower.endsWith("_l") || lower.endsWith(" l") -> CompanionSide.LEFT
+            lower.endsWith(" right") || lower.endsWith("-r") || lower.endsWith("_r") || lower.endsWith(" r") -> CompanionSide.RIGHT
+            lower == "left" -> CompanionSide.LEFT
+            lower == "right" -> CompanionSide.RIGHT
+            else -> CompanionSide.UNKNOWN
+        }
+    }
+
+    private fun sanitizePairLabel(value: String?): String {
+        if (value.isNullOrBlank()) return ""
+        val withoutPrefix = stripSidePrefix(value.trim())
+        val withoutSuffix = stripSideSuffix(withoutPrefix)
+        return withoutSuffix.replace('_', ' ').replace('-', ' ').trim()
+    }
+
+    private fun stripSidePrefix(value: String): String {
+        val trimmed = value.trim()
+        val match = sidePrefixRegex.find(trimmed)
+        if (match != null && match.range.first == 0) {
+            val endIndex = min(trimmed.length, match.range.last + 1)
+            return trimmed.substring(endIndex).trimStart('-', '_', ' ', '\t')
+        }
+        return trimmed
+    }
+
+    private fun stripSideSuffix(value: String): String {
+        val trimmed = value.trim()
+        val match = sideSuffixRegex.find(trimmed)
+        if (match != null && match.range.last == trimmed.length - 1) {
+            return trimmed.substring(0, match.range.first).trimEnd('-', '_', ' ', '\t')
+        }
+        return trimmed
+    }
+
+    private fun formatDisplayName(raw: String): String {
+        val words = raw.replace('_', ' ').replace('-', ' ').split(' ').filter { it.isNotBlank() }
+        if (words.isEmpty()) return "G1 Headset"
+        return words.joinToString(" ") { word ->
+            word.replaceFirstChar { ch -> if (ch.isLowerCase()) ch.titlecase(Locale.US) else ch.toString() }
+        }
+    }
+
+    private val nonTokenRegex = Regex("[^A-Z0-9]+")
+    private val sidePrefixRegex = Regex("^(left|right)([-_\\s]+)?", RegexOption.IGNORE_CASE)
+    private val sideSuffixRegex = Regex("([-_\\s]+)?(left|right)$", RegexOption.IGNORE_CASE)
 
     private fun applyDeviceTelemetry(
         battery: Int?,
