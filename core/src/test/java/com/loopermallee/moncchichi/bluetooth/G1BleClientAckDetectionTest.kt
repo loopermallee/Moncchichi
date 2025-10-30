@@ -7,15 +7,15 @@ import kotlin.test.assertTrue
 class G1BleClientAckDetectionTest {
 
     @Test
-    fun `detectAck returns true for forward binary marker`() {
-        val payload = byteArrayOf(0x01, 0x02, 0xC9.toByte(), 0x04, 0x05)
+    fun `detectAck returns true for success ack with payload`() {
+        val payload = byteArrayOf(0x0E, 0xC9.toByte(), 0x01)
 
         assertTrue(payload.detectAck())
     }
 
     @Test
-    fun `detectAck returns true for reverse binary marker`() {
-        val payload = byteArrayOf(0x10, 0x04, 0xCA.toByte(), 0x20)
+    fun `detectAck returns true for failure ack`() {
+        val payload = byteArrayOf(0x1E, 0xCA.toByte())
 
         assertTrue(payload.detectAck())
     }
@@ -64,13 +64,13 @@ class G1BleClientAckDetectionTest {
 
     @Test
     fun `detectAck returns false for partial binary markers`() {
-        val onlyFirst = byteArrayOf(0xC9.toByte())
-        val onlySecond = byteArrayOf(0x04)
-        val mismatchedPair = byteArrayOf(0xC9.toByte(), 0x05)
+        val onlyOpcode = byteArrayOf(0x04)
+        val onlyStatus = byteArrayOf(0xC9.toByte())
+        val mismatchedStatus = byteArrayOf(0x04, 0x05)
 
-        assertFalse(onlyFirst.detectAck())
-        assertFalse(onlySecond.detectAck())
-        assertFalse(mismatchedPair.detectAck())
+        assertFalse(onlyOpcode.detectAck())
+        assertFalse(onlyStatus.detectAck())
+        assertFalse(mismatchedStatus.detectAck())
     }
 
     @Test
