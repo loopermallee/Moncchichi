@@ -13,6 +13,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.EvenAiScreenStatus
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
@@ -640,9 +641,9 @@ internal class DeviceManager(
             val page = index + 1
             val hasMorePages = page < totalPages
             val status = if (hasMorePages) {
-                SendTextPacketBuilder.ScreenStatus.EvenAi.Automatic
+                EvenAiScreenStatus.AUTOMATIC
             } else {
-                SendTextPacketBuilder.ScreenStatus.EvenAi.AutomaticComplete
+                EvenAiScreenStatus.AUTOMATIC_COMPLETE
             }
             val frame = textPacketBuilder.buildSendText(
                 currentPage = page,

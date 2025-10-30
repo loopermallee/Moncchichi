@@ -8,6 +8,7 @@ import android.bluetooth.le.ScanResult
 import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
+import com.loopermallee.moncchichi.core.EvenAiScreenStatus
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
@@ -484,10 +485,10 @@ class DeviceManager(
     private fun determineEvenAiStatus(hasMorePages: Boolean): SendTextPacketBuilder.ScreenStatus {
         val state = currentEvenAiState()
         return when {
-            state.hasError -> SendTextPacketBuilder.ScreenStatus.EvenAi.NetworkError
-            state.manualMode -> SendTextPacketBuilder.ScreenStatus.EvenAi.Manual
-            hasMorePages -> SendTextPacketBuilder.ScreenStatus.EvenAi.Automatic
-            else -> SendTextPacketBuilder.ScreenStatus.EvenAi.AutomaticComplete
+            state.hasError -> EvenAiScreenStatus.NETWORK_ERROR
+            state.manualMode -> EvenAiScreenStatus.MANUAL
+            hasMorePages -> EvenAiScreenStatus.AUTOMATIC
+            else -> EvenAiScreenStatus.AUTOMATIC_COMPLETE
         }
     }
 

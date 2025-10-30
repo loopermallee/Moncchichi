@@ -3,6 +3,7 @@ package com.loopermallee.moncchichi.hub.assistant
 import android.util.Log
 import com.loopermallee.moncchichi.bluetooth.BluetoothConstants
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import com.loopermallee.moncchichi.core.EvenAiScreenStatus
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
@@ -195,10 +196,10 @@ class EvenAiCoordinator(
             val hasMorePages = page < totalPages
             val state = snapshotEvenAiState()
             val status = when {
-                state.networkError -> SendTextPacketBuilder.ScreenStatus.EvenAi.NetworkError
-                state.manualMode -> SendTextPacketBuilder.ScreenStatus.EvenAi.Manual
-                hasMorePages -> SendTextPacketBuilder.ScreenStatus.EvenAi.Automatic
-                else -> SendTextPacketBuilder.ScreenStatus.EvenAi.AutomaticComplete
+                state.networkError -> EvenAiScreenStatus.NETWORK_ERROR
+                state.manualMode -> EvenAiScreenStatus.MANUAL
+                hasMorePages -> EvenAiScreenStatus.AUTOMATIC
+                else -> EvenAiScreenStatus.AUTOMATIC_COMPLETE
             }
             val payload = textBuilder.buildSendText(
                 currentPage = page,

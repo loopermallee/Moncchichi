@@ -107,3 +107,14 @@ class SendTextPacketBuilder {
         private val RESERVED: Byte = 0x00
     }
 }
+
+object EvenAiScreenStatus {
+    val AUTOMATIC: SendTextPacketBuilder.ScreenStatus =
+        SendTextPacketBuilder.ScreenStatus.EvenAi.Automatic
+    val AUTOMATIC_COMPLETE: SendTextPacketBuilder.ScreenStatus =
+        SendTextPacketBuilder.ScreenStatus.EvenAi.AutomaticComplete
+    val MANUAL: SendTextPacketBuilder.ScreenStatus =
+        SendTextPacketBuilder.ScreenStatus.EvenAi.Manual
+    val NETWORK_ERROR: SendTextPacketBuilder.ScreenStatus =
+        SendTextPacketBuilder.ScreenStatus.EvenAi.NetworkError
+}
