@@ -131,8 +131,19 @@ object G1ReplyParser {
     }
 
     private fun detectAck(frame: Frame): Parsed.Ack? {
-        val status = frame.status
-            ?: frame.payload.lastOrNull { it.toInt() != 0 }
+        frame.status?.let { statusByte ->
+            val success = when (statusByte) {
+                0xC9.toByte() -> true
+                0xCA.toByte() -> false
+                else -> return null
+            }
+            if (!success) {
+                Log.w(TAG, "Command 0x${frame.opcode.toString(16)} failed with status 0xCA")
+            }
+            return Parsed.Ack(frame.opcode, success, frame.sequence, frame.payload)
+        }
+
+        val status = frame.payload.lastOrNull { it.toInt() != 0 }
             ?: frame.raw.drop(1).lastOrNull { it.toInt() != 0 }
             ?: return null
         val success = when (status) {
@@ -149,8 +160,8 @@ object G1ReplyParser {
     private fun parseFrame(bytes: ByteArray): Frame? {
         if (bytes.isEmpty()) return null
         val opcode = bytes[0].toUnsignedInt()
-        val lengthByte = bytes.getOrNull(1)
-        if (lengthByte == null) {
+        val secondByte = bytes.getOrNull(1)
+        if (secondByte == null) {
             return Frame(
                 opcode = opcode,
                 length = null,
@@ -161,18 +172,28 @@ object G1ReplyParser {
             )
         }
 
-        if (bytes.size == 2) {
+        val remaining = (bytes.size - 2).coerceAtLeast(0)
+        val possibleLength = secondByte.toUnsignedInt()
+        val isStatusByte = secondByte == 0xC9.toByte() || secondByte == 0xCA.toByte()
+        val looksLikeStatus = isStatusByte || possibleLength > remaining
+
+        if (looksLikeStatus) {
+            val payload = if (remaining > 0) {
+                bytes.copyOfRange(2, bytes.size)
+            } else {
+                ByteArray(0)
+            }
             return Frame(
                 opcode = opcode,
                 length = null,
                 sequence = null,
-                payload = byteArrayOf(lengthByte),
-                status = lengthByte,
+                payload = payload,
+                status = secondByte,
                 raw = bytes,
             )
         }
 
-        val length = lengthByte.toUnsignedInt()
+        val length = possibleLength
 
         var payloadStart = 2
         var payloadLength = length
