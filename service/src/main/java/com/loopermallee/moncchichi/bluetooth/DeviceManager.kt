@@ -20,6 +20,7 @@ import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
 import com.loopermallee.moncchichi.core.ble.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -743,24 +744,42 @@ internal class DeviceManager(
         }
     }
 
-    private suspend fun sendAndAwaitAck(
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal suspend fun sendAndAwaitAck(
         payload: ByteArray,
         opcode: Byte,
         timeoutMs: Long = IMAGE_ACK_TIMEOUT_MS,
+        commandSender: suspend (ByteArray) -> Boolean = ::sendCommand,
     ): Boolean = coroutineScope {
         if (payload.isEmpty()) {
             return@coroutineScope false
         }
         val ack = async {
             withTimeoutOrNull(timeoutMs) {
-                incoming
+                val ackBytes = incoming
                     .filter { it.firstOrNull() == opcode }
                     .first { ackBytes ->
-                        ackBytes.getOrNull(1) == BluetoothConstants.ACK_SUCCESS
+                        when (ackBytes.getOrNull(1)) {
+                            BluetoothConstants.ACK_SUCCESS,
+                            BluetoothConstants.ACK_FAILURE -> true
+                            else -> false
+                        }
                     }
-            } != null
+                when (ackBytes.getOrNull(1)) {
+                    BluetoothConstants.ACK_SUCCESS -> true
+                    BluetoothConstants.ACK_FAILURE -> {
+                        val opcodeLabel = "0x%02X".format(opcode.toInt() and 0xFF)
+                        logger.w(
+                            TAG,
+                            "${tt()} sendAndAwaitAck: received failure ack for opcode $opcodeLabel",
+                        )
+                        false
+                    }
+                    else -> false
+                }
+            } ?: false
         }
-        val sent = sendCommand(payload)
+        val sent = commandSender(payload)
         if (!sent) {
             ack.cancel()
             return@coroutineScope false
