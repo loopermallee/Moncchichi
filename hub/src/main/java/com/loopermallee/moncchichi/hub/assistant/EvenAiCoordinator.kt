@@ -192,8 +192,7 @@ class EvenAiCoordinator(
         val totalPages = frames.size.coerceAtLeast(1)
         setNetworkError(isError)
         frames.forEachIndexed { index, bytes ->
-            val page = index + 1
-            val hasMorePages = page < totalPages
+            val hasMorePages = index < totalPages - 1
             val state = snapshotEvenAiState()
             val status = when {
                 state.networkError -> EvenAiScreenStatus.NETWORK_ERROR
@@ -202,7 +201,7 @@ class EvenAiCoordinator(
                 else -> EvenAiScreenStatus.AUTOMATIC_COMPLETE
             }
             val payload = textBuilder.buildSendText(
-                currentPage = page,
+                currentPage = index,
                 totalPages = totalPages,
                 screenStatus = status,
                 textBytes = bytes,
