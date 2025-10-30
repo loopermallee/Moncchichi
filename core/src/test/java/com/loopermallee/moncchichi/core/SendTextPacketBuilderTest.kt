@@ -13,6 +13,8 @@ class SendTextPacketBuilderTest {
         val frame = builder.buildSendText(
             currentPage = 0,
             totalPages = 4,
+            totalPackageCount = 1,
+            currentPackageIndex = 0,
             screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
             textBytes = payload,
         )
@@ -28,12 +30,16 @@ class SendTextPacketBuilderTest {
         val first = builder.buildSendText(
             currentPage = 0,
             totalPages = 2,
+            totalPackageCount = 1,
+            currentPackageIndex = 0,
             screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
             textBytes = "Page1".encodeToByteArray(),
         )
         val second = builder.buildSendText(
             currentPage = 1,
             totalPages = 2,
+            totalPackageCount = 1,
+            currentPackageIndex = 0,
             screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
             textBytes = "Page2".encodeToByteArray(),
         )
@@ -53,5 +59,42 @@ class SendTextPacketBuilderTest {
         assertEquals(0x41, complete.value)
         assertEquals(0x51, manual.value)
         assertEquals(0x61, error.value)
+    }
+
+    @Test
+    fun `package count metadata written for multi-frame pages`() {
+        val builder = SendTextPacketBuilder()
+
+        val first = builder.buildSendText(
+            currentPage = 0,
+            totalPages = 3,
+            totalPackageCount = 3,
+            currentPackageIndex = 0,
+            screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+            textBytes = "First".encodeToByteArray(),
+        )
+        val middle = builder.buildSendText(
+            currentPage = 0,
+            totalPages = 3,
+            totalPackageCount = 3,
+            currentPackageIndex = 1,
+            screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+            textBytes = "Second".encodeToByteArray(),
+        )
+        val last = builder.buildSendText(
+            currentPage = 0,
+            totalPages = 3,
+            totalPackageCount = 3,
+            currentPackageIndex = 2,
+            screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+            textBytes = "Third".encodeToByteArray(),
+        )
+
+        assertEquals(3, first[2].toUByte().toInt())
+        assertEquals(0, first[3].toUByte().toInt())
+        assertEquals(3, middle[2].toUByte().toInt())
+        assertEquals(1, middle[3].toUByte().toInt())
+        assertEquals(3, last[2].toUByte().toInt())
+        assertEquals(2, last[3].toUByte().toInt())
     }
 }
