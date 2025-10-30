@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.loopermallee.moncchichi.bluetooth.BluetoothConstants
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
@@ -12,6 +13,7 @@ import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1Packets
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+import com.loopermallee.moncchichi.core.BleNameParser
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.permissions.PermissionRequirements
 import com.loopermallee.moncchichi.hub.tools.BleTool
@@ -27,6 +29,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+
+private const val TAG = "BleToolLive"
 
 class BleToolLiveImpl(
     context: Context,
@@ -290,14 +294,16 @@ class BleToolLiveImpl(
     private fun describeDevice(name: String?, address: String): PairDescriptor {
         val trimmed = name?.trim().orEmpty()
         if (trimmed.isNotEmpty() && trimmed.startsWith(BluetoothConstants.DEVICE_PREFIX, ignoreCase = true)) {
-            val suffix = trimmed.substring(BluetoothConstants.DEVICE_PREFIX.length).trim()
-            val (base, slotFromSuffix) = parseSuffix(suffix)
-            val inferredSlot = slotFromSuffix ?: inferSlotFromName(trimmed)
-            val tokenBase = base.ifBlank { suffix }.ifBlank { address }
-            val token = evenToken(tokenBase)
-            return PairDescriptor(token, inferredSlot, isEvenPair = true)
+            val token = BleNameParser.derivePairToken(trimmed).ifBlank { address.uppercase(Locale.US) }
+            val lens = BleNameParser.inferLensSide(trimmed)
+            Log.i(TAG, "[PAIR] Token=$token | Side=${lens.toLogLabel()} | MAC=$address")
+            return PairDescriptor(token, lens.toSlot(), isEvenPair = true)
         }
-        val slot = inferSlotFromName(trimmed.takeIf { it.isNotEmpty() })
+        val lens = trimmed.takeIf { it.isNotEmpty() }?.let(BleNameParser::inferLensSide) ?: BleNameParser.Lens.UNKNOWN
+        val slot = lens.toSlot()
+        if (lens != BleNameParser.Lens.UNKNOWN) {
+            Log.i(TAG, "[PAIR] Token=${address.uppercase(Locale.US)} | Side=${lens.toLogLabel()} | MAC=$address")
+        }
         val token = address.uppercase(Locale.US)
         return PairDescriptor(token, slot, isEvenPair = false)
     }
@@ -322,62 +328,21 @@ class BleToolLiveImpl(
         return LensSlot.LEFT
     }
 
-    private fun parseSuffix(suffix: String): Pair<String, LensSlot?> {
-        var base = suffix
-        var slot: LensSlot? = null
-        val trimmed = suffix.trim()
-        val lower = trimmed.lowercase(Locale.US)
-        when {
-            lower.endsWith(" left") -> {
-                base = trimmed.dropLast(5)
-                slot = LensSlot.LEFT
-            }
-            lower.endsWith(" right") -> {
-                base = trimmed.dropLast(6)
-                slot = LensSlot.RIGHT
-            }
-            lower.endsWith("_l") || lower.endsWith("-l") || lower.endsWith(" l") -> {
-                base = trimmed.dropLast(2)
-                slot = LensSlot.LEFT
-            }
-            lower.endsWith("_r") || lower.endsWith("-r") || lower.endsWith(" r") -> {
-                base = trimmed.dropLast(2)
-                slot = LensSlot.RIGHT
-            }
-            lower.endsWith("left") -> {
-                base = trimmed.dropLast(4)
-                slot = LensSlot.LEFT
-            }
-            lower.endsWith("right") -> {
-                base = trimmed.dropLast(5)
-                slot = LensSlot.RIGHT
-            }
-        }
-        base = base.trimEnd('_', '-', ' ')
-        return base to slot
-    }
-
-    private fun inferSlotFromName(name: String?): LensSlot? {
-        val lower = name?.lowercase(Locale.US).orEmpty()
-        return when {
-            lower.contains("left") || lower.endsWith("_l") || lower.endsWith("-l") || lower.endsWith(" l") -> LensSlot.LEFT
-            lower.contains("right") || lower.endsWith("_r") || lower.endsWith("-r") || lower.endsWith(" r") -> LensSlot.RIGHT
-            else -> null
-        }
-    }
-
-    private fun evenToken(base: String): String {
-        val normalized = base.uppercase(Locale.US).replace(Regex("[^A-Z0-9]"), "")
-        return if (normalized.isNotEmpty()) {
-            "EVEN_G1_$normalized"
-        } else {
-            "EVEN_G1_${base.uppercase(Locale.US)}"
-        }
-    }
-
     private fun LensSlot.toLens(): Lens = when (this) {
         LensSlot.LEFT -> Lens.LEFT
         LensSlot.RIGHT -> Lens.RIGHT
+    }
+
+    private fun BleNameParser.Lens.toSlot(): LensSlot? = when (this) {
+        BleNameParser.Lens.LEFT -> LensSlot.LEFT
+        BleNameParser.Lens.RIGHT -> LensSlot.RIGHT
+        BleNameParser.Lens.UNKNOWN -> null
+    }
+
+    private fun BleNameParser.Lens.toLogLabel(): String = when (this) {
+        BleNameParser.Lens.LEFT -> "L"
+        BleNameParser.Lens.RIGHT -> "R"
+        BleNameParser.Lens.UNKNOWN -> "?"
     }
 
     private fun LensSlot.opposite(): LensSlot = when (this) {
