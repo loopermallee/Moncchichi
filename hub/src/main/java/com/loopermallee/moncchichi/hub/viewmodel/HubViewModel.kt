@@ -31,7 +31,9 @@ import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.DisplayTool
 import com.loopermallee.moncchichi.hub.tools.LlmTool
 import com.loopermallee.moncchichi.hub.tools.PermissionTool
+import com.loopermallee.moncchichi.hub.tools.ScanResult
 import com.loopermallee.moncchichi.hub.tools.TtsTool
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,11 +45,13 @@ import java.text.SimpleDateFormat
 import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
 
 private const val MAX_HISTORY = 60
 private const val MAX_OFFLINE_QUEUE = 10
+private const val PAIR_DISCOVERY_TIMEOUT_MS = 12_000L
 
 class HubViewModel(
     private val router: IntentRouter,
@@ -165,25 +169,175 @@ class HubViewModel(
     }
 
     private suspend fun startScanFlow() = hubLog("Scanning…") {
-        var connected = false
-        ble.scanDevices { d ->
-            _state.update {
-                it.copy(
-                    device = it.device.copy(
-                        name = d.name,
-                        id = d.id,
-                        isConnected = it.device.isConnected
-                    )
+        val connectLaunched = AtomicBoolean(false)
+        val discoveries = mutableMapOf<String, PairDiscovery>()
+        val timeoutJobs = mutableMapOf<String, Job>()
+
+        _state.update { st ->
+            st.copy(
+                device = st.device.copy(
+                    name = null,
+                    id = null,
+                    isConnected = false,
+                    glassesBattery = null,
+                    caseBattery = null,
+                    firmwareVersion = null,
+                    signalRssi = null,
+                    connectionState = "Scanning for headsets…",
                 )
-            }
-            updateDeviceStatus(state.value.device)
-            hubAddLog("[SCAN] ${d.name ?: "Unnamed"} (${d.id}) rssi=${d.rssi}")
-            if (!connected) {
-                connected = true
-                viewModelScope.launch { ble.stopScan() }
-                viewModelScope.launch { connectFlow(d.id) }
+            )
+        }
+        updateDeviceStatus(state.value.device)
+
+        ble.scanDevices { result ->
+            viewModelScope.launch {
+                handleScanResult(result, connectLaunched, discoveries, timeoutJobs)
             }
         }
+    }
+
+    private suspend fun handleScanResult(
+        result: ScanResult,
+        connectLaunched: AtomicBoolean,
+        discoveries: MutableMap<String, PairDiscovery>,
+        timeoutJobs: MutableMap<String, Job>,
+    ) {
+        val lens = result.lens
+        val pairToken = result.pairToken
+
+        if (lens == null) {
+            if (connectLaunched.compareAndSet(false, true)) {
+                hubAddLog("[SCAN] ${result.name ?: "Unnamed"} (${result.id}) rssi=${result.rssi}")
+                _state.update { st ->
+                    st.copy(
+                        device = st.device.copy(
+                            name = result.name,
+                            id = result.id,
+                            isConnected = false,
+                            connectionState = "Connecting…",
+                            signalRssi = result.rssi,
+                        )
+                    )
+                }
+                updateDeviceStatus(state.value.device)
+                ble.stopScan()
+                connectFlow(result.id)
+            }
+            return
+        }
+
+        val discovery = discoveries.getOrPut(pairToken) { PairDiscovery(pairToken) }
+        val wasNewLens = discovery.record(lens, result)
+
+        if (wasNewLens) {
+            val lensLabel = lens.readable()
+            hubAddLog("[SCAN] Found $lensLabel lens ${result.name ?: "Unnamed"} (${result.id}) rssi=${result.rssi}")
+        }
+
+        val waitingLens = discovery.missingLens()
+        val displayName = discovery.displayName() ?: result.name ?: "headset"
+        val connectionState = when (waitingLens) {
+            null -> "Discovered both lenses – connecting…"
+            else -> "Found ${lens.readable()} lens – waiting for ${waitingLens.readable()}"
+        }
+
+        _state.update { st ->
+            st.copy(
+                device = st.device.copy(
+                    name = displayName,
+                    id = discovery.primaryId(),
+                    isConnected = false,
+                    signalRssi = discovery.strongestRssi(),
+                    connectionState = connectionState,
+                )
+            )
+        }
+        updateDeviceStatus(state.value.device)
+
+        if (waitingLens == null) {
+            timeoutJobs.remove(pairToken)?.cancel()
+            if (connectLaunched.compareAndSet(false, true)) {
+                val label = displayName.ifBlank { "headset" }
+                hubAddLog("[SCAN] $label ready – attempting dual connect")
+                _state.update { st ->
+                    st.copy(
+                        device = st.device.copy(
+                            connectionState = "Connecting to $label…",
+                        )
+                    )
+                }
+                updateDeviceStatus(state.value.device)
+                ble.stopScan()
+                val connectId = discovery.primaryId() ?: result.id
+                connectFlow(connectId)
+            }
+            return
+        }
+
+        if (wasNewLens && timeoutJobs.containsKey(pairToken).not()) {
+            timeoutJobs[pairToken] = viewModelScope.launch {
+                try {
+                    delay(PAIR_DISCOVERY_TIMEOUT_MS)
+                    val pending = discoveries[pairToken]
+                    if (!connectLaunched.get() && pending?.isComplete() != true) {
+                        val missing = pending?.missingLens()
+                        val missingLabel = missing?.readable() ?: "companion"
+                        val pendingLabel = pending?.displayName()
+                        val label = pendingLabel?.ifBlank { "headset" } ?: displayName.ifBlank { "headset" }
+                        hubAddLog("[SCAN] Timeout waiting for $missingLabel lens of $label – pairing deferred")
+                        _state.update { st ->
+                            st.copy(
+                                device = st.device.copy(
+                                    name = pendingLabel ?: displayName,
+                                    id = pending?.primaryId(),
+                                    isConnected = false,
+                                    signalRssi = pending?.strongestRssi(),
+                                    connectionState = "Timed out waiting for $missingLabel lens",
+                                )
+                            )
+                        }
+                        updateDeviceStatus(state.value.device)
+                        ble.stopScan()
+                    }
+                } finally {
+                    timeoutJobs.remove(pairToken)
+                }
+            }
+        }
+    }
+
+    private data class PairDiscovery(
+        val token: String,
+        val ids: MutableMap<Lens, String> = mutableMapOf(),
+        val names: MutableMap<Lens, String?> = mutableMapOf(),
+        val rssis: MutableMap<Lens, Int> = mutableMapOf(),
+    ) {
+        fun record(lens: Lens, result: ScanResult): Boolean {
+            val isNew = ids.containsKey(lens).not()
+            ids[lens] = result.id
+            names[lens] = result.name
+            rssis[lens] = result.rssi
+            return isNew
+        }
+
+        fun missingLens(): Lens? = Lens.values().firstOrNull { !ids.containsKey(it) }
+
+        fun isComplete(): Boolean = missingLens() == null
+
+        fun primaryId(): String? = ids[Lens.LEFT] ?: ids[Lens.RIGHT]
+
+        fun displayName(): String? {
+            val raw = names.values.firstOrNull { !it.isNullOrBlank() }?.trim() ?: return null
+            val cleaned = raw.replace(Regex("\\s+(left|right)$", RegexOption.IGNORE_CASE), "").trim()
+            return cleaned.ifBlank { raw }
+        }
+
+        fun strongestRssi(): Int? = rssis.values.maxOrNull()
+    }
+
+    private fun Lens.readable(): String = when (this) {
+        Lens.LEFT -> "left"
+        Lens.RIGHT -> "right"
     }
 
     private suspend fun connectFlow(deviceId: String) = hubLog("Connecting…") {
