@@ -14,6 +14,11 @@ internal object BluetoothConstants {
     const val OPCODE_HEARTBEAT: Byte = 0x25
     const val OPCODE_SET_MTU: Byte = 0x4D
     const val OPCODE_SEND_TEXT: Byte = 0x4E
+    const val OPCODE_SEND_BMP: Byte = 0x15
+    const val OPCODE_BMP_CRC: Byte = 0x16
+    const val OPCODE_BMP_END: Byte = 0x20
+
+    const val ACK_SUCCESS: Byte = 0x00
 
     const val OPCODE_GLASSES_INFO: Byte = 0x2C
     val BATTERY_QUERY: ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, 0x01)

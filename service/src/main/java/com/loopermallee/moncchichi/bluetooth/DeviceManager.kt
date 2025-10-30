@@ -13,6 +13,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.BmpPacketBuilder
 import com.loopermallee.moncchichi.core.EvenAiScreenStatus
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
@@ -22,12 +23,15 @@ import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
@@ -46,6 +50,7 @@ import kotlin.concurrent.withLock
 private const val TAG = "DeviceManager"
 private const val MTU_COMMAND_MAX_RETRIES = 3
 private const val MTU_COMMAND_RETRY_DELAY_MS = 150L
+private const val IMAGE_ACK_TIMEOUT_MS = 3_000L
 
 internal class DeviceManager(
     private val context: Context,
@@ -113,6 +118,7 @@ internal class DeviceManager(
         preferences.getInt(KEY_RECONNECT_FAILURES, 0)
     private var notifyCallback: ((service: UUID, characteristic: UUID, value: ByteArray) -> Unit)? = null
     private val textPacketBuilder = SendTextPacketBuilder()
+    private val bmpPacketBuilder = BmpPacketBuilder()
     private val textPaginator = TextPaginator()
 
     private enum class QueryToken { BATTERY, FIRMWARE }
@@ -658,6 +664,21 @@ internal class DeviceManager(
         return true
     }
 
+    suspend fun sendBmpImage(imageBytes: ByteArray): Boolean {
+        val frames = bmpPacketBuilder.buildFrames(imageBytes)
+        for (frame in frames) {
+            if (!sendAndAwaitAck(frame, BluetoothConstants.OPCODE_SEND_BMP)) {
+                return false
+            }
+        }
+        val terminator = bmpPacketBuilder.buildTerminator()
+        if (!sendAndAwaitAck(terminator, BluetoothConstants.OPCODE_BMP_END)) {
+            return false
+        }
+        val crcFrame = bmpPacketBuilder.buildCrcFrame(imageBytes)
+        return sendAndAwaitAck(crcFrame, BluetoothConstants.OPCODE_BMP_CRC)
+    }
+
     private suspend fun sendSetMtuCommand(mtu: Int) {
         val payload = BluetoothConstants.buildSetMtuPayload(mtu)
         repeat(MTU_COMMAND_MAX_RETRIES) { attempt ->
@@ -721,6 +742,31 @@ internal class DeviceManager(
             }
             success
         }
+    }
+
+    private suspend fun sendAndAwaitAck(
+        payload: ByteArray,
+        opcode: Byte,
+        timeoutMs: Long = IMAGE_ACK_TIMEOUT_MS,
+    ): Boolean = coroutineScope {
+        if (payload.isEmpty()) {
+            return@coroutineScope false
+        }
+        val ack = async {
+            withTimeoutOrNull(timeoutMs) {
+                incoming
+                    .filter { it.firstOrNull() == opcode }
+                    .first { ackBytes ->
+                        ackBytes.getOrNull(1) == BluetoothConstants.ACK_SUCCESS
+                    }
+            } != null
+        }
+        val sent = sendCommand(payload)
+        if (!sent) {
+            ack.cancel()
+            return@coroutineScope false
+        }
+        ack.await()
     }
 
     fun isConnected(): Boolean =
