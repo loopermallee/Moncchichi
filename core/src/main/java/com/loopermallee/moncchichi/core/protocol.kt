@@ -155,7 +155,7 @@ class SendTextPacket(
     text: String,
     pageNumber: Int,
     maxPages: Int,
-    screenStatus: Int = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
+    screenStatus: SendTextPacketBuilder.ScreenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS,
 ): OutgoingPacket(
     OutgoingPacketType.SEND_AI_RESULT,
     builder.buildSendText(

@@ -13,6 +13,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.core.EvenAiScreenStatus
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
@@ -630,25 +631,29 @@ internal class DeviceManager(
     }
 
     suspend fun sendText(message: String): Boolean {
-        val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
         val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
         val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
         val pagination = textPaginator.paginate(message)
         val frames = pagination.toByteArrays(chunkCapacity)
         val totalPages = frames.size.coerceAtLeast(1)
-        var page = 1
-        for (bytes in frames) {
+        for ((index, bytes) in frames.withIndex()) {
+            val page = index + 1
+            val hasMorePages = page < totalPages
+            val status = if (hasMorePages) {
+                EvenAiScreenStatus.AUTOMATIC
+            } else {
+                EvenAiScreenStatus.AUTOMATIC_COMPLETE
+            }
             val frame = textPacketBuilder.buildSendText(
                 currentPage = page,
                 totalPages = totalPages,
-                screenStatus = screenStatus,
+                screenStatus = status,
                 textBytes = bytes,
             )
             if (!sendCommand(frame)) {
                 return false
             }
-            page += 1
         }
         return true
     }

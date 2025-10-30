@@ -8,6 +8,7 @@ import android.bluetooth.le.ScanResult
 import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
+import com.loopermallee.moncchichi.core.EvenAiScreenStatus
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
@@ -96,6 +97,9 @@ class DeviceManager(
     private var wasConnectedBefore = false
     private val textPacketBuilder = SendTextPacketBuilder()
     private val textPaginator = TextPaginator()
+    private val evenAiStateLock = Any()
+    @Volatile private var evenAiManualMode = false
+    @Volatile private var evenAiError = false
 
     init {
         logger.i(
@@ -178,25 +182,28 @@ class DeviceManager(
     }
 
     suspend fun sendText(message: String): Boolean {
-        val screenStatus = SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
         val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
         val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
         val pagination = textPaginator.paginate(message)
         val frames = pagination.toByteArrays(chunkCapacity)
         val totalPages = frames.size.coerceAtLeast(1)
-        var page = 1
-        for (bytes in frames) {
+        for ((index, bytes) in frames.withIndex()) {
+            val page = index + 1
+            val hasMorePages = page < totalPages
+            val status = determineEvenAiStatus(hasMorePages)
             val frame = textPacketBuilder.buildSendText(
                 currentPage = page,
                 totalPages = totalPages,
-                screenStatus = screenStatus,
+                screenStatus = status,
                 textBytes = bytes,
             )
             val label = if (bytes.isEmpty()) "SendTextEmpty" else "SendTextPacket"
             val success = sendCommand(frame, label)
-            if (!success) return false
-            page += 1
+            if (!success) {
+                markEvenAiError(true)
+                return false
+            }
         }
         return true
     }
@@ -456,6 +463,35 @@ class DeviceManager(
         _telemetryFlow.value = emptyList()
     }
 
+    private fun resetEvenAiState() = synchronized(evenAiStateLock) {
+        evenAiManualMode = false
+        evenAiError = false
+    }
+
+    private fun setEvenAiManualMode(enabled: Boolean) = synchronized(evenAiStateLock) {
+        evenAiManualMode = enabled
+    }
+
+    private fun markEvenAiError(hasError: Boolean) = synchronized(evenAiStateLock) {
+        evenAiError = hasError
+    }
+
+    private fun currentEvenAiState(): EvenAiState = synchronized(evenAiStateLock) {
+        EvenAiState(evenAiManualMode, evenAiError)
+    }
+
+    private data class EvenAiState(val manualMode: Boolean, val hasError: Boolean)
+
+    private fun determineEvenAiStatus(hasMorePages: Boolean): SendTextPacketBuilder.ScreenStatus {
+        val state = currentEvenAiState()
+        return when {
+            state.hasError -> EvenAiScreenStatus.NETWORK_ERROR
+            state.manualMode -> EvenAiScreenStatus.MANUAL
+            hasMorePages -> EvenAiScreenStatus.AUTOMATIC
+            else -> EvenAiScreenStatus.AUTOMATIC_COMPLETE
+        }
+    }
+
     private fun onNotify(frame: ByteArray) {
         when (val parsed = G1ReplyParser.parseNotify(frame)) {
             is G1ReplyParser.Parsed.Vitals -> {
@@ -475,10 +511,22 @@ class DeviceManager(
             }
             is G1ReplyParser.Parsed.EvenAi -> {
                 val label = when (val event = parsed.event) {
-                    is G1ReplyParser.EvenAiEvent.ActivationRequested -> "Activation requested"
-                    is G1ReplyParser.EvenAiEvent.RecordingStopped -> "Recording stopped"
-                    is G1ReplyParser.EvenAiEvent.ManualExit -> "Manual exit gesture"
-                    is G1ReplyParser.EvenAiEvent.ManualPaging -> "Manual paging gesture"
+                    is G1ReplyParser.EvenAiEvent.ActivationRequested -> {
+                        resetEvenAiState()
+                        "Activation requested"
+                    }
+                    is G1ReplyParser.EvenAiEvent.RecordingStopped -> {
+                        resetEvenAiState()
+                        "Recording stopped"
+                    }
+                    is G1ReplyParser.EvenAiEvent.ManualExit -> {
+                        resetEvenAiState()
+                        "Manual exit gesture"
+                    }
+                    is G1ReplyParser.EvenAiEvent.ManualPaging -> {
+                        setEvenAiManualMode(true)
+                        "Manual paging gesture"
+                    }
                     is G1ReplyParser.EvenAiEvent.SilentModeToggle -> "Silent mode toggle"
                     is G1ReplyParser.EvenAiEvent.Unknown -> "Unknown 0x%02X".format(event.subcommand)
                 }
