@@ -10,7 +10,14 @@ class BleToolImpl(@Suppress("UNUSED_PARAMETER") context: Context) : BleTool {
 
     override suspend fun scanDevices(onFound: (ScanResult) -> Unit) {
         delay(250)
-        val result = ScanResult(id = "demo-device", name = "Moncchichi G1", rssi = -55, timestampNanos = null)
+        val result = ScanResult(
+            id = "demo-device",
+            name = "Moncchichi G1",
+            rssi = -55,
+            pairToken = "DEMO_DEVICE",
+            lens = null,
+            timestampNanos = null,
+        )
         onFound(result)
     }
 

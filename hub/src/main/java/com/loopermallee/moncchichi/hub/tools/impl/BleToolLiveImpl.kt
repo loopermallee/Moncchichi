@@ -52,14 +52,20 @@ class BleToolLiveImpl(
         scanJob = appScope.launch {
             scanner.devices.collectLatest { devices ->
                 devices.forEach { dev ->
-                    updateInventory(dev)
+                    val descriptor = describeDevice(dev.name, dev.address)
+                    updateInventory(dev, descriptor)
                     val addr = dev.address
                     if (seen.add(addr)) {
+                        val pairToken = descriptor.token
+                        val slot = descriptor.slot ?: addressToSlot[addr]
+                        val lens = slot?.toLens()
                         onFound(
                             ScanResult(
                                 id = addr,
                                 name = dev.name,
                                 rssi = dev.rssi,
+                                pairToken = pairToken,
+                                lens = lens,
                                 timestampNanos = dev.timestampNanos,
                             )
                         )
@@ -235,9 +241,12 @@ class BleToolLiveImpl(
         return connected
     }
 
-    private fun updateInventory(device: DiscoveredDevice) {
+    private fun updateInventory(
+        device: DiscoveredDevice,
+        descriptorOverride: PairDescriptor? = null,
+    ) {
         val now = System.currentTimeMillis()
-        val descriptor = describeDevice(device.name, device.address)
+        val descriptor = descriptorOverride ?: describeDevice(device.name, device.address)
         cacheDescriptor(device.address, descriptor)
         val record = LensRecord(
             name = device.name,

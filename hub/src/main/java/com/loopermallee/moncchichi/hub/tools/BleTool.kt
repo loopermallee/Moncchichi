@@ -1,9 +1,13 @@
 package com.loopermallee.moncchichi.hub.tools
 
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+
 data class ScanResult(
     val id: String,
     val name: String?,
     val rssi: Int,
+    val pairToken: String,
+    val lens: Lens? = null,
     val timestampNanos: Long? = null,
 )
 
