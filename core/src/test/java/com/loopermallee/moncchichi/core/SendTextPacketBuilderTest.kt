@@ -44,10 +44,10 @@ class SendTextPacketBuilderTest {
 
     @Test
     fun `even ai screen statuses use expected nibbles`() {
-        val auto = SendTextPacketBuilder.ScreenStatus.EvenAi.Automatic
-        val complete = SendTextPacketBuilder.ScreenStatus.EvenAi.AutomaticComplete
-        val manual = SendTextPacketBuilder.ScreenStatus.EvenAi.Manual
-        val error = SendTextPacketBuilder.ScreenStatus.EvenAi.NetworkError
+        val auto = SendTextPacketBuilder.ScreenStatus.EvenAI.Automatic
+        val complete = SendTextPacketBuilder.ScreenStatus.EvenAI.AutomaticComplete
+        val manual = SendTextPacketBuilder.ScreenStatus.EvenAI.Manual
+        val error = SendTextPacketBuilder.ScreenStatus.EvenAI.NetworkError
 
         assertEquals(0x31, auto.value)
         assertEquals(0x41, complete.value)
