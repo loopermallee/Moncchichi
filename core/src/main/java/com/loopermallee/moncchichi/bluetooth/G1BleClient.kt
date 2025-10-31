@@ -93,6 +93,8 @@ class G1BleClient(
         private const val MTU_COMMAND_ACK_TIMEOUT_MS = 1_500L
         private const val MTU_COMMAND_RETRY_COUNT = 3
         private const val MTU_COMMAND_RETRY_DELAY_MS = 200L
+        private const val POST_BOND_CONNECT_DELAY_MS = 1_000L
+        private const val BOND_STATE_REMOVED = 9
     }
 
     enum class ConnectionState {
@@ -439,8 +441,4 @@ class G1BleClient(
         }
     }
 
-    private companion object {
-        private const val POST_BOND_CONNECT_DELAY_MS = 1_000L
-        private const val BOND_STATE_REMOVED = 9
-    }
 }
