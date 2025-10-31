@@ -56,23 +56,24 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
         0xCA -> return AckOutcome.Failure(opcode, statusByteFromHeader)
     }
 
-    val headerIndicatesLength = statusByteFromHeader != null && statusByteFromHeader <= (size - 2)
-    if (headerIndicatesLength) {
-        var payloadStart = 2
-        var payloadLength = statusByteFromHeader
-        if (payloadLength >= 2 && size >= 4) {
-            payloadStart = 4
-            payloadLength = (payloadLength - 2).coerceAtLeast(0)
-        }
+    statusByteFromHeader
+        ?.takeIf { it <= (size - 2) }
+        ?.let { length ->
+            var payloadStart = 2
+            var payloadLength = length
+            if (payloadLength >= 2 && size >= 4) {
+                payloadStart = 4
+                payloadLength = (payloadLength - 2).coerceAtLeast(0)
+            }
 
-        val payloadEndExclusive = minOf(size, payloadStart + payloadLength)
-        for (index in (payloadEndExclusive - 1) downTo payloadStart) {
-            when (this[index]) {
-                0xC9.toByte() -> return AckOutcome.Success(opcode, 0xC9)
-                0xCA.toByte() -> return AckOutcome.Failure(opcode, 0xCA)
+            val payloadEndExclusive = minOf(size, payloadStart + payloadLength)
+            for (index in (payloadEndExclusive - 1) downTo payloadStart) {
+                when (this[index]) {
+                    0xC9.toByte() -> return AckOutcome.Success(opcode, 0xC9)
+                    0xCA.toByte() -> return AckOutcome.Failure(opcode, 0xCA)
+                }
             }
         }
-    }
 
     if (size >= 2) {
         for (index in (size - 1) downTo 1) {
