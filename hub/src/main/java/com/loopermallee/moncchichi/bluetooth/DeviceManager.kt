@@ -56,6 +56,8 @@ class DeviceManager(
     val nearbyDevices: StateFlow<List<String>> = _nearbyDevices.asStateFlow()
     private val notificationEvents = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val notifications: SharedFlow<ByteArray> = notificationEvents.asSharedFlow()
+    private data class AckEvent(val opcode: Byte, val success: Boolean)
+    private val ackEvents = MutableSharedFlow<AckEvent>(extraBufferCapacity = 32)
 
     private val telemetryCollector = FlowCollector<ByteArray> { payload ->
         try {
@@ -427,8 +429,24 @@ class DeviceManager(
 
     private suspend fun sendCommand(payload: ByteArray, label: String): Boolean {
         logTelemetry("APP", "[WRITE]", "SendCommand: $label (${payload.size} bytes)")
+        val opcode = payload.firstOrNull()
+        if (opcode == null) {
+            logger.w(DEVICE_MANAGER_TAG, "${tt()} sendCommand skipped; empty payload for $label")
+            return false
+        }
         return transactionQueue.run(label) {
-            writePayload(payload)
+            if (!writePayload(payload)) {
+                return@run false
+            }
+            val ackResult = awaitAckForOpcode(opcode)
+            if (!ackResult) {
+                logTelemetry(
+                    "APP",
+                    "[ACK]",
+                    "$label failed: NACK for op=${"0x%02X".format(opcode.toInt() and 0xFF)}",
+                )
+            }
+            ackResult
         }
     }
 
@@ -441,6 +459,20 @@ class DeviceManager(
             logger.w(DEVICE_MANAGER_TAG, "${tt()} writePayload failed to enqueue")
         }
         return ok
+    }
+
+    private suspend fun awaitAckForOpcode(opcode: Byte): Boolean {
+        val ack = ackEvents
+            .filter { it.opcode == opcode }
+            .first()
+        val opcodeLabel = "0x%02X".format(opcode.toInt() and 0xFF)
+        return if (ack.success) {
+            logger.d(DEVICE_MANAGER_TAG, "${tt()} Ack success for $opcodeLabel")
+            true
+        } else {
+            logger.w(DEVICE_MANAGER_TAG, "${tt()} Ack failure for $opcodeLabel")
+            false
+        }
     }
 
     private suspend fun handleNegotiatedMtu(mtu: Int) {
@@ -578,6 +610,7 @@ class DeviceManager(
             is G1ReplyParser.Parsed.Ack -> {
                 val status = if (parsed.success) "✅" else "❌"
                 val seq = parsed.sequence?.let { " seq=${"0x%04X".format(it)}" } ?: ""
+                ackEvents.tryEmit(AckEvent(parsed.op.toByte(), parsed.success))
                 recordTelemetry(
                     G1TelemetryEvent(
                         "DEVICE",

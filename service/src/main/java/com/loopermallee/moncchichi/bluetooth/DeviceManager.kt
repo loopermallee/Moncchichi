@@ -728,7 +728,10 @@ internal class DeviceManager(
         logger.w(TAG, "${tt()} Failed to enqueue Set MTU command for mtu=$mtu after $MTU_COMMAND_MAX_RETRIES attempts")
     }
 
-    suspend fun clearScreen(): Boolean = sendCommand(byteArrayOf(BluetoothConstants.OPCODE_CLEAR_SCREEN))
+    suspend fun clearScreen(): Boolean = sendAndAwaitAck(
+        payload = byteArrayOf(BluetoothConstants.OPCODE_CLEAR_SCREEN),
+        opcode = BluetoothConstants.OPCODE_CLEAR_SCREEN,
+    )
 
     suspend fun queryBattery(fromRetry: Boolean = false): Boolean {
         if (!fromRetry) {
