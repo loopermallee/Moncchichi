@@ -97,4 +97,44 @@ class SendTextPacketBuilderTest {
         assertEquals(3, last[2].toUByte().toInt())
         assertEquals(2, last[3].toUByte().toInt())
     }
+
+    @Test
+    fun `default screen status encodes manual text show`() {
+        val builder = SendTextPacketBuilder()
+
+        val frame = builder.buildSendText(
+            currentPage = 0,
+            totalPages = 1,
+            totalPackageCount = 1,
+            currentPackageIndex = 0,
+            textBytes = ByteArray(0),
+        )
+
+        assertEquals(0x71, frame[4].toUByte().toInt())
+    }
+
+    @Test
+    fun `even ai statuses emit expected header bytes`() {
+        val builder = SendTextPacketBuilder()
+
+        val automatic = builder.buildSendText(
+            currentPage = 0,
+            totalPages = 1,
+            totalPackageCount = 1,
+            currentPackageIndex = 0,
+            screenStatus = EvenAiScreenStatus.AUTOMATIC,
+            textBytes = ByteArray(0),
+        )
+        val automaticComplete = builder.buildSendText(
+            currentPage = 0,
+            totalPages = 1,
+            totalPackageCount = 1,
+            currentPackageIndex = 0,
+            screenStatus = EvenAiScreenStatus.AUTOMATIC_COMPLETE,
+            textBytes = ByteArray(0),
+        )
+
+        assertEquals(0x31, automatic[4].toUByte().toInt())
+        assertEquals(0x41, automaticComplete[4].toUByte().toInt())
+    }
 }
