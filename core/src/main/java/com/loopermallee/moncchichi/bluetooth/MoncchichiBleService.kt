@@ -71,6 +71,10 @@ class MoncchichiBleService(
         val timestampMs: Long,
     )
 
+    sealed interface MoncchichiEvent {
+        data object ConnectionFailed : MoncchichiEvent
+    }
+
     private data class ClientRecord(
         val lens: Lens,
         val client: G1BleClient,
@@ -94,12 +98,15 @@ class MoncchichiBleService(
     val audioFrames: SharedFlow<AudioFrame> = _audioFrames.asSharedFlow()
     private val _ackEvents = MutableSharedFlow<AckEvent>(extraBufferCapacity = 32)
     val ackEvents: SharedFlow<AckEvent> = _ackEvents.asSharedFlow()
+    private val _events = MutableSharedFlow<MoncchichiEvent>(extraBufferCapacity = 8)
+    val events: SharedFlow<MoncchichiEvent> = _events.asSharedFlow()
 
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
     private val sendMutex = Mutex()
 
     private var heartbeatJob: Job? = null
     private val heartbeatSeq = mutableMapOf<Lens, Int>()
+    private var consecutiveConnectionFailures = 0
 
     suspend fun connect(device: BluetoothDevice, lensOverride: Lens? = null): Boolean {
         val lens = lensOverride ?: inferLens(device)
@@ -108,15 +115,18 @@ class MoncchichiBleService(
         clientRecords[lens]?.dispose()
         clientRecords[lens] = record
         updateLens(lens) { it.copy(state = G1BleClient.ConnectionState.CONNECTING, rssi = null) }
-        record.client.connect()
-        val ok = record.client.awaitConnected(CONNECT_TIMEOUT_MS)
-        if (!ok) {
-            logWarn("Connection timed out for ${device.address}")
-            record.dispose()
-            clientRecords.remove(lens)
-            updateLens(lens) { LensStatus() }
+        val connected = try {
+            record.client.connect()
+            record.client.awaitConnected(CONNECT_TIMEOUT_MS)
+        } catch (error: Throwable) {
+            logWarn("Connection failed for ${device.address}: ${error.message ?: "unknown error"}")
+            false
+        }
+        if (!connected) {
+            handleConnectionFailure(lens, record)
             return false
         }
+        consecutiveConnectionFailures = 0
         ensureHeartbeatLoop()
         log("Connected ${device.address} on $lens")
         return true
@@ -336,6 +346,20 @@ class MoncchichiBleService(
         ensureHeartbeatLoop()
     }
 
+    private fun handleConnectionFailure(lens: Lens, record: ClientRecord) {
+        record.dispose()
+        clientRecords.remove(lens)
+        updateLens(lens) { LensStatus() }
+        consecutiveConnectionFailures += 1
+        if (consecutiveConnectionFailures == CONNECTION_FAILURE_THRESHOLD) {
+            logger.i(
+                TAG,
+                "${tt()} [MONCCHICHI][TROUBLESHOOT] Dialog displayed – connection failed twice"
+            )
+            _events.tryEmit(MoncchichiEvent.ConnectionFailed)
+        }
+    }
+
     private fun log(message: String) {
         logger.i(TAG, "${tt()} $message")
     }
@@ -371,5 +395,6 @@ class MoncchichiBleService(
         private const val CHANNEL_STAGGER_DELAY_MS = 5L
         private const val HEARTBEAT_INTERVAL_MS = 10_000L
         private val ALL_LENSES = Lens.values()
+        private const val CONNECTION_FAILURE_THRESHOLD = 2
     }
 }

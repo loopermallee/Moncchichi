@@ -43,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -129,6 +130,16 @@ class HubViewModel(
                     else -> "BLE"
                 }
                 hubAddLog("[BLE][$category][$lensTag] $msg")
+            }
+        }
+        viewModelScope.launch {
+            ble.events.collect { event ->
+                when (event) {
+                    BleTool.Event.ConnectionFailed -> {
+                        hubAddLog("[BLE] Connection failed twice – showing troubleshoot tips")
+                        _state.update { it.copy(showTroubleshootDialog = true) }
+                    }
+                }
             }
         }
         viewModelScope.launch {
@@ -700,6 +711,37 @@ class HubViewModel(
             hubAddLog("Connection failed")
             clearScanningState()
         }
+    }
+
+    fun retryScanAndConnect() {
+        dismissTroubleshootDialog()
+        viewModelScope.launch {
+            hubAddLog("[BLE] Troubleshoot retry requested")
+            try {
+                ble.stopScan()
+            } catch (_: Throwable) {
+                // Ignore stop scan errors when retrying.
+            }
+            ble.resetPairingCache()
+            clearScanningState()
+            try {
+                startScanFlow()
+            } catch (error: Throwable) {
+                hubAddLog("[BLE] Retry scan failed: ${error.message ?: "unknown"}")
+            }
+        }
+    }
+
+    fun openHelpPage(topic: String) {
+        dismissTroubleshootDialog()
+        hubAddLog("[HELP] Opening support for $topic")
+        viewModelScope.launch {
+            display.toast("Opening $topic help…")
+        }
+    }
+
+    fun dismissTroubleshootDialog() {
+        _state.update { it.copy(showTroubleshootDialog = false) }
     }
 
     private suspend fun disconnectFlow() = hubLog("Disconnecting…") {

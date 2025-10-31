@@ -5,6 +5,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -27,6 +28,7 @@ import kotlinx.coroutines.launch
 
 class HubFragment : Fragment() {
     private var bluetoothReceiver: BluetoothStateReceiver? = null
+    private var troubleshootDialog: AlertDialog? = null
     private val vm: HubViewModel by activityViewModels {
         HubVmFactory(
             AppLocator.router,
@@ -103,6 +105,40 @@ class HubFragment : Fragment() {
                 }
             }
         }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                vm.state.collectLatest { state ->
+                    if (state.showTroubleshootDialog && troubleshootDialog?.isShowing != true) {
+                        val dialog = AlertDialog.Builder(requireContext())
+                            .setTitle("Having trouble connecting? 🧸")
+                            .setMessage(
+                                """
+                                Try these quick steps:
+                                1️⃣ Make sure both lenses show up in your Bluetooth list (_L_ and _R_).
+                                2️⃣ If they're already paired, forget them and re-pair.
+                                3️⃣ Keep the glasses unfolded while scanning.
+                                4️⃣ Start with the left lens; the right connects after.
+                                5️⃣ Still stuck? Restart your phone and the glasses, then try again.
+                                """.trimIndent()
+                            )
+                            .setPositiveButton("Retry") { _, _ ->
+                                vm.retryScanAndConnect()
+                            }
+                            .setNegativeButton("Help") { _, _ ->
+                                vm.openHelpPage("pairing")
+                            }
+                            .create()
+                        dialog.setOnDismissListener {
+                            vm.dismissTroubleshootDialog()
+                            troubleshootDialog = null
+                        }
+                        troubleshootDialog = dialog
+                        dialog.show()
+                    }
+                }
+            }
+        }
     }
 
     override fun onResume() {
@@ -121,5 +157,11 @@ class HubFragment : Fragment() {
             runCatching { requireContext().unregisterReceiver(it) }
         }
         bluetoothReceiver = null
+    }
+
+    override fun onDestroyView() {
+        troubleshootDialog?.dismiss()
+        troubleshootDialog = null
+        super.onDestroyView()
     }
 }

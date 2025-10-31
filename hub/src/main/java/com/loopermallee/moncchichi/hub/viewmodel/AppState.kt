@@ -33,4 +33,5 @@ data class AppState(
     val assistant: AssistantPane = AssistantPane(),
     val scanBanner: ScanBannerState = ScanBannerState(),
     val pairingProgress: Map<String, PairingProgress> = emptyMap(),
+    val showTroubleshootDialog: Boolean = false,
 )
