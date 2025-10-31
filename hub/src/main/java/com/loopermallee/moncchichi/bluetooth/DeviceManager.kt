@@ -19,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -343,11 +345,7 @@ class DeviceManager(
             val client = G1BleUartClient(context, device, ::bleLog, scope)
             replaceClient(client)
             client.connect()
-            val result = withTimeoutOrNull(20_000L) {
-                client.connectionState
-                    .filter { it != G1BleUartClient.ConnectionState.CONNECTING }
-                    .first()
-            }
+            val result = awaitTerminalConnectionState(client.connectionState)
             val success = result == G1BleUartClient.ConnectionState.CONNECTED
             if (!success) {
                 logger.w(DEVICE_MANAGER_TAG, "${tt()} connectDevice timeout or failure")
@@ -653,4 +651,16 @@ class DeviceManager(
     }
 
     private fun tt() = "[${Thread.currentThread().name}]"
+}
+
+internal suspend fun awaitTerminalConnectionState(
+    states: Flow<G1BleUartClient.ConnectionState>,
+    timeoutMs: Long = 20_000L,
+): G1BleUartClient.ConnectionState? {
+    return withTimeoutOrNull(timeoutMs) {
+        states
+            .drop(1)
+            .filter { it != G1BleUartClient.ConnectionState.CONNECTING }
+            .first()
+    }
 }
