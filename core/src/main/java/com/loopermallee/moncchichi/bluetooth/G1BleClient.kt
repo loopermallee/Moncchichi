@@ -30,6 +30,21 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.jvm.Volatile
 
+// --------------------------------------------------------------------
+//  Compatibility constants for pre-API 31 bond failure reasons
+// --------------------------------------------------------------------
+private const val UNBOND_REASON_AUTH_FAILED = 1
+private const val UNBOND_REASON_AUTH_REJECTED = 2
+private const val UNBOND_REASON_AUTH_CANCELED = 3
+private const val UNBOND_REASON_REMOTE_DEVICE_DOWN = 4
+private const val UNBOND_REASON_REMOVED = 5
+private const val UNBOND_REASON_OPERATION_CANCELED = 6
+private const val UNBOND_REASON_REPEATED_ATTEMPTS = 7
+private const val UNBOND_REASON_REMOTE_AUTH_CANCELED = 8
+private const val UNBOND_REASON_UNKNOWN = 9
+private const val BOND_FAILURE_UNKNOWN = 10
+private const val EXTRA_REASON = "android.bluetooth.device.extra.REASON"
+
 internal sealed interface AckOutcome {
     val opcode: Int?
     val status: Int?
@@ -43,6 +58,66 @@ internal sealed interface AckOutcome {
         override val opcode: Int?,
         override val status: Int?,
     ) : AckOutcome
+}
+
+internal class BondRetryDecider(
+    private val maxAttempts: Int,
+    private val retryWindowMs: Long,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+
+    companion object {
+        fun isTransientReason(reason: Int): Boolean {
+            return when (reason) {
+                UNBOND_REASON_AUTH_FAILED,
+                UNBOND_REASON_AUTH_REJECTED,
+                UNBOND_REASON_AUTH_CANCELED,
+                UNBOND_REASON_REMOTE_DEVICE_DOWN,
+                -> true
+                else -> false
+            }
+        }
+    }
+
+    private var attemptCount = 0
+    private var windowStartMs = 0L
+
+    fun reset() {
+        attemptCount = 0
+        windowStartMs = 0L
+    }
+
+    fun nextRetryAttempt(reason: Int): Int? {
+        if (!isTransientReason(reason)) {
+            return null
+        }
+        val now = clock()
+        if (attemptCount == 0 || now - windowStartMs > retryWindowMs) {
+            attemptCount = 0
+            windowStartMs = now
+        }
+        if (attemptCount >= maxAttempts) {
+            return null
+        }
+        attemptCount += 1
+        return attemptCount
+    }
+}
+
+internal fun Int.toBondReasonString(): String {
+    return when (this) {
+        UNBOND_REASON_AUTH_FAILED -> "UNBOND_REASON_AUTH_FAILED"
+        UNBOND_REASON_AUTH_REJECTED -> "UNBOND_REASON_AUTH_REJECTED"
+        UNBOND_REASON_AUTH_CANCELED -> "UNBOND_REASON_AUTH_CANCELED"
+        UNBOND_REASON_REMOTE_DEVICE_DOWN -> "UNBOND_REASON_REMOTE_DEVICE_DOWN"
+        UNBOND_REASON_REMOVED -> "UNBOND_REASON_REMOVED"
+        UNBOND_REASON_OPERATION_CANCELED -> "UNBOND_REASON_OPERATION_CANCELED"
+        UNBOND_REASON_REPEATED_ATTEMPTS -> "UNBOND_REASON_REPEATED_ATTEMPTS"
+        UNBOND_REASON_REMOTE_AUTH_CANCELED -> "UNBOND_REASON_REMOTE_AUTH_CANCELED"
+        BOND_FAILURE_UNKNOWN -> "BOND_FAILURE_UNKNOWN"
+        UNBOND_REASON_UNKNOWN -> "UNBOND_REASON_UNKNOWN"
+        else -> toString()
+    }
 }
 
 internal fun ByteArray.parseAckOutcome(): AckOutcome? {
@@ -135,6 +210,9 @@ class G1BleClient(
         private const val MTU_COMMAND_RETRY_DELAY_MS = 200L
         private const val POST_BOND_CONNECT_DELAY_MS = 1_000L
         private const val BOND_STATE_REMOVED = 9
+        private const val BOND_RETRY_DELAY_MS = 750L
+        private const val BOND_RETRY_WINDOW_MS = 30_000L
+        private const val BOND_RETRY_MAX_ATTEMPTS = 3
     }
 
     enum class ConnectionState {
@@ -189,6 +267,11 @@ class G1BleClient(
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionInitiated = false
     private var bondConnectJob: Job? = null
+    private var bondRetryJob: Job? = null
+    private val bondRetryDecider = BondRetryDecider(
+        maxAttempts = BOND_RETRY_MAX_ATTEMPTS,
+        retryWindowMs = BOND_RETRY_WINDOW_MS,
+    )
 
     private val lastAckTimestamp = AtomicLong(0L)
     private val mtuCommandMutex = Mutex()
@@ -298,6 +381,9 @@ class G1BleClient(
         connectionInitiated = false
         bondConnectJob?.cancel()
         bondConnectJob = null
+        bondRetryJob?.cancel()
+        bondRetryJob = null
+        bondRetryDecider.reset()
         ackSignals.trySend(AckOutcome.Failure(opcode = null, status = null)) // unblock waiters before closing
         uartClient.close()
         lastAckedMtu = null
@@ -434,6 +520,39 @@ class G1BleClient(
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
 
+    private fun handleBondRetry(reason: Int) {
+        if (!BondRetryDecider.isTransientReason(reason)) {
+            if (reason != UNBOND_REASON_UNKNOWN) {
+                logger.i(
+                    label,
+                    "${tt()} Bond retry skipped for non-transient reason=${reason.toBondReasonString()}",
+                )
+            }
+            bondRetryDecider.reset()
+            bondRetryJob?.cancel()
+            bondRetryJob = null
+            return
+        }
+        val attempt = bondRetryDecider.nextRetryAttempt(reason)
+        if (attempt == null) {
+            logger.w(
+                label,
+                "${tt()} Bond retry limit reached for reason=${reason.toBondReasonString()}",
+            )
+            return
+        }
+        bondRetryJob?.cancel()
+        bondRetryJob = scope.launch {
+            delay(BOND_RETRY_DELAY_MS)
+            logger.i(
+                label,
+                "${tt()} Scheduling createBond retry attempt=$attempt reason=${reason.toBondReasonString()}",
+            )
+            val result = device.createBond()
+            logger.i(label, "${tt()} createBond retry queued=$result")
+        }
+    }
+
     private fun registerBondReceiverIfNeeded() {
         if (bondReceiver != null) return
         val receiver = object : BroadcastReceiver() {
@@ -442,17 +561,28 @@ class G1BleClient(
                 val changedDevice = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
                 if (changedDevice?.address != device.address) return
                 val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
-                logger.i(label, "${tt()} Bond state changed=$bondState")
+                val reason = intent.getIntExtra(
+                    EXTRA_REASON,
+                    BOND_FAILURE_UNKNOWN,
+                )
+                logger.i(
+                    label,
+                    "${tt()} Bond state changed=$bondState reason=${reason.toBondReasonString()}",
+                )
                 updateBondState(bondState)
                 when (bondState) {
                     BluetoothDevice.BOND_BONDED -> scheduleGattConnection("bond receiver")
                     BluetoothDevice.BOND_NONE -> {
                         logger.i(label, "${tt()} Bond cleared; refreshing GATT cache")
                         uartClient.refresh()
+                        handleBondRetry(reason)
                     }
                     BOND_STATE_REMOVED -> {
                         logger.w(label, "${tt()} Bond removed; refreshing GATT cache")
                         uartClient.refresh()
+                        bondRetryDecider.reset()
+                        bondRetryJob?.cancel()
+                        bondRetryJob = null
                     }
                 }
             }
@@ -482,9 +612,16 @@ class G1BleClient(
             logger.i(label, "${tt()} [PAIRING] Bonded ✅")
             uartClient.requestWarmupOnNextNotify()
             scheduleGattConnection("bond complete")
+            bondRetryDecider.reset()
+            bondRetryJob?.cancel()
+            bondRetryJob = null
         } else if (!isBonded) {
             bondConnectJob?.cancel()
             bondConnectJob = null
+            if (state != BluetoothDevice.BOND_BONDING) {
+                bondRetryJob?.cancel()
+                bondRetryJob = null
+            }
         }
     }
 
