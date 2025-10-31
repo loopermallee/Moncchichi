@@ -72,7 +72,9 @@ internal class BondRetryDecider(
                 UNBOND_REASON_AUTH_FAILED,
                 UNBOND_REASON_AUTH_REJECTED,
                 UNBOND_REASON_AUTH_CANCELED,
+                UNBOND_REASON_REMOTE_AUTH_CANCELED,
                 UNBOND_REASON_REMOTE_DEVICE_DOWN,
+                UNBOND_REASON_REMOVED,
                 -> true
                 else -> false
             }
@@ -603,9 +605,7 @@ class G1BleClient(
                     BOND_STATE_REMOVED -> {
                         logger.w(label, "${tt()} Bond removed; refreshing GATT cache")
                         uartClient.refresh()
-                        bondRetryDecider.reset()
-                        bondRetryJob?.cancel()
-                        bondRetryJob = null
+                        handleBondRetry(reason)
                     }
                 }
             }
