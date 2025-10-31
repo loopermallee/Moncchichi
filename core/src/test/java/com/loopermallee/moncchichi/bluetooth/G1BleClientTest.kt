@@ -200,6 +200,27 @@ class G1BleClientTest {
     }
 
     @Test
+    fun warmupAckWithMtuOpcodeSetsWarmupOk() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+
+            harness.client.connect()
+            runCurrent()
+
+            val collector = harness.notificationCollectorSlot.captured
+
+            collector.emit(byteArrayOf(0x4D, 0xC9.toByte()))
+            runCurrent()
+
+            assertTrue(harness.client.state.value.warmupOk)
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun bondRemovalSchedulesRetry() = runTest {
         val harness = buildClientHarness(this)
         try {

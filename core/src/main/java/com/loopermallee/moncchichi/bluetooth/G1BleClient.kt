@@ -44,6 +44,7 @@ private const val UNBOND_REASON_REMOTE_AUTH_CANCELED = 8
 private const val UNBOND_REASON_UNKNOWN = 9
 private const val BOND_FAILURE_UNKNOWN = 10
 private const val EXTRA_REASON = "android.bluetooth.device.extra.REASON"
+private const val OPCODE_SET_MTU = 0x4D
 
 internal sealed interface AckOutcome {
     val opcode: Int?
@@ -187,6 +188,11 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
     }
 
     return null
+}
+
+private fun AckOutcome.Success.satisfiesWarmupAck(): Boolean {
+    val opcode = opcode ?: return true
+    return opcode == OPCODE_SET_MTU
 }
 
 /**
@@ -346,7 +352,7 @@ class G1BleClient(
                     val now = System.currentTimeMillis()
                     if (ack is AckOutcome.Success) {
                         lastAckTimestamp.set(now)
-                        if (ack.opcode == null && warmupExpected) {
+                        if (warmupExpected && ack.satisfiesWarmupAck()) {
                             warmupExpected = false
                             val negotiatedMtu = runCatching { uartClient.mtu.value }.getOrNull()
                             if (lastAckedMtu == null && negotiatedMtu != null) {
