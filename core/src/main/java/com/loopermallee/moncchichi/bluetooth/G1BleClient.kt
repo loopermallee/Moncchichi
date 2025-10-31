@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -293,7 +293,7 @@ class G1BleClient(
 
     suspend fun awaitConnected(timeoutMs: Long): Boolean {
         val target = withTimeoutOrNull(timeoutMs) {
-            state.filter { it.status != ConnectionState.CONNECTING }
+            state.drop(1)
                 .first { it.status != ConnectionState.CONNECTING }
         }
         return target?.status == ConnectionState.CONNECTED
