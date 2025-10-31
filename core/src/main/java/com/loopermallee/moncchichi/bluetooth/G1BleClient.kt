@@ -145,6 +145,12 @@ class G1BleClient(
 
     data class AudioFrame(val sequence: Int, val payload: ByteArray)
 
+    enum class AwaitReadyResult {
+        Ready,
+        Disconnected,
+        Timeout,
+    }
+
     data class State(
         val status: ConnectionState = ConnectionState.DISCONNECTED,
         val rssi: Int? = null,
@@ -310,6 +316,25 @@ class G1BleClient(
         return target?.status == ConnectionState.CONNECTED
     }
 
+    suspend fun awaitReady(timeoutMs: Long): AwaitReadyResult {
+        if (state.value.isReady()) {
+            return AwaitReadyResult.Ready
+        }
+
+        val target = withTimeoutOrNull(timeoutMs) {
+            state.drop(1)
+                .first { candidate ->
+                    candidate.status == ConnectionState.DISCONNECTED || candidate.isReady()
+                }
+        } ?: return AwaitReadyResult.Timeout
+
+        return if (target.isReady()) {
+            AwaitReadyResult.Ready
+        } else {
+            AwaitReadyResult.Disconnected
+        }
+    }
+
     suspend fun sendCommand(
         payload: ByteArray,
         ackTimeoutMs: Long,
@@ -403,6 +428,9 @@ class G1BleClient(
     }
 
     private fun Int?.toHexString(): String = this?.let { String.format("0x%02X", it) } ?: "n/a"
+
+    private fun State.isReady(): Boolean =
+        status == ConnectionState.CONNECTED && attMtu != null
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
 

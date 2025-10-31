@@ -6,63 +6,135 @@ import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class G1BleClientTest {
 
     @Test
     fun awaitConnectedReturnsTrueWhenSequenceConnects() = runTest {
-        val client = createClient()
-        val state = client.mutableStateFlow()
+        val client = buildClient(this)
+        try {
+            val stateFlow = client.state as MutableStateFlow<G1BleClient.State>
+            val deferred = async { client.awaitConnected(timeoutMs = 5_000) }
 
-        val result = async { client.awaitConnected(timeoutMs = 5_000) }
-        advanceUntilIdle()
+            runCurrent()
 
-        state.value = state.value.copy(status = G1BleClient.ConnectionState.CONNECTING)
-        advanceUntilIdle()
-        state.value = state.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
+            stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTING)
+            runCurrent()
 
-        assertTrue(result.await())
+            stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
+            runCurrent()
+
+            assertTrue(deferred.await())
+        } finally {
+            client.close()
+        }
     }
 
     @Test
     fun awaitConnectedReturnsFalseWhenSequenceDisconnects() = runTest {
-        val client = createClient()
-        val state = client.mutableStateFlow()
+        val client = buildClient(this)
+        try {
+            val stateFlow = client.state as MutableStateFlow<G1BleClient.State>
+            val deferred = async { client.awaitConnected(timeoutMs = 5_000) }
 
-        val result = async { client.awaitConnected(timeoutMs = 5_000) }
-        advanceUntilIdle()
+            runCurrent()
 
-        state.value = state.value.copy(status = G1BleClient.ConnectionState.CONNECTING)
-        advanceUntilIdle()
-        state.value = state.value.copy(status = G1BleClient.ConnectionState.DISCONNECTED)
+            stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTING)
+            runCurrent()
 
-        assertFalse(result.await())
-    }
+            stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.DISCONNECTED)
+            runCurrent()
 
-    private fun TestScope.createClient(): G1BleClient {
-        val context = mockk<Context>(relaxed = true)
-        val device = mockk<BluetoothDevice>()
-        every { device.bondState } returns BluetoothDevice.BOND_NONE
-        val logger = mockk<MoncchichiLogger>(relaxed = true)
-        val uartClient = mockk<G1BleUartClient>(relaxed = true)
-
-        return G1BleClient(context, device, this, label = "test", logger = logger) { _, _, _, _ ->
-            uartClient
+            assertFalse(deferred.await())
+        } finally {
+            client.close()
         }
     }
 
-    private fun G1BleClient.mutableStateFlow(): MutableStateFlow<G1BleClient.State> {
-        val field = G1BleClient::class.java.getDeclaredField("_state")
-        field.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        return field.get(this) as MutableStateFlow<G1BleClient.State>
+    @Test
+    fun awaitReadyEmitsAfterMtuAck() = runTest {
+        val client = buildClient(this)
+        try {
+            val stateFlow = client.state as MutableStateFlow<G1BleClient.State>
+            val deferred = async { client.awaitReady(timeoutMs = 5_000) }
+
+            runCurrent()
+
+            stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
+            runCurrent()
+
+            stateFlow.value = stateFlow.value.copy(attMtu = 256)
+            runCurrent()
+
+            assertEquals(G1BleClient.AwaitReadyResult.Ready, deferred.await())
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun awaitReadyReturnsDisconnectWhenLinkDrops() = runTest {
+        val client = buildClient(this)
+        try {
+            val stateFlow = client.state as MutableStateFlow<G1BleClient.State>
+            val deferred = async { client.awaitReady(timeoutMs = 5_000) }
+
+            runCurrent()
+
+            stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.DISCONNECTED)
+            runCurrent()
+
+            assertEquals(G1BleClient.AwaitReadyResult.Disconnected, deferred.await())
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun awaitReadyTimesOutWhenReadyNeverArrives() = runTest {
+        val client = buildClient(this)
+        try {
+            val deferred = async { client.awaitReady(timeoutMs = 1_000) }
+
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            assertEquals(G1BleClient.AwaitReadyResult.Timeout, deferred.await())
+        } finally {
+            client.close()
+        }
+    }
+
+    private fun buildClient(scope: CoroutineScope): G1BleClient {
+        val context = mockk<Context>(relaxed = true)
+        val device = mockk<BluetoothDevice>(relaxed = true) {
+            every { bondState } returns BluetoothDevice.BOND_NONE
+        }
+        val logger = mockk<MoncchichiLogger>(relaxed = true)
+        val uartClient = mockk<G1BleUartClient>(relaxed = true) {
+            every { connectionState } returns MutableStateFlow(G1BleUartClient.ConnectionState.DISCONNECTED)
+            every { rssi } returns MutableStateFlow<Int?>(null)
+            every { mtu } returns MutableStateFlow(23)
+            every { notificationsArmed } returns MutableStateFlow(false)
+        }
+        return G1BleClient(
+            context = context,
+            device = device,
+            scope = scope,
+            label = "[test]",
+            logger = logger,
+        ) { _, _, _, _ -> uartClient }
     }
 }

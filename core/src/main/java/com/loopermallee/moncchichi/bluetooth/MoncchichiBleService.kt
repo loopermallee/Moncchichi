@@ -115,16 +115,29 @@ class MoncchichiBleService(
         clientRecords[lens]?.dispose()
         clientRecords[lens] = record
         updateLens(lens) { it.copy(state = G1BleClient.ConnectionState.CONNECTING, rssi = null) }
-        val connected = try {
+        val readyResult = try {
             record.client.connect()
-            record.client.awaitConnected(CONNECT_TIMEOUT_MS)
+            record.client.awaitReady(CONNECT_TIMEOUT_MS)
         } catch (error: Throwable) {
             logWarn("Connection failed for ${device.address}: ${error.message ?: "unknown error"}")
-            false
+            null
         }
-        if (!connected) {
-            handleConnectionFailure(lens, record)
-            return false
+        when (readyResult) {
+            G1BleClient.AwaitReadyResult.Ready -> Unit
+            G1BleClient.AwaitReadyResult.Timeout -> {
+                logWarn("Ready wait timed out for ${device.address} (${lens.name.lowercase(Locale.US)})")
+                handleConnectionFailure(lens, record)
+                return false
+            }
+            G1BleClient.AwaitReadyResult.Disconnected -> {
+                logWarn("Link disconnected before ready for ${device.address} (${lens.name.lowercase(Locale.US)})")
+                handleConnectionFailure(lens, record)
+                return false
+            }
+            null -> {
+                handleConnectionFailure(lens, record)
+                return false
+            }
         }
         consecutiveConnectionFailures = 0
         ensureHeartbeatLoop()
