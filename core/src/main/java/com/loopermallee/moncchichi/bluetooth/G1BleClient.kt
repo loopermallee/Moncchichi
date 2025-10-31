@@ -46,12 +46,41 @@ internal sealed interface AckOutcome {
 }
 
 internal fun ByteArray.parseAckOutcome(): AckOutcome? {
+    if (isEmpty()) return null
+
+    val opcode = this[0].toInt() and 0xFF
+
+    val statusByteFromHeader = getOrNull(1)?.toInt()?.and(0xFF)
+    when (statusByteFromHeader) {
+        0xC9 -> return AckOutcome.Success(opcode, statusByteFromHeader)
+        0xCA -> return AckOutcome.Failure(opcode, statusByteFromHeader)
+    }
+
+    statusByteFromHeader
+        ?.takeIf { it <= (size - 2) }
+        ?.let { length ->
+            var payloadStart = 2
+            var payloadLength = length
+            if (payloadLength >= 2 && size >= 4) {
+                payloadStart = 4
+                payloadLength = (payloadLength - 2).coerceAtLeast(0)
+            }
+
+            val payloadEndExclusive = minOf(size, payloadStart + payloadLength)
+            for (index in (payloadEndExclusive - 1) downTo payloadStart) {
+                when (this[index]) {
+                    0xC9.toByte() -> return AckOutcome.Success(opcode, 0xC9)
+                    0xCA.toByte() -> return AckOutcome.Failure(opcode, 0xCA)
+                }
+            }
+        }
+
     if (size >= 2) {
-        val opcode = this[0].toInt() and 0xFF
-        val status = this[1].toInt() and 0xFF
-        when (status) {
-            0xC9 -> return AckOutcome.Success(opcode, status)
-            0xCA -> return AckOutcome.Failure(opcode, status)
+        for (index in (size - 1) downTo 1) {
+            when (this[index]) {
+                0xC9.toByte() -> return AckOutcome.Success(opcode, 0xC9)
+                0xCA.toByte() -> return AckOutcome.Failure(opcode, 0xCA)
+            }
         }
     }
 
