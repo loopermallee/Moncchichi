@@ -507,13 +507,15 @@ class G1BleClient(
         mtuCommandMutex.withLock {
             if (lastAckedMtu == mtu) return
             logger.i(label, "${tt()} Sending MTU command mtu=$mtu")
-            val acked = sendMtuCommand(mtu)
-            if (acked) {
+            val warmupInProgress = warmupExpected || !_state.value.warmupOk
+            val acked = sendMtuCommand(mtu, warmupInProgress)
+            val warmupSatisfied = warmupInProgress && _state.value.warmupOk
+            if (acked || warmupSatisfied) {
                 lastAckedMtu = mtu
                 logger.i(label, "${tt()} MTU command acknowledged mtu=$mtu")
                 _state.value = _state.value.copy(attMtu = mtu)
             } else {
-                val shouldWaitForWarmup = warmupExpected || !_state.value.warmupOk
+                val shouldWaitForWarmup = warmupInProgress
                 if (shouldWaitForWarmup) {
                     awaitWarmup = true
                     logger.w(
@@ -538,14 +540,24 @@ class G1BleClient(
         }
     }
 
-    private suspend fun sendMtuCommand(mtu: Int): Boolean {
+    private suspend fun sendMtuCommand(mtu: Int, warmupInProgress: Boolean): Boolean {
         val mtuLow = (mtu and 0xFF).toByte()
         val mtuHigh = ((mtu ushr 8) and 0xFF).toByte()
         val payload = byteArrayOf(0x4D, mtuLow, mtuHigh)
+        val ackTimeout = if (warmupInProgress) {
+            MTU_COMMAND_WARMUP_GRACE_MS
+        } else {
+            MTU_COMMAND_ACK_TIMEOUT_MS
+        }
+        val retryCount = if (warmupInProgress) {
+            1
+        } else {
+            MTU_COMMAND_RETRY_COUNT
+        }
         return sendCommand(
             payload = payload,
-            ackTimeoutMs = MTU_COMMAND_ACK_TIMEOUT_MS,
-            retries = MTU_COMMAND_RETRY_COUNT,
+            ackTimeoutMs = ackTimeout,
+            retries = retryCount,
             retryDelayMs = MTU_COMMAND_RETRY_DELAY_MS,
         )
     }

@@ -174,23 +174,26 @@ class G1BleClientTest {
             harness.notificationsArmedFlow.value = true
             runCurrent()
 
-            advanceTimeBy(1_500)
+            val collector = harness.notificationCollectorSlot.captured
+            launch {
+                delay(6_000)
+                collector.emit("> OK\r\n".toByteArray())
+            }
+
+            advanceTimeBy(5_000)
             runCurrent()
 
             assertFalse(ready.isCompleted)
 
-            val collector = harness.notificationCollectorSlot.captured
-            launch {
-                delay(3_000)
-                collector.emit("> OK\r\n".toByteArray())
-            }
-
-            advanceTimeBy(3_000)
+            advanceTimeBy(2_000)
             runCurrent()
 
             assertEquals(G1BleClient.AwaitReadyResult.Ready, ready.await())
             assertEquals(498, harness.client.state.value.attMtu)
             assertTrue(harness.client.state.value.warmupOk)
+            verify(exactly = 1) {
+                harness.uartClient.write(match { payload -> payload.firstOrNull() == 0x4D.toByte() })
+            }
         } finally {
             harness.client.close()
         }
