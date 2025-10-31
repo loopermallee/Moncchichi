@@ -25,6 +25,24 @@ class G1BleClientAckDetectionTest {
     }
 
     @Test
+    fun `parseAckOutcome detects ack byte within framed payload`() {
+        val payload = byteArrayOf(0x26, 0x06, 0x00, 0x01, 0x08, 0xC9.toByte(), 0x00, 0x00)
+
+        val result = payload.parseAckOutcome()
+
+        assertIs<AckOutcome.Success>(result)
+    }
+
+    @Test
+    fun `parseAckOutcome detects nack byte within framed payload`() {
+        val payload = byteArrayOf(0x26, 0x06, 0x00, 0x01, 0x08, 0xCA.toByte(), 0x01, 0x00)
+
+        val result = payload.parseAckOutcome()
+
+        assertIs<AckOutcome.Failure>(result)
+    }
+
+    @Test
     fun `parseAckOutcome recognizes textual ok`() {
         val payload = "ok".encodeToByteArray()
 
