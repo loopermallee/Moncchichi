@@ -30,6 +30,21 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.jvm.Volatile
 
+// --------------------------------------------------------------------
+//  Compatibility constants for pre-API 31 bond failure reasons
+// --------------------------------------------------------------------
+private const val UNBOND_REASON_AUTH_FAILED = 1
+private const val UNBOND_REASON_AUTH_REJECTED = 2
+private const val UNBOND_REASON_AUTH_CANCELED = 3
+private const val UNBOND_REASON_REMOTE_DEVICE_DOWN = 4
+private const val UNBOND_REASON_REMOVED = 5
+private const val UNBOND_REASON_OPERATION_CANCELED = 6
+private const val UNBOND_REASON_REPEATED_ATTEMPTS = 7
+private const val UNBOND_REASON_REMOTE_AUTH_CANCELED = 8
+private const val UNBOND_REASON_UNKNOWN = 9
+private const val BOND_FAILURE_UNKNOWN = 10
+private const val EXTRA_REASON = "android.bluetooth.device.extra.REASON"
+
 internal sealed interface AckOutcome {
     val opcode: Int?
     val status: Int?
@@ -54,10 +69,10 @@ internal class BondRetryDecider(
     companion object {
         fun isTransientReason(reason: Int): Boolean {
             return when (reason) {
-                BluetoothDevice.UNBOND_REASON_AUTH_FAILED,
-                BluetoothDevice.UNBOND_REASON_AUTH_REJECTED,
-                BluetoothDevice.UNBOND_REASON_AUTH_CANCELED,
-                BluetoothDevice.UNBOND_REASON_REMOTE_DEVICE_DOWN,
+                UNBOND_REASON_AUTH_FAILED,
+                UNBOND_REASON_AUTH_REJECTED,
+                UNBOND_REASON_AUTH_CANCELED,
+                UNBOND_REASON_REMOTE_DEVICE_DOWN,
                 -> true
                 else -> false
             }
@@ -91,16 +106,16 @@ internal class BondRetryDecider(
 
 internal fun Int.toBondReasonString(): String {
     return when (this) {
-        BluetoothDevice.UNBOND_REASON_AUTH_FAILED -> "UNBOND_REASON_AUTH_FAILED"
-        BluetoothDevice.UNBOND_REASON_AUTH_REJECTED -> "UNBOND_REASON_AUTH_REJECTED"
-        BluetoothDevice.UNBOND_REASON_AUTH_CANCELED -> "UNBOND_REASON_AUTH_CANCELED"
-        BluetoothDevice.UNBOND_REASON_REMOTE_DEVICE_DOWN -> "UNBOND_REASON_REMOTE_DEVICE_DOWN"
-        BluetoothDevice.UNBOND_REASON_REMOVED -> "UNBOND_REASON_REMOVED"
-        BluetoothDevice.UNBOND_REASON_OPERATION_CANCELED -> "UNBOND_REASON_OPERATION_CANCELED"
-        BluetoothDevice.UNBOND_REASON_REPEATED_ATTEMPTS -> "UNBOND_REASON_REPEATED_ATTEMPTS"
-        BluetoothDevice.UNBOND_REASON_REMOTE_AUTH_CANCELED -> "UNBOND_REASON_REMOTE_AUTH_CANCELED"
-        BluetoothDevice.BOND_FAILURE_UNKNOWN -> "BOND_FAILURE_UNKNOWN"
-        BluetoothDevice.UNBOND_REASON_UNKNOWN -> "UNBOND_REASON_UNKNOWN"
+        UNBOND_REASON_AUTH_FAILED -> "UNBOND_REASON_AUTH_FAILED"
+        UNBOND_REASON_AUTH_REJECTED -> "UNBOND_REASON_AUTH_REJECTED"
+        UNBOND_REASON_AUTH_CANCELED -> "UNBOND_REASON_AUTH_CANCELED"
+        UNBOND_REASON_REMOTE_DEVICE_DOWN -> "UNBOND_REASON_REMOTE_DEVICE_DOWN"
+        UNBOND_REASON_REMOVED -> "UNBOND_REASON_REMOVED"
+        UNBOND_REASON_OPERATION_CANCELED -> "UNBOND_REASON_OPERATION_CANCELED"
+        UNBOND_REASON_REPEATED_ATTEMPTS -> "UNBOND_REASON_REPEATED_ATTEMPTS"
+        UNBOND_REASON_REMOTE_AUTH_CANCELED -> "UNBOND_REASON_REMOTE_AUTH_CANCELED"
+        BOND_FAILURE_UNKNOWN -> "BOND_FAILURE_UNKNOWN"
+        UNBOND_REASON_UNKNOWN -> "UNBOND_REASON_UNKNOWN"
         else -> toString()
     }
 }
@@ -507,7 +522,7 @@ class G1BleClient(
 
     private fun handleBondRetry(reason: Int) {
         if (!BondRetryDecider.isTransientReason(reason)) {
-            if (reason != BluetoothDevice.UNBOND_REASON_UNKNOWN) {
+            if (reason != UNBOND_REASON_UNKNOWN) {
                 logger.i(
                     label,
                     "${tt()} Bond retry skipped for non-transient reason=${reason.toBondReasonString()}",
@@ -547,8 +562,8 @@ class G1BleClient(
                 if (changedDevice?.address != device.address) return
                 val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
                 val reason = intent.getIntExtra(
-                    BluetoothDevice.EXTRA_REASON,
-                    BluetoothDevice.BOND_FAILURE_UNKNOWN,
+                    EXTRA_REASON,
+                    BOND_FAILURE_UNKNOWN,
                 )
                 logger.i(
                     label,

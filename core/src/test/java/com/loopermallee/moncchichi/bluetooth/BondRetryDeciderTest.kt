@@ -1,10 +1,16 @@
 package com.loopermallee.moncchichi.bluetooth
 
-import android.bluetooth.BluetoothDevice
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+
+private const val UNBOND_REASON_AUTH_FAILED = 1
+private const val UNBOND_REASON_AUTH_REJECTED = 2
+private const val UNBOND_REASON_AUTH_CANCELED = 3
+private const val UNBOND_REASON_REMOTE_DEVICE_DOWN = 4
+private const val UNBOND_REASON_REMOVED = 5
+private const val UNBOND_REASON_OPERATION_CANCELED = 6
 
 class BondRetryDeciderTest {
 
@@ -16,13 +22,13 @@ class BondRetryDeciderTest {
             retryWindowMs = 30_000L,
         ) { now }
 
-        assertEquals(1, decider.nextRetryAttempt(BluetoothDevice.UNBOND_REASON_AUTH_FAILED))
-        assertEquals(2, decider.nextRetryAttempt(BluetoothDevice.UNBOND_REASON_AUTH_FAILED))
-        assertEquals(3, decider.nextRetryAttempt(BluetoothDevice.UNBOND_REASON_AUTH_FAILED))
-        assertNull(decider.nextRetryAttempt(BluetoothDevice.UNBOND_REASON_AUTH_FAILED))
+        assertEquals(1, decider.nextRetryAttempt(UNBOND_REASON_AUTH_FAILED))
+        assertEquals(2, decider.nextRetryAttempt(UNBOND_REASON_AUTH_FAILED))
+        assertEquals(3, decider.nextRetryAttempt(UNBOND_REASON_AUTH_FAILED))
+        assertNull(decider.nextRetryAttempt(UNBOND_REASON_AUTH_FAILED))
 
         now = 31_000L
-        assertEquals(1, decider.nextRetryAttempt(BluetoothDevice.UNBOND_REASON_AUTH_FAILED))
+        assertEquals(1, decider.nextRetryAttempt(UNBOND_REASON_AUTH_FAILED))
     }
 
     @Test
@@ -33,19 +39,19 @@ class BondRetryDeciderTest {
             retryWindowMs = 30_000L,
         ) { now }
 
-        assertNull(decider.nextRetryAttempt(BluetoothDevice.UNBOND_REASON_REMOVED))
-        assertNull(decider.nextRetryAttempt(BluetoothDevice.UNBOND_REASON_OPERATION_CANCELED))
+        assertNull(decider.nextRetryAttempt(UNBOND_REASON_REMOVED))
+        assertNull(decider.nextRetryAttempt(UNBOND_REASON_OPERATION_CANCELED))
 
-        assertEquals(1, decider.nextRetryAttempt(BluetoothDevice.UNBOND_REASON_AUTH_FAILED))
+        assertEquals(1, decider.nextRetryAttempt(UNBOND_REASON_AUTH_FAILED))
     }
 
     @Test
     fun transientReasonsAreRecognized() {
         val expectedTransientReasons = listOf(
-            BluetoothDevice.UNBOND_REASON_AUTH_FAILED,
-            BluetoothDevice.UNBOND_REASON_AUTH_REJECTED,
-            BluetoothDevice.UNBOND_REASON_AUTH_CANCELED,
-            BluetoothDevice.UNBOND_REASON_REMOTE_DEVICE_DOWN,
+            UNBOND_REASON_AUTH_FAILED,
+            UNBOND_REASON_AUTH_REJECTED,
+            UNBOND_REASON_AUTH_CANCELED,
+            UNBOND_REASON_REMOTE_DEVICE_DOWN,
         )
 
         expectedTransientReasons.forEach { reason ->
