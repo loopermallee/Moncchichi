@@ -14,11 +14,14 @@ import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.launch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -153,6 +156,47 @@ class G1BleClientTest {
     }
 
     @Test
+    fun awaitReadyRecoversWhenWarmupArrivesAfterMtuTimeout() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+            every { harness.uartClient.write(any<ByteArray>()) } returns true
+
+            harness.client.connect()
+            runCurrent()
+
+            val ready = async { harness.client.awaitReady(timeoutMs = 10_000) }
+            runCurrent()
+
+            harness.connectionStateFlow.value = G1BleUartClient.ConnectionState.CONNECTED
+            harness.mtuFlow.value = 498
+            harness.notificationsArmedFlow.value = true
+            runCurrent()
+
+            advanceTimeBy(1_500)
+            runCurrent()
+
+            assertFalse(ready.isCompleted)
+
+            val collector = harness.notificationCollectorSlot.captured
+            launch {
+                delay(3_000)
+                collector.emit("> OK\r\n".toByteArray())
+            }
+
+            advanceTimeBy(3_000)
+            runCurrent()
+
+            assertEquals(G1BleClient.AwaitReadyResult.Ready, ready.await())
+            assertEquals(498, harness.client.state.value.attMtu)
+            assertTrue(harness.client.state.value.warmupOk)
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun bondRemovalSchedulesRetry() = runTest {
         val harness = buildClientHarness(this)
         try {
@@ -197,6 +241,10 @@ class G1BleClientTest {
         val context: Context,
         val device: BluetoothDevice,
         val uartClient: G1BleUartClient,
+        val connectionStateFlow: MutableStateFlow<G1BleUartClient.ConnectionState>,
+        val mtuFlow: MutableStateFlow<Int>,
+        val notificationsArmedFlow: MutableStateFlow<Boolean>,
+        val notificationCollectorSlot: CapturingSlot<FlowCollector<ByteArray>>,
     )
 
     private fun buildClientHarness(scope: CoroutineScope): ClientHarness {
@@ -206,13 +254,18 @@ class G1BleClientTest {
             every { address } returns "AA:BB:CC:DD:EE:FF"
         }
         val logger = mockk<MoncchichiLogger>(relaxed = true)
+        val connectionState = MutableStateFlow(G1BleUartClient.ConnectionState.DISCONNECTED)
+        val rssi = MutableStateFlow<Int?>(null)
+        val mtu = MutableStateFlow(23)
+        val notificationsArmed = MutableStateFlow(false)
+        val notificationCollectorSlot = slot<FlowCollector<ByteArray>>()
         val uartClient = mockk<G1BleUartClient>(relaxed = true) {
-            every { connectionState } returns MutableStateFlow(G1BleUartClient.ConnectionState.DISCONNECTED)
-            every { rssi } returns MutableStateFlow<Int?>(null)
-            every { mtu } returns MutableStateFlow(23)
-            every { notificationsArmed } returns MutableStateFlow(false)
+            every { connectionState } returns connectionState
+            every { rssi } returns rssi
+            every { mtu } returns mtu
+            every { notificationsArmed } returns notificationsArmed
         }
-        coEvery { uartClient.observeNotifications(any()) } coAnswers { }
+        coEvery { uartClient.observeNotifications(capture(notificationCollectorSlot)) } coAnswers { }
         val client = G1BleClient(
             context = context,
             device = device,
@@ -220,7 +273,16 @@ class G1BleClientTest {
             label = "[test]",
             logger = logger,
         ) { _, _, _, _ -> uartClient }
-        return ClientHarness(client, context, device, uartClient)
+        return ClientHarness(
+            client = client,
+            context = context,
+            device = device,
+            uartClient = uartClient,
+            connectionStateFlow = connectionState,
+            mtuFlow = mtu,
+            notificationsArmedFlow = notificationsArmed,
+            notificationCollectorSlot = notificationCollectorSlot,
+        )
     }
 
     private companion object {

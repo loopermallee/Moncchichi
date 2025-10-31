@@ -208,6 +208,7 @@ class G1BleClient(
 
     private companion object {
         private const val MTU_COMMAND_ACK_TIMEOUT_MS = 1_500L
+        private const val MTU_COMMAND_WARMUP_GRACE_MS = 7_500L
         private const val MTU_COMMAND_RETRY_COUNT = 3
         private const val MTU_COMMAND_RETRY_DELAY_MS = 200L
         private const val POST_BOND_CONNECT_DELAY_MS = 1_000L
@@ -347,9 +348,16 @@ class G1BleClient(
                         lastAckTimestamp.set(now)
                         if (ack.opcode == null && warmupExpected) {
                             warmupExpected = false
-                            if (!_state.value.warmupOk) {
-                                _state.value = _state.value.copy(warmupOk = true)
+                            val negotiatedMtu = runCatching { uartClient.mtu.value }.getOrNull()
+                            if (lastAckedMtu == null && negotiatedMtu != null) {
+                                lastAckedMtu = negotiatedMtu
                             }
+                            val current = _state.value
+                            val attMtuCandidate = lastAckedMtu ?: negotiatedMtu ?: current.attMtu
+                            _state.value = current.copy(
+                                attMtu = attMtuCandidate,
+                                warmupOk = true,
+                            )
                         }
                     }
                     val event = AckEvent(
@@ -495,6 +503,7 @@ class G1BleClient(
 
     private suspend fun sendMtuCommandIfNeeded(mtu: Int) {
         if (lastAckedMtu == mtu) return
+        var awaitWarmup = false
         mtuCommandMutex.withLock {
             if (lastAckedMtu == mtu) return
             logger.i(label, "${tt()} Sending MTU command mtu=$mtu")
@@ -504,7 +513,27 @@ class G1BleClient(
                 logger.i(label, "${tt()} MTU command acknowledged mtu=$mtu")
                 _state.value = _state.value.copy(attMtu = mtu)
             } else {
-                logger.w(label, "${tt()} MTU command failed mtu=$mtu")
+                val shouldWaitForWarmup = warmupExpected || !_state.value.warmupOk
+                if (shouldWaitForWarmup) {
+                    awaitWarmup = true
+                    logger.w(
+                        label,
+                        "${tt()} MTU command timed out mtu=$mtu; awaiting warm-up prompt",
+                    )
+                } else {
+                    logger.w(label, "${tt()} MTU command failed mtu=$mtu")
+                }
+            }
+        }
+        if (awaitWarmup) {
+            val warmed = awaitWarmupPrompt()
+            if (warmed) {
+                logger.i(label, "${tt()} Warm-up prompt received after MTU timeout mtu=$mtu")
+            } else {
+                logger.w(
+                    label,
+                    "${tt()} Warm-up prompt missing after ${MTU_COMMAND_WARMUP_GRACE_MS}ms mtu=$mtu",
+                )
             }
         }
     }
@@ -538,6 +567,16 @@ class G1BleClient(
             _state.value = _state.value.copy(warmupOk = false)
         }
         uartClient.requestWarmupOnNextNotify()
+    }
+
+    private suspend fun awaitWarmupPrompt(): Boolean {
+        if (_state.value.warmupOk) {
+            return true
+        }
+        val target = withTimeoutOrNull(MTU_COMMAND_WARMUP_GRACE_MS) {
+            state.first { candidate -> candidate.warmupOk }
+        }
+        return target != null
     }
 
     private fun State.isReady(): Boolean =
