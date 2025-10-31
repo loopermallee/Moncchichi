@@ -69,6 +69,7 @@ class BleTelemetryRepository(
 
     private var frameJob: Job? = null
     private var stateJob: Job? = null
+    private var ackJob: Job? = null
     private var lastConnected = false
 
     private val leftBuffer = ByteArrayOutputStream()
@@ -99,11 +100,17 @@ class BleTelemetryRepository(
                 mergeRssi(Lens.RIGHT, state.right.rssi)
             }
         }
+        ackJob = scope.launch {
+            service.ackEvents.collect { event ->
+                onAck(event)
+            }
+        }
     }
 
     fun unbind() {
         frameJob?.cancel(); frameJob = null
         stateJob?.cancel(); stateJob = null
+        ackJob?.cancel(); ackJob = null
         lastConnected = false
         clearBuffers()
     }
@@ -193,6 +200,16 @@ class BleTelemetryRepository(
         val hex = frame.toHex()
         logger("[BLE][RAW] ${lens.name}: $hex")
         updateSnapshot(persist = false) { current -> current.withFrame(lens, hex) }
+    }
+
+    private fun onAck(event: MoncchichiBleService.AckEvent) {
+        val lensTag = if (event.lens == Lens.LEFT) "L" else "R"
+        val opcode = event.opcode?.let { String.format("0x%02X", it) } ?: "n/a"
+        val status = event.status?.let { String.format("0x%02X", it) } ?: "n/a"
+        val outcome = if (event.success) "OK" else "FAIL"
+        val message = "[ACK][$lensTag] opcode=$opcode status=$status → $outcome"
+        logger("[BLE][ACK][$lensTag] opcode=$opcode status=$status success=${event.success}")
+        _uartText.tryEmit(UartLine(event.lens, message))
     }
 
     private fun mergeRssi(lens: Lens, newValue: Int?) {

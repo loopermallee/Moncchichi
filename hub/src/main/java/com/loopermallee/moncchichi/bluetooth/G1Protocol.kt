@@ -31,8 +31,9 @@ object G1Packets {
 
     fun batteryQuery(): ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, SUBCOMMAND_BATTERY)
     fun firmwareQuery(): ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, SUBCOMMAND_FIRMWARE)
-    fun textPagesUtf8(text: String): List<ByteArray> {
-        val mtuCapacity = BluetoothConstants.payloadCapacityFor(BluetoothConstants.DESIRED_MTU)
+    fun textPagesUtf8(text: String, negotiatedMtu: Int? = null): List<ByteArray> {
+        val mtu = negotiatedMtu ?: BluetoothConstants.DESIRED_MTU
+        val mtuCapacity = BluetoothConstants.payloadCapacityFor(mtu)
         val chunkCapacity = (mtuCapacity - SendTextPacketBuilder.HEADER_SIZE).coerceAtLeast(1)
         val pagination = textPaginator.paginate(text)
         val packets = pagination.packets

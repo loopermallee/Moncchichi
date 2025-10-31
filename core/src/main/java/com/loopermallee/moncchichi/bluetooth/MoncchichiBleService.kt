@@ -42,6 +42,7 @@ class MoncchichiBleService(
         val rssi: Int? = null,
         val lastAckAt: Long? = null,
         val degraded: Boolean = false,
+        val attMtu: Int? = null,
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
@@ -61,6 +62,14 @@ class MoncchichiBleService(
 
     data class EvenAiEvent(val lens: Lens, val event: G1ReplyParser.EvenAiEvent)
     data class AudioFrame(val lens: Lens, val sequence: Int, val payload: ByteArray)
+
+    data class AckEvent(
+        val lens: Lens,
+        val opcode: Int?,
+        val status: Int?,
+        val success: Boolean,
+        val timestampMs: Long,
+    )
 
     private data class ClientRecord(
         val lens: Lens,
@@ -83,6 +92,8 @@ class MoncchichiBleService(
     val evenAiEvents: SharedFlow<EvenAiEvent> = _evenAiEvents.asSharedFlow()
     private val _audioFrames = MutableSharedFlow<AudioFrame>(extraBufferCapacity = 128)
     val audioFrames: SharedFlow<AudioFrame> = _audioFrames.asSharedFlow()
+    private val _ackEvents = MutableSharedFlow<AckEvent>(extraBufferCapacity = 32)
+    val ackEvents: SharedFlow<AckEvent> = _ackEvents.asSharedFlow()
 
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
     private val sendMutex = Mutex()
@@ -210,6 +221,7 @@ class MoncchichiBleService(
                     it.copy(
                         state = state.status,
                         rssi = state.rssi,
+                        attMtu = state.attMtu,
                     )
                 }
             }
@@ -228,8 +240,27 @@ class MoncchichiBleService(
             }
         }
         jobs += scope.launch {
-            client.ackEvents.collect { timestamp ->
-                updateLens(lens) { it.copy(lastAckAt = timestamp, degraded = false) }
+            client.ackEvents.collect { event ->
+                if (event.success) {
+                    updateLens(lens) {
+                        it.copy(lastAckAt = event.timestampMs, degraded = false)
+                    }
+                    log("ACK success on $lens opcode=${event.opcode.toHex()} status=${event.status.toHex()}")
+                } else {
+                    updateLens(lens) { it.copy(degraded = true) }
+                    logWarn(
+                        "ACK failure on $lens opcode=${event.opcode.toHex()} status=${event.status.toHex()}"
+                    )
+                }
+                _ackEvents.tryEmit(
+                    AckEvent(
+                        lens = lens,
+                        opcode = event.opcode,
+                        status = event.status,
+                        success = event.success,
+                        timestampMs = event.timestampMs,
+                    )
+                )
             }
         }
         jobs += scope.launch {
@@ -314,6 +345,8 @@ class MoncchichiBleService(
     }
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
+
+    private fun Int?.toHex(): String = this?.let { String.format("0x%02X", it) } ?: "n/a"
 
     private fun Lens.toTarget(): Target = when (this) {
         Lens.LEFT -> Target.Left
