@@ -234,6 +234,7 @@ class G1BleClient(
         val rssi: Int? = null,
         val bonded: Boolean = false,
         val attMtu: Int? = null,
+        val warmupOk: Boolean = false,
     )
 
     private val uartClient = uartClientFactory(
@@ -276,9 +277,14 @@ class G1BleClient(
     private val lastAckTimestamp = AtomicLong(0L)
     private val mtuCommandMutex = Mutex()
     @Volatile private var lastAckedMtu: Int? = null
+    @Volatile private var warmupExpected: Boolean = false
 
     fun connect() {
         lastAckedMtu = null
+        warmupExpected = false
+        if (_state.value.warmupOk) {
+            _state.value = _state.value.copy(warmupOk = false)
+        }
         monitorJob?.cancel()
         monitorJob = scope.launch {
             uartClient.connectionState.collectLatest { connection ->
@@ -312,7 +318,8 @@ class G1BleClient(
                         lastAckedMtu = null
                         previousMtu = null
                         previousArmed = false
-                        _state.value = _state.value.copy(attMtu = null)
+                        warmupExpected = false
+                        _state.value = _state.value.copy(attMtu = null, warmupOk = false)
                         return@collect
                     }
 
@@ -336,6 +343,12 @@ class G1BleClient(
                     val now = System.currentTimeMillis()
                     if (ack is AckOutcome.Success) {
                         lastAckTimestamp.set(now)
+                        if (ack.opcode == null && warmupExpected) {
+                            warmupExpected = false
+                            if (!_state.value.warmupOk) {
+                                _state.value = _state.value.copy(warmupOk = true)
+                            }
+                        }
                     }
                     val event = AckEvent(
                         timestampMs = now,
@@ -357,7 +370,7 @@ class G1BleClient(
         updateBondState(device.bondState)
         when (device.bondState) {
             BluetoothDevice.BOND_BONDED -> {
-                uartClient.requestWarmupOnNextNotify()
+                requestWarmupOnNextNotify()
                 scheduleGattConnection("already bonded")
             }
             BluetoothDevice.BOND_NONE -> {
@@ -387,10 +400,12 @@ class G1BleClient(
         ackSignals.trySend(AckOutcome.Failure(opcode = null, status = null)) // unblock waiters before closing
         uartClient.close()
         lastAckedMtu = null
+        warmupExpected = false
         _state.value = State(
             status = ConnectionState.DISCONNECTED,
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
             attMtu = null,
+            warmupOk = false,
         )
     }
 
@@ -515,8 +530,16 @@ class G1BleClient(
 
     private fun Int?.toHexString(): String = this?.let { String.format("0x%02X", it) } ?: "n/a"
 
+    private fun requestWarmupOnNextNotify() {
+        warmupExpected = true
+        if (_state.value.warmupOk) {
+            _state.value = _state.value.copy(warmupOk = false)
+        }
+        uartClient.requestWarmupOnNextNotify()
+    }
+
     private fun State.isReady(): Boolean =
-        status == ConnectionState.CONNECTED && attMtu != null
+        status == ConnectionState.CONNECTED && attMtu != null && warmupOk
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
 
@@ -610,12 +633,16 @@ class G1BleClient(
         _state.value = _state.value.copy(bonded = isBonded)
         if (isBonded && !wasBonded) {
             logger.i(label, "${tt()} [PAIRING] Bonded ✅")
-            uartClient.requestWarmupOnNextNotify()
+            requestWarmupOnNextNotify()
             scheduleGattConnection("bond complete")
             bondRetryDecider.reset()
             bondRetryJob?.cancel()
             bondRetryJob = null
         } else if (!isBonded) {
+            warmupExpected = false
+            if (_state.value.warmupOk) {
+                _state.value = _state.value.copy(warmupOk = false)
+            }
             bondConnectJob?.cancel()
             bondConnectJob = null
             if (state != BluetoothDevice.BOND_BONDING) {
