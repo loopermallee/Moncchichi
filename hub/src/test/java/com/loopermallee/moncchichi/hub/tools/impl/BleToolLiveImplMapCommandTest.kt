@@ -26,6 +26,22 @@ class BleToolLiveImplMapCommandTest {
     }
 
     @Test
+    fun `brightness up defaults to right target`() {
+        val (payload, target) = BleToolLiveImpl.mapCommand("BRIGHTNESS_UP").single()
+
+        assertContentEquals(byteArrayOf(0x01, 0x02, 80), payload)
+        assertEquals(MoncchichiBleService.Target.Right, target)
+    }
+
+    @Test
+    fun `brightness down defaults to right target`() {
+        val (payload, target) = BleToolLiveImpl.mapCommand("BRIGHTNESS_DOWN").single()
+
+        assertContentEquals(byteArrayOf(0x01, 0x02, 30), payload)
+        assertEquals(MoncchichiBleService.Target.Right, target)
+    }
+
+    @Test
     fun `reboot command maps to system reboot frame`() {
         val (payload, target) = BleToolLiveImpl.mapCommand("REBOOT").single()
 

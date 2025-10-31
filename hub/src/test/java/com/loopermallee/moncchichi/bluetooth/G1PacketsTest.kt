@@ -17,7 +17,7 @@ class G1PacketsTest {
     fun `brightness command uses documented opcode`() {
         val payload = G1Packets.brightness(55)
 
-        assertContentEquals(byteArrayOf(0x01, 0x03, 55), payload)
+        assertContentEquals(byteArrayOf(0x01, 0x02, 55), payload)
     }
 
     @Test
