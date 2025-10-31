@@ -14,7 +14,6 @@ import android.content.SharedPreferences
 import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.core.BmpPacketBuilder
-import com.loopermallee.moncchichi.core.EvenAiScreenStatus
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
@@ -637,7 +636,10 @@ internal class DeviceManager(
         }
     }
 
-    suspend fun sendText(message: String): Boolean {
+    suspend fun sendText(
+        message: String,
+        screenStatusResolver: ((hasMoreFrames: Boolean) -> SendTextPacketBuilder.ScreenStatus)? = null,
+    ): Boolean {
         val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
         val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
@@ -676,11 +678,8 @@ internal class DeviceManager(
         }
         frames.forEachIndexed { index, frame ->
             val hasMoreFrames = index < frames.lastIndex
-            val status = if (hasMoreFrames) {
-                EvenAiScreenStatus.AUTOMATIC
-            } else {
-                EvenAiScreenStatus.AUTOMATIC_COMPLETE
-            }
+            val status = screenStatusResolver?.invoke(hasMoreFrames)
+                ?: SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
             val payload = textPacketBuilder.buildSendText(
                 currentPage = frame.pageIndex,
                 totalPages = frame.totalPages,

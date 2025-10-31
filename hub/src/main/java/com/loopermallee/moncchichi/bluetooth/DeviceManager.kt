@@ -181,7 +181,10 @@ class DeviceManager(
         return sendCommand(byteArrayOf(BluetoothConstants.OPCODE_CLEAR_SCREEN), "ClearScreen")
     }
 
-    suspend fun sendText(message: String): Boolean {
+    suspend fun sendText(
+        message: String,
+        screenStatusResolver: ((hasMoreFrames: Boolean) -> SendTextPacketBuilder.ScreenStatus)? = null,
+    ): Boolean {
         val mtuPayloadCapacity = BluetoothConstants.payloadCapacityFor(currentMtu)
         val chunkCapacity = (mtuPayloadCapacity - SendTextPacketBuilder.HEADER_SIZE)
             .coerceAtLeast(1)
@@ -220,7 +223,8 @@ class DeviceManager(
         }
         frames.forEachIndexed { index, frame ->
             val hasMoreFrames = index < frames.lastIndex
-            val status = determineEvenAiStatus(hasMoreFrames)
+            val status = screenStatusResolver?.invoke(hasMoreFrames)
+                ?: SendTextPacketBuilder.DEFAULT_SCREEN_STATUS
             val payload = textPacketBuilder.buildSendText(
                 currentPage = frame.pageIndex,
                 totalPages = frame.totalPages,
@@ -232,11 +236,19 @@ class DeviceManager(
             val label = if (frame.bytes.isEmpty()) "SendTextEmpty" else "SendTextPacket"
             val success = sendCommand(payload, label)
             if (!success) {
-                markEvenAiError(true)
+                if (screenStatusResolver != null) {
+                    markEvenAiError(true)
+                }
                 return false
             }
         }
         return true
+    }
+
+    suspend fun sendEvenAiText(message: String): Boolean {
+        return sendText(message) { hasMoreFrames ->
+            determineEvenAiStatus(hasMoreFrames)
+        }
     }
 
     suspend fun sendRawCommand(payload: ByteArray, label: String = "RawCommand"): Boolean {
