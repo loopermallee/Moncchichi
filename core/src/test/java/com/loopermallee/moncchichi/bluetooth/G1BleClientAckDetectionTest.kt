@@ -61,6 +61,24 @@ class G1BleClientAckDetectionTest {
     }
 
     @Test
+    fun `parseAckOutcome recognizes ok embedded in multiline response`() {
+        val payload = "ver 1.6.5\r\nOK\r\n>".encodeToByteArray()
+
+        val result = payload.parseAckOutcome()
+
+        assertIs<AckOutcome.Success>(result)
+    }
+
+    @Test
+    fun `parseAckOutcome recognizes ok surrounded by whitespace`() {
+        val payload = "MTU set:498\n   OK   ".encodeToByteArray()
+
+        val result = payload.parseAckOutcome()
+
+        assertIs<AckOutcome.Success>(result)
+    }
+
+    @Test
     fun `parseAckOutcome recognizes firmware ack ping`() {
         val payload = "ACK:PING".encodeToByteArray()
 
@@ -81,6 +99,15 @@ class G1BleClientAckDetectionTest {
     @Test
     fun `parseAckOutcome returns null for unrelated text`() {
         val payload = "not ack".encodeToByteArray()
+
+        val result = payload.parseAckOutcome()
+
+        assertNull(result)
+    }
+
+    @Test
+    fun `parseAckOutcome returns null when ok is absent from multiline response`() {
+        val payload = "ver 1.6.5\r\n>".encodeToByteArray()
 
         val result = payload.parseAckOutcome()
 
