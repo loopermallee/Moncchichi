@@ -87,7 +87,7 @@ object G1Packets {
         pingSequence = 0x00
     }
 
-    fun brightness(level: Int, target: BrightnessTarget = BrightnessTarget.BOTH): ByteArray {
+    fun brightness(level: Int, target: BrightnessTarget = BrightnessTarget.RIGHT): ByteArray {
         val clamped = level.coerceIn(0, 100)
         return byteArrayOf(OP_BRIGHTNESS, target.mask, clamped.toByte())
     }

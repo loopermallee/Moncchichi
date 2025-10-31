@@ -201,8 +201,16 @@ class BleToolLiveImpl(
                 "BATTERY" -> listOf(G1Packets.batteryQuery() to MoncchichiBleService.Target.Both)
                 "FIRMWARE" -> listOf(G1Packets.firmwareQuery() to MoncchichiBleService.Target.Both)
                 "REBOOT" -> listOf(G1Packets.reboot() to MoncchichiBleService.Target.Both)
-                "BRIGHTNESS_UP" -> listOf(G1Packets.brightness(80) to MoncchichiBleService.Target.Both)
-                "BRIGHTNESS_DOWN" -> listOf(G1Packets.brightness(30) to MoncchichiBleService.Target.Both)
+                "BRIGHTNESS_UP" ->
+                    listOf(
+                        G1Packets.brightness(80, G1Packets.BrightnessTarget.RIGHT) to
+                            MoncchichiBleService.Target.Right
+                    )
+                "BRIGHTNESS_DOWN" ->
+                    listOf(
+                        G1Packets.brightness(30, G1Packets.BrightnessTarget.RIGHT) to
+                            MoncchichiBleService.Target.Right
+                    )
                 "LENS_LEFT_ON" -> listOf(G1Packets.brightness(80, G1Packets.BrightnessTarget.LEFT) to MoncchichiBleService.Target.Left)
                 "LENS_LEFT_OFF" -> listOf(G1Packets.brightness(0, G1Packets.BrightnessTarget.LEFT) to MoncchichiBleService.Target.Left)
                 "LENS_RIGHT_ON" -> listOf(G1Packets.brightness(80, G1Packets.BrightnessTarget.RIGHT) to MoncchichiBleService.Target.Right)
