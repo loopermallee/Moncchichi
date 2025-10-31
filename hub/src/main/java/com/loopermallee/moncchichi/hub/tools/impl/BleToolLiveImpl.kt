@@ -1,11 +1,13 @@
 package com.loopermallee.moncchichi.hub.tools.impl
 
+import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.loopermallee.moncchichi.bluetooth.BluetoothConstants
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
@@ -52,7 +54,36 @@ class BleToolLiveImpl(
     override suspend fun scanDevices(onFound: (ScanResult) -> Unit) {
         scanJob?.cancel()
         seen.clear()
-        scanner.start()
+        val hasBluetooth = ContextCompat.checkSelfPermission(
+            appContext,
+            Manifest.permission.BLUETOOTH_SCAN,
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasLocation = ContextCompat.checkSelfPermission(
+            appContext,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasBluetooth || !hasLocation) {
+            Toast.makeText(
+                appContext,
+                "🧸 Moncchichi needs Bluetooth and Location access to find your glasses.",
+                Toast.LENGTH_LONG,
+            ).show()
+            Log.w(TAG, "Scan aborted — missing BLE or Location permissions")
+            return
+        }
+
+        try {
+            scanner.start()
+        } catch (e: SecurityException) {
+            Toast.makeText(
+                appContext,
+                "🧸 Moncchichi can’t start scanning — please enable Bluetooth permissions.",
+                Toast.LENGTH_LONG,
+            ).show()
+            Log.e(TAG, "Failed to start scanner", e)
+            return
+        }
         scanJob = appScope.launch {
             scanner.devices.collectLatest { devices ->
                 devices.forEach { dev ->
