@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.hub.tools
 
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+import kotlinx.coroutines.flow.SharedFlow
 
 data class ScanResult(
     val id: String,
@@ -12,6 +13,12 @@ data class ScanResult(
 )
 
 interface BleTool {
+    val events: SharedFlow<Event>
+
+    sealed interface Event {
+        data object ConnectionFailed : Event
+    }
+
     suspend fun scanDevices(onFound: (ScanResult) -> Unit)
     suspend fun stopScan()
     suspend fun connect(deviceId: String): Boolean
@@ -22,4 +29,5 @@ interface BleTool {
     suspend fun firmware(): String?
     suspend fun macAddress(): String?
     suspend fun signal(): Int?
+    suspend fun resetPairingCache()
 }

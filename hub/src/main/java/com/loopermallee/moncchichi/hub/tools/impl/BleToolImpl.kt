@@ -2,11 +2,16 @@ package com.loopermallee.moncchichi.hub.tools.impl
 
 import android.content.Context
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.ScanResult
 
 class BleToolImpl(@Suppress("UNUSED_PARAMETER") context: Context) : BleTool {
     private var connectedId: String? = null
+    private val _events = MutableSharedFlow<BleTool.Event>(extraBufferCapacity = 1)
+    override val events: SharedFlow<BleTool.Event> = _events.asSharedFlow()
 
     override suspend fun scanDevices(onFound: (ScanResult) -> Unit) {
         delay(250)
@@ -60,5 +65,9 @@ class BleToolImpl(@Suppress("UNUSED_PARAMETER") context: Context) : BleTool {
 
     override suspend fun signal(): Int? {
         return if (connectedId != null) -55 else null
+    }
+
+    override suspend fun resetPairingCache() {
+        // No cached pairing state in the placeholder implementation.
     }
 }

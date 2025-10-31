@@ -23,6 +23,10 @@ import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.ScanResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -52,6 +56,20 @@ class BleToolLiveImpl(
     private val addressToPairToken = ConcurrentHashMap<String, String>()
     private val addressToSlot = ConcurrentHashMap<String, LensSlot>()
     private val addressIsEvenPair = ConcurrentHashMap<String, Boolean>()
+    private val _events = MutableSharedFlow<BleTool.Event>(extraBufferCapacity = 8)
+    override val events: SharedFlow<BleTool.Event> = _events.asSharedFlow()
+
+    init {
+        appScope.launch {
+            service.events.collect { event ->
+                when (event) {
+                    MoncchichiBleService.MoncchichiEvent.ConnectionFailed -> {
+                        _events.tryEmit(BleTool.Event.ConnectionFailed)
+                    }
+                }
+            }
+        }
+    }
 
     override suspend fun scanDevices(onFound: (ScanResult) -> Unit) {
         scanJob?.cancel()
@@ -224,6 +242,13 @@ class BleToolLiveImpl(
     override suspend fun signal(): Int? {
         val st = service.state.value
         return listOfNotNull(st.left.rssi, st.right.rssi).maxOrNull()
+    }
+
+    override suspend fun resetPairingCache() {
+        pairInventory.clear()
+        addressToPairToken.clear()
+        addressToSlot.clear()
+        addressIsEvenPair.clear()
     }
 
     fun requiredPermissions(): List<String> {
