@@ -610,7 +610,7 @@ class DeviceManager(
             is G1ReplyParser.Parsed.Ack -> {
                 val status = if (parsed.success) "✅" else "❌"
                 val seq = parsed.sequence?.let { " seq=${"0x%04X".format(it)}" } ?: ""
-                ackEvents.tryEmit(AckEvent(parsed.op, parsed.success))
+                ackEvents.tryEmit(AckEvent(parsed.op.toByte(), parsed.success))
                 recordTelemetry(
                     G1TelemetryEvent(
                         "DEVICE",
