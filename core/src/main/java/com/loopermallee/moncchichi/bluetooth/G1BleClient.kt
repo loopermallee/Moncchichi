@@ -19,15 +19,57 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.jvm.Volatile
+
+internal sealed interface AckOutcome {
+    val opcode: Int?
+    val status: Int?
+
+    data class Success(
+        override val opcode: Int?,
+        override val status: Int?,
+    ) : AckOutcome
+
+    data class Failure(
+        override val opcode: Int?,
+        override val status: Int?,
+    ) : AckOutcome
+}
+
+internal fun ByteArray.parseAckOutcome(): AckOutcome? {
+    if (size >= 2) {
+        val opcode = this[0].toInt() and 0xFF
+        val status = this[1].toInt() and 0xFF
+        when (status) {
+            0xC9 -> return AckOutcome.Success(opcode, status)
+            0xCA -> return AckOutcome.Failure(opcode, status)
+        }
+    }
+
+    val ascii = runCatching { decodeToString() }.getOrNull() ?: return null
+    val trimmed = ascii.trim { it.code <= 0x20 }
+    if (trimmed.equals("OK", ignoreCase = true)) {
+        return AckOutcome.Success(opcode = null, status = null)
+    }
+
+    val normalized = trimmed.uppercase()
+    if (trimmed == normalized && normalized.startsWith("ACK:")) {
+        // These ACK:<TOKEN> strings are observed from the firmware but not part of
+        // any published protocol specification. Treat them as successful ACKs so the
+        // client remains resilient to keepalive and ping responses.
+        return AckOutcome.Success(opcode = null, status = null)
+    }
+
+    return null
+}
 
 /**
  * Thin wrapper around [G1BleUartClient] that adds command sequencing and ACK tracking.
@@ -72,7 +114,7 @@ class G1BleClient(
         { message -> logger.i(label, "[BLE] $message") },
         scope,
     )
-    private val ackSignals = Channel<Unit>(capacity = Channel.CONFLATED)
+    private val ackSignals = Channel<AckOutcome>(capacity = Channel.CONFLATED)
     private val _ackEvents = MutableSharedFlow<Long>(extraBufferCapacity = 8)
     val ackEvents: SharedFlow<Long> = _ackEvents.asSharedFlow()
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
@@ -147,10 +189,12 @@ class G1BleClient(
 
         scope.launch {
             uartClient.observeNotifications { payload ->
-                if (payload.detectAck()) {
-                    lastAckTimestamp.set(System.currentTimeMillis())
-                    _ackEvents.tryEmit(lastAckTimestamp.get())
-                    ackSignals.trySend(Unit)
+                payload.parseAckOutcome()?.let { ack ->
+                    if (ack is AckOutcome.Success) {
+                        lastAckTimestamp.set(System.currentTimeMillis())
+                        _ackEvents.tryEmit(lastAckTimestamp.get())
+                    }
+                    ackSignals.trySend(ack)
                 }
                 val copy = payload.copyOf()
                 copy.toAudioFrameOrNull()?.let { frame -> _audioFrames.tryEmit(frame) }
@@ -183,7 +227,7 @@ class G1BleClient(
         mtuJob = null
         unregisterBondReceiver()
         connectionInitiated = false
-        ackSignals.trySend(Unit) // unblock waiters before closing
+        ackSignals.trySend(AckOutcome.Failure(opcode = null, status = null)) // unblock waiters before closing
         uartClient.close()
         lastAckedMtu = null
         _state.value = State(
@@ -207,6 +251,7 @@ class G1BleClient(
         retryDelayMs: Long,
     ): Boolean {
         return writeMutex.withLock {
+            val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
             repeat(retries) { attempt ->
                 // Clear any stale ACK before writing.
                 while (ackSignals.tryReceive().isSuccess) {
@@ -214,18 +259,37 @@ class G1BleClient(
                 }
                 val queued = uartClient.write(payload)
                 if (!queued) {
-                    logger.w(label, "${tt()} Failed to enqueue write (attempt ${attempt + 1})")
+                    logger.w(
+                        label,
+                        "${tt()} Failed to enqueue write opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
+                    )
                     delay(retryDelayMs)
                     return@repeat
                 }
-                val acked = withTimeoutOrNull(ackTimeoutMs) {
+                val ackResult = withTimeoutOrNull(ackTimeoutMs) {
                     ackSignals.receive()
-                } != null
-                if (acked) {
-                    return true
                 }
-                logger.w(label, "${tt()} ACK timeout (attempt ${attempt + 1})")
-                delay(retryDelayMs)
+                when (ackResult) {
+                    is AckOutcome.Success -> {
+                        return true
+                    }
+                    is AckOutcome.Failure -> {
+                        logger.w(
+                            label,
+                            "${tt()} ACK failure opcode=${ackResult.opcode.toHexString()} " +
+                                "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
+                        )
+                    }
+                    null -> {
+                        logger.w(
+                            label,
+                            "${tt()} ACK timeout opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
+                        )
+                    }
+                }
+                if (attempt < retries - 1) {
+                    delay(retryDelayMs)
+                }
             }
             false
         }
@@ -271,30 +335,7 @@ class G1BleClient(
         return AudioFrame(sequence, payload)
     }
 
-    internal fun ByteArray.detectAck(): Boolean {
-        if (size >= 2) {
-            val status = this[1].toInt() and 0xFF
-            if (status == 0xC9 || status == 0xCA) {
-                return true
-            }
-        }
-
-        val ascii = runCatching { decodeToString() }.getOrNull() ?: return false
-        val trimmed = ascii.trim { it.code <= 0x20 }
-        if (trimmed.equals("OK", ignoreCase = true)) {
-            return true
-        }
-
-        val normalized = trimmed.uppercase()
-        if (trimmed == normalized && normalized.startsWith("ACK:")) {
-            // These ACK:<TOKEN> strings are observed from the firmware but not part of
-            // any published protocol specification. Treat them as successful ACKs so the
-            // client remains resilient to keepalive and ping responses.
-            return true
-        }
-
-        return false
-    }
+    private fun Int?.toHexString(): String = this?.let { String.format("0x%02X", it) } ?: "n/a"
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
 
