@@ -85,11 +85,22 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
     }
 
     val ascii = runCatching { decodeToString() }.getOrNull() ?: return null
-    val trimmed = ascii.trim { it.code <= 0x20 }
-    if (trimmed.equals("OK", ignoreCase = true)) {
-        return AckOutcome.Success(opcode = null, status = null)
-    }
 
+    ascii
+        .split('\r', '\n')
+        .asSequence()
+        .map { it.trim { char -> char.code <= 0x20 } }
+        .filter { it.isNotEmpty() }
+        .forEach { candidate ->
+            val withoutPrompt = candidate
+                .trimStart { it == '>' }
+                .trim { char -> char.code <= 0x20 }
+            if (withoutPrompt.equals("OK", ignoreCase = true)) {
+                return AckOutcome.Success(opcode = null, status = null)
+            }
+        }
+
+    val trimmed = ascii.trim { it.code <= 0x20 }
     val normalized = trimmed.uppercase()
     if (trimmed == normalized && normalized.startsWith("ACK:")) {
         // These ACK:<TOKEN> strings are observed from the firmware but not part of
