@@ -21,7 +21,9 @@ class TextPaginator @JvmOverloads constructor(
         val linesPerScreen: List<Int> = listOf(3, 2),
         val charset: Charset = Charsets.UTF_8,
     ) {
-        val totalLinesPerScreen: Int = linesPerScreen.sum()
+        val safeLinesPerScreen: List<Int> =
+            linesPerScreen.ifEmpty { listOf(1) }.map { it.coerceAtLeast(1) }
+        val totalLinesPerScreen: Int = safeLinesPerScreen.sum().coerceAtLeast(1)
     }
 
     interface TextMeasurer {
@@ -119,7 +121,7 @@ class TextPaginator @JvmOverloads constructor(
     private fun buildPacketsForScreen(screenIndex: Int, screenLines: List<String>): List<Packet> {
         val packets = mutableListOf<Packet>()
         var offset = 0
-        config.linesPerScreen.forEachIndexed { partIndex, count ->
+        config.safeLinesPerScreen.forEachIndexed { partIndex, count ->
             val slice = (0 until count).map { index ->
                 screenLines.getOrElse(offset + index) { "" }
             }

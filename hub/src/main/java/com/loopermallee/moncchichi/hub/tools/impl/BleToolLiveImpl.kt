@@ -16,6 +16,7 @@ import com.loopermallee.moncchichi.bluetooth.G1Packets
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.core.BleNameParser
+import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.permissions.PermissionRequirements
 import com.loopermallee.moncchichi.hub.tools.BleTool
@@ -33,6 +34,7 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "BleToolLive"
+private const val FALLBACK_CHARS_PER_PAGE = 220
 
 class BleToolLiveImpl(
     context: Context,
@@ -66,10 +68,10 @@ class BleToolLiveImpl(
         if (!hasBluetooth || !hasLocation) {
             Toast.makeText(
                 appContext,
-                "🧸 Moncchichi needs Bluetooth and Location access to find your glasses.",
+                "Bluetooth & Location permissions required to scan.",
                 Toast.LENGTH_LONG,
             ).show()
-            Log.w(TAG, "Scan aborted — missing BLE or Location permissions")
+            Log.w(TAG, "[SCAN] Aborted — missing Bluetooth or Location permissions")
             return
         }
 
@@ -87,6 +89,11 @@ class BleToolLiveImpl(
         scanJob = appScope.launch {
             scanner.devices.collectLatest { devices ->
                 devices.forEach { dev ->
+                    val name = dev.name?.trim().orEmpty()
+                    if (name.isEmpty() || !name.startsWith(BluetoothConstants.DEVICE_PREFIX, ignoreCase = true)) {
+                        Log.d(TAG, "[SCAN] Skipping non-G1 peripheral ${dev.name ?: "(unknown)"}")
+                        return@forEach
+                    }
                     val descriptor = describeDevice(dev.name, dev.address)
                     updateInventory(dev, descriptor)
                     val addr = dev.address
@@ -133,6 +140,10 @@ class BleToolLiveImpl(
             companionRecord = awaitCompanion(pairKey, companionSlot, COMPANION_SCAN_TIMEOUT_MS)
         }
         val companionMissing = expectsCompanion && companionRecord == null
+        if (companionMissing) {
+            Toast.makeText(appContext, "Waiting for right lens…", Toast.LENGTH_SHORT).show()
+            Log.i(TAG, "[PAIRING] Waiting for right lens to appear")
+        }
 
         val leftAddress = when (primarySlot) {
             LensSlot.LEFT -> device.address
@@ -161,6 +172,11 @@ class BleToolLiveImpl(
         val leftConnected = outcomes[LensSlot.LEFT] == true
         val rightConnected = outcomes[LensSlot.RIGHT] == true
 
+        if (leftConnected && rightConnected) {
+            Toast.makeText(appContext, "Dual connect established!", Toast.LENGTH_SHORT).show()
+            Log.i(TAG, "[PAIRING] Dual connect established")
+        }
+
         return when {
             leftDevice != null && rightDevice != null -> leftConnected && rightConnected
             companionMissing -> false
@@ -177,7 +193,13 @@ class BleToolLiveImpl(
     }
 
     override suspend fun send(command: String): String {
-        val frames = Companion.mapCommand(command)
+        val mtu = negotiatedMtuForText()
+        val frames = try {
+            Companion.mapCommand(command, mtu)
+        } catch (t: Throwable) {
+            Log.w(TAG, "[TEXT] Failed to map command '$command': ${t.message}", t)
+            fallbackTextFrames(command)
+        }
         frames.forEach { (payload, target) ->
             if (!service.send(payload, target)) {
                 return "ERR"
@@ -222,10 +244,35 @@ class BleToolLiveImpl(
         }
     }
 
+    private fun negotiatedMtuForText(): Int? {
+        val snapshot = service.state.value
+        return listOfNotNull(snapshot.left.attMtu, snapshot.right.attMtu).maxOrNull()
+    }
+
+    private fun fallbackTextFrames(command: String): List<Pair<ByteArray, MoncchichiBleService.Target>> {
+        val text = command.ifBlank { "" }
+        val builder = SendTextPacketBuilder()
+        val chunks = text.chunked(FALLBACK_CHARS_PER_PAGE).ifEmpty { listOf("") }
+        val totalPages = chunks.size
+        return chunks.mapIndexed { index, chunk ->
+            val bytes = chunk.encodeToByteArray()
+            builder.buildSendText(
+                currentPage = index,
+                totalPages = totalPages,
+                totalPackageCount = 1,
+                currentPackageIndex = 0,
+                textBytes = bytes,
+            ) to MoncchichiBleService.Target.Both
+        }
+    }
+
     internal companion object {
         private const val COMPANION_SCAN_TIMEOUT_MS = 8000L
 
-        fun mapCommand(cmd: String): List<Pair<ByteArray, MoncchichiBleService.Target>> {
+        fun mapCommand(
+            cmd: String,
+            negotiatedMtu: Int? = null,
+        ): List<Pair<ByteArray, MoncchichiBleService.Target>> {
             val c = cmd.trim().uppercase(Locale.getDefault())
             return when (c) {
                 "PING" -> listOf(G1Packets.ping() to MoncchichiBleService.Target.Both)
@@ -246,8 +293,10 @@ class BleToolLiveImpl(
                 "LENS_LEFT_OFF" -> listOf(G1Packets.brightness(0, G1Packets.BrightnessTarget.LEFT) to MoncchichiBleService.Target.Left)
                 "LENS_RIGHT_ON" -> listOf(G1Packets.brightness(80, G1Packets.BrightnessTarget.RIGHT) to MoncchichiBleService.Target.Right)
                 "LENS_RIGHT_OFF" -> listOf(G1Packets.brightness(0, G1Packets.BrightnessTarget.RIGHT) to MoncchichiBleService.Target.Right)
-                "DISPLAY_RESET" -> G1Packets.textPagesUtf8("").map { it to MoncchichiBleService.Target.Both }
-                else -> G1Packets.textPagesUtf8(cmd).map { it to MoncchichiBleService.Target.Both }
+                "DISPLAY_RESET" -> G1Packets.textPagesUtf8("", negotiatedMtu)
+                    .map { it to MoncchichiBleService.Target.Both }
+                else -> G1Packets.textPagesUtf8(cmd, negotiatedMtu)
+                    .map { it to MoncchichiBleService.Target.Both }
             }
         }
     }

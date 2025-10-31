@@ -118,6 +118,17 @@ class G1BleUartClient(
         maybeSendWarmupAfterNotifyArmed()
     }
 
+    fun refresh() {
+        val g = gatt ?: return
+        runCatching {
+            val method = g.javaClass.getMethod("refresh")
+            val refreshed = method.invoke(g) as? Boolean ?: false
+            logger("[GATT] refresh() invoked result=$refreshed")
+        }.onFailure {
+            logger("[GATT] refresh() invocation failed: ${it.message}")
+        }
+    }
+
     fun write(bytes: ByteArray, withResponse: Boolean = false): Boolean {
         val ch = rxChar ?: return false.also { logger("[APP][WRITE] RX not ready") }
         ch.writeType = if (withResponse) BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT

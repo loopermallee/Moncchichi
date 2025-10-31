@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -106,6 +107,7 @@ class G1BleClient(
         val status: ConnectionState = ConnectionState.DISCONNECTED,
         val rssi: Int? = null,
         val bonded: Boolean = false,
+        val attMtu: Int? = null,
     )
 
     private val uartClient = uartClientFactory(
@@ -115,8 +117,14 @@ class G1BleClient(
         scope,
     )
     private val ackSignals = Channel<AckOutcome>(capacity = Channel.CONFLATED)
-    private val _ackEvents = MutableSharedFlow<Long>(extraBufferCapacity = 8)
-    val ackEvents: SharedFlow<Long> = _ackEvents.asSharedFlow()
+    data class AckEvent(
+        val timestampMs: Long,
+        val opcode: Int?,
+        val status: Int?,
+        val success: Boolean,
+    )
+    private val _ackEvents = MutableSharedFlow<AckEvent>(extraBufferCapacity = 8)
+    val ackEvents: SharedFlow<AckEvent> = _ackEvents.asSharedFlow()
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val incoming: SharedFlow<ByteArray> = _incoming.asSharedFlow()
     private val _audioFrames = MutableSharedFlow<AudioFrame>(extraBufferCapacity = 64)
@@ -132,6 +140,7 @@ class G1BleClient(
     private var mtuJob: Job? = null
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionInitiated = false
+    private var bondConnectJob: Job? = null
 
     private val lastAckTimestamp = AtomicLong(0L)
     private val mtuCommandMutex = Mutex()
@@ -172,6 +181,7 @@ class G1BleClient(
                         lastAckedMtu = null
                         previousMtu = null
                         previousArmed = false
+                        _state.value = _state.value.copy(attMtu = null)
                         return@collect
                     }
 
@@ -183,6 +193,8 @@ class G1BleClient(
                     val alreadyAcked = lastAckedMtu == mtu
                     if (!alreadyAcked && (mtuChanged || armedBecameTrue)) {
                         sendMtuCommandIfNeeded(mtu)
+                    } else if (alreadyAcked) {
+                        _state.value = _state.value.copy(attMtu = mtu)
                     }
                 }
         }
@@ -190,10 +202,17 @@ class G1BleClient(
         scope.launch {
             uartClient.observeNotifications { payload ->
                 payload.parseAckOutcome()?.let { ack ->
+                    val now = System.currentTimeMillis()
                     if (ack is AckOutcome.Success) {
-                        lastAckTimestamp.set(System.currentTimeMillis())
-                        _ackEvents.tryEmit(lastAckTimestamp.get())
+                        lastAckTimestamp.set(now)
                     }
+                    val event = AckEvent(
+                        timestampMs = now,
+                        opcode = ack.opcode,
+                        status = ack.status,
+                        success = ack is AckOutcome.Success,
+                    )
+                    _ackEvents.tryEmit(event)
                     ackSignals.trySend(ack)
                 }
                 val copy = payload.copyOf()
@@ -208,9 +227,11 @@ class G1BleClient(
         when (device.bondState) {
             BluetoothDevice.BOND_BONDED -> {
                 uartClient.requestWarmupOnNextNotify()
-                maybeStartGattConnection()
+                scheduleGattConnection("already bonded")
             }
             BluetoothDevice.BOND_NONE -> {
+                val name = device.name ?: device.address ?: "unknown"
+                logger.i(label, "${tt()} [PAIRING] Requesting bond with $name")
                 val bonded = device.createBond()
                 logger.i(label, "${tt()} Initiating bond=${bonded}")
             }
@@ -227,12 +248,15 @@ class G1BleClient(
         mtuJob = null
         unregisterBondReceiver()
         connectionInitiated = false
+        bondConnectJob?.cancel()
+        bondConnectJob = null
         ackSignals.trySend(AckOutcome.Failure(opcode = null, status = null)) // unblock waiters before closing
         uartClient.close()
         lastAckedMtu = null
         _state.value = State(
             status = ConnectionState.DISCONNECTED,
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
+            attMtu = null,
         )
     }
 
@@ -308,6 +332,7 @@ class G1BleClient(
             if (acked) {
                 lastAckedMtu = mtu
                 logger.i(label, "${tt()} MTU command acknowledged mtu=$mtu")
+                _state.value = _state.value.copy(attMtu = mtu)
             } else {
                 logger.w(label, "${tt()} MTU command failed mtu=$mtu")
             }
@@ -349,8 +374,16 @@ class G1BleClient(
                 val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
                 logger.i(label, "${tt()} Bond state changed=$bondState")
                 updateBondState(bondState)
-                if (bondState == BluetoothDevice.BOND_BONDED) {
-                    maybeStartGattConnection()
+                when (bondState) {
+                    BluetoothDevice.BOND_BONDED -> scheduleGattConnection("bond receiver")
+                    BluetoothDevice.BOND_NONE -> {
+                        logger.i(label, "${tt()} Bond cleared; refreshing GATT cache")
+                        uartClient.refresh()
+                    }
+                    BOND_STATE_REMOVED -> {
+                        logger.w(label, "${tt()} Bond removed; refreshing GATT cache")
+                        uartClient.refresh()
+                    }
                 }
             }
         }
@@ -376,7 +409,38 @@ class G1BleClient(
         val isBonded = state == BluetoothDevice.BOND_BONDED
         _state.value = _state.value.copy(bonded = isBonded)
         if (isBonded && !wasBonded) {
+            logger.i(label, "${tt()} [PAIRING] Bonded ✅")
             uartClient.requestWarmupOnNextNotify()
+            scheduleGattConnection("bond complete")
+        } else if (!isBonded) {
+            bondConnectJob?.cancel()
+            bondConnectJob = null
         }
+    }
+
+    private fun scheduleGattConnection(reason: String) {
+        if (_state.value.bonded.not()) {
+            logger.i(label, "${tt()} Skipping GATT connect schedule; bond incomplete ($reason)")
+            return
+        }
+        bondConnectJob?.cancel()
+        bondConnectJob = scope.launch {
+            val startedAt = System.currentTimeMillis()
+            while (isActive) {
+                delay(POST_BOND_CONNECT_DELAY_MS)
+                if (!_state.value.bonded) {
+                    logger.i(label, "${tt()} Bond lost before connect could start ($reason)")
+                    break
+                }
+                logger.i(label, "${tt()} [PAIRING] Launching GATT connect after bond ($reason, waited=${System.currentTimeMillis() - startedAt}ms)")
+                maybeStartGattConnection()
+                break
+            }
+        }
+    }
+
+    private companion object {
+        private const val POST_BOND_CONNECT_DELAY_MS = 1_000L
+        private const val BOND_STATE_REMOVED = 9
     }
 }
