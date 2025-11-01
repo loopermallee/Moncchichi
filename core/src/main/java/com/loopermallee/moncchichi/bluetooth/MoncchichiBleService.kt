@@ -16,13 +16,11 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.collect
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
@@ -36,6 +34,16 @@ class MoncchichiBleService(
 ) {
 
     enum class Lens { LEFT, RIGHT }
+
+    enum class ConnectionStage {
+        Idle,
+        ConnectLeft,
+        LeftReady,
+        Warmup,
+        ConnectRight,
+        BothReady,
+        Connected,
+    }
 
     data class LensStatus(
         val state: G1BleClient.ConnectionState = G1BleClient.ConnectionState.DISCONNECTED,
@@ -95,6 +103,9 @@ class MoncchichiBleService(
     private val _state = MutableStateFlow(ServiceState())
     val state: StateFlow<ServiceState> = _state.asStateFlow()
 
+    private val _connectionStage = MutableStateFlow(ConnectionStage.Idle)
+    val connectionStage: StateFlow<ConnectionStage> = _connectionStage.asStateFlow()
+
     private val _incoming = MutableSharedFlow<IncomingFrame>(extraBufferCapacity = 64)
     val incoming: SharedFlow<IncomingFrame> = _incoming.asSharedFlow()
     private val _evenAiEvents = MutableSharedFlow<EvenAiEvent>(extraBufferCapacity = 32)
@@ -107,22 +118,36 @@ class MoncchichiBleService(
     val events: SharedFlow<MoncchichiEvent> = _events.asSharedFlow()
 
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
-    private val sendMutex = Mutex()
+    private val hostHeartbeatSequence = IntArray(Lens.values().size)
 
     private var heartbeatJob: Job? = null
-    private val heartbeatSeq = mutableMapOf<Lens, Int>()
     private var consecutiveConnectionFailures = 0
 
     suspend fun connect(device: BluetoothDevice, lensOverride: Lens? = null): Boolean {
         val lens = lensOverride ?: inferLens(device)
         log("Connecting ${device.address} as $lens")
+
+        if (lens == Lens.RIGHT && !awaitLeftReadyForRight()) {
+            logWarn("Left lens not ready; postponing right lens connection")
+            return false
+        }
+
         val record = buildClientRecord(lens, device)
         clientRecords[lens]?.dispose()
         clientRecords[lens] = record
+        hostHeartbeatSequence[lens.ordinal] = 0
         updateLens(lens) { it.copy(state = G1BleClient.ConnectionState.CONNECTING, rssi = null) }
+
+        if (lens == Lens.LEFT) {
+            setStage(ConnectionStage.ConnectLeft)
+        } else {
+            setStage(ConnectionStage.ConnectRight)
+        }
+
         val readyResult = try {
             record.client.connect()
-            record.client.awaitReady(CONNECT_TIMEOUT_MS)
+            val timeout = if (lens == Lens.LEFT) CONNECT_TIMEOUT_MS else G1Protocols.HELLO_TIMEOUT_MS
+            record.client.awaitReady(timeout)
         } catch (error: Throwable) {
             logWarn("Connection failed for ${device.address}: ${error.message ?: "unknown error"}")
             null
@@ -144,7 +169,17 @@ class MoncchichiBleService(
                 return false
             }
         }
+
         consecutiveConnectionFailures = 0
+        if (lens == Lens.LEFT) {
+            setStage(ConnectionStage.LeftReady)
+            delay(G1Protocols.WARMUP_DELAY_MS)
+            setStage(ConnectionStage.Warmup)
+        }
+        if (state.value.left.isConnected && state.value.right.isConnected) {
+            setStage(ConnectionStage.BothReady)
+            setStage(ConnectionStage.Connected)
+        }
         ensureHeartbeatLoop()
         log("Connected ${device.address} on $lens")
         return true
@@ -155,8 +190,15 @@ class MoncchichiBleService(
             log("Disconnecting $lens")
             record.dispose()
         }
+        hostHeartbeatSequence[lens.ordinal] = 0
         updateLens(lens) { LensStatus() }
         ensureHeartbeatLoop()
+        val current = state.value
+        if (!current.left.isConnected && !current.right.isConnected) {
+            setStage(ConnectionStage.Idle)
+        } else if (current.left.isConnected && !current.right.isConnected) {
+            setStage(ConnectionStage.LeftReady)
+        }
     }
 
     fun disconnectAll() {
@@ -166,9 +208,9 @@ class MoncchichiBleService(
     suspend fun send(
         payload: ByteArray,
         target: Target = Target.Both,
-        ackTimeoutMs: Long = ACK_TIMEOUT_MS,
-        retries: Int = COMMAND_RETRY_COUNT,
-        retryDelayMs: Long = COMMAND_RETRY_DELAY_MS,
+        ackTimeoutMs: Long = G1Protocols.ACK_TIMEOUT_MS,
+        retries: Int = G1Protocols.MAX_RETRIES,
+        retryDelayMs: Long = G1Protocols.RETRY_BACKOFF_MS,
     ): Boolean {
         val records = when (target) {
             Target.Left -> listOfNotNull(clientRecords[Lens.LEFT]?.takeIf { it.clientState().isConnected })
@@ -182,24 +224,22 @@ class MoncchichiBleService(
             return false
         }
         var success = true
-        sendMutex.withLock {
-            records.forEachIndexed { index, record ->
-                val ok = record.client.sendCommand(payload, ackTimeoutMs, retries, retryDelayMs)
-                if (!ok) {
-                    success = false
-                    updateLens(record.lens) { it.copy(degraded = true) }
-                    logWarn("Command failed on ${record.lens}")
-                } else {
-                    updateLens(record.lens) {
-                        it.copy(
-                            degraded = false,
-                            lastAckAt = record.client.lastAckTimestamp(),
-                        )
-                    }
+        records.forEachIndexed { index, record ->
+            val ok = record.client.sendCommand(payload, ackTimeoutMs, retries, retryDelayMs)
+            if (!ok) {
+                success = false
+                updateLens(record.lens) { it.copy(degraded = true) }
+                logWarn("Command failed on ${record.lens}")
+            } else {
+                updateLens(record.lens) {
+                    it.copy(
+                        degraded = false,
+                        lastAckAt = record.client.lastAckTimestamp(),
+                    )
                 }
-                if (index < records.lastIndex) {
-                    delay(CHANNEL_STAGGER_DELAY_MS)
-                }
+            }
+            if (index < records.lastIndex) {
+                delay(CHANNEL_STAGGER_DELAY_MS)
             }
         }
         return success
@@ -208,9 +248,9 @@ class MoncchichiBleService(
     suspend fun setMicEnabled(
         lens: Lens,
         enabled: Boolean,
-        ackTimeoutMs: Long = ACK_TIMEOUT_MS,
-        retries: Int = COMMAND_RETRY_COUNT,
-        retryDelayMs: Long = COMMAND_RETRY_DELAY_MS,
+        ackTimeoutMs: Long = G1Protocols.ACK_TIMEOUT_MS,
+        retries: Int = G1Protocols.MAX_RETRIES,
+        retryDelayMs: Long = G1Protocols.RETRY_BACKOFF_MS,
     ): Boolean {
         val packet = MicControlPacket(enabled)
         return send(packet.bytes, lens.toTarget(), ackTimeoutMs, retries, retryDelayMs)
@@ -218,9 +258,9 @@ class MoncchichiBleService(
 
     suspend fun sendEvenAiStop(
         lens: Lens,
-        ackTimeoutMs: Long = ACK_TIMEOUT_MS,
-        retries: Int = COMMAND_RETRY_COUNT,
-        retryDelayMs: Long = COMMAND_RETRY_DELAY_MS,
+        ackTimeoutMs: Long = G1Protocols.ACK_TIMEOUT_MS,
+        retries: Int = G1Protocols.MAX_RETRIES,
+        retryDelayMs: Long = G1Protocols.RETRY_BACKOFF_MS,
     ): Boolean {
         val payload = byteArrayOf(0xF5.toByte(), 0x24)
         return send(payload, lens.toTarget(), ackTimeoutMs, retries, retryDelayMs)
@@ -231,7 +271,9 @@ class MoncchichiBleService(
         heartbeatJob = null
         clientRecords.values.forEach { it.dispose() }
         clientRecords.clear()
+        hostHeartbeatSequence.fill(0)
         ALL_LENSES.forEach { updateLens(it) { LensStatus() } }
+        setStage(ConnectionStage.Idle)
     }
 
     private fun buildClientRecord(lens: Lens, device: BluetoothDevice): ClientRecord {
@@ -273,11 +315,11 @@ class MoncchichiBleService(
                     updateLens(lens) {
                         it.copy(lastAckAt = event.timestampMs, degraded = false)
                     }
-                    log("ACK success on $lens opcode=${event.opcode.toHex()} status=${event.status.toHex()}")
+                    log("ACK success on $lens opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}")
                 } else {
                     updateLens(lens) { it.copy(degraded = true) }
                     logWarn(
-                        "ACK failure on $lens opcode=${event.opcode.toHex()} status=${event.status.toHex()}"
+                        "ACK failure on $lens opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}"
                     )
                 }
                 _ackEvents.tryEmit(
@@ -386,27 +428,33 @@ class MoncchichiBleService(
                 break
             }
             records.forEachIndexed { index, record ->
-                val nextSeq = ((heartbeatSeq[record.lens] ?: 0) + 1) and 0xFF
-                heartbeatSeq[record.lens] = nextSeq
-                val payload = byteArrayOf(0x25, nextSeq.toByte())
-                val ok = record.client.sendCommand(payload, ACK_TIMEOUT_MS, COMMAND_RETRY_COUNT, COMMAND_RETRY_DELAY_MS)
+                val payload = nextHostHeartbeatPayload(record.lens)
+                val ok = record.client.sendCommand(
+                    payload = payload,
+                    ackTimeoutMs = 0L,
+                    retries = 1,
+                    retryDelayMs = 0L,
+                    expectAck = false,
+                )
                 if (!ok) {
-                    logWarn("Heartbeat timeout on ${record.lens}")
-                    updateLens(record.lens) { it.copy(degraded = true) }
-                } else {
-                    updateLens(record.lens) {
-                        it.copy(
-                            degraded = false,
-                            lastAckAt = record.client.lastAckTimestamp(),
-                        )
-                    }
+                    logWarn("${G1Protocols.opcodeName(G1Protocols.CMD_PING)} send failed on ${record.lens}")
                 }
                 if (index < records.lastIndex) {
                     delay(CHANNEL_STAGGER_DELAY_MS)
                 }
             }
-            delay(HEARTBEAT_INTERVAL_MS)
+            delay(G1Protocols.HOST_HEARTBEAT_INTERVAL_MS)
         }
+    }
+
+    private fun nextHostHeartbeatPayload(lens: Lens): ByteArray {
+        val index = lens.ordinal
+        val sequence = hostHeartbeatSequence[index] and 0xFF
+        hostHeartbeatSequence[index] = (sequence + 1) and 0xFF
+        return byteArrayOf(
+            G1Protocols.CMD_PING.toByte(),
+            sequence.toByte(),
+        )
     }
 
     private fun updateLens(lens: Lens, reducer: (LensStatus) -> LensStatus) {
@@ -429,6 +477,34 @@ class MoncchichiBleService(
             )
             _events.tryEmit(MoncchichiEvent.ConnectionFailed)
         }
+        val current = state.value
+        if (!current.left.isConnected && !current.right.isConnected) {
+            setStage(ConnectionStage.Idle)
+        } else if (current.left.isConnected && !current.right.isConnected) {
+            setStage(ConnectionStage.LeftReady)
+        }
+    }
+
+    private suspend fun awaitLeftReadyForRight(): Boolean {
+        val leftRecord = clientRecords[Lens.LEFT] ?: return false
+        val result = leftRecord.client.awaitReady(G1Protocols.HELLO_TIMEOUT_MS)
+        if (result != G1BleClient.AwaitReadyResult.Ready) {
+            return false
+        }
+        val currentStage = _connectionStage.value
+        if (currentStage != ConnectionStage.Warmup && currentStage != ConnectionStage.ConnectRight && currentStage != ConnectionStage.BothReady && currentStage != ConnectionStage.Connected) {
+            setStage(ConnectionStage.LeftReady)
+            delay(G1Protocols.WARMUP_DELAY_MS)
+            setStage(ConnectionStage.Warmup)
+        }
+        return true
+    }
+
+    private fun setStage(stage: ConnectionStage) {
+        if (_connectionStage.value != stage) {
+            _connectionStage.value = stage
+            log("Stage -> ${stage.name}")
+        }
     }
 
     private fun log(message: String) {
@@ -440,6 +516,10 @@ class MoncchichiBleService(
     }
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
+
+    private fun Int?.toOpcodeLabel(): String = this?.let {
+        "${G1Protocols.opcodeName(it)}(${String.format("0x%02X", it)})"
+    } ?: "unknown"
 
     private fun Int?.toHex(): String = this?.let { String.format("0x%02X", it) } ?: "n/a"
 
@@ -460,11 +540,7 @@ class MoncchichiBleService(
     companion object {
         private const val TAG = "[MoncchichiBle]"
         private const val CONNECT_TIMEOUT_MS = 20_000L
-        private const val ACK_TIMEOUT_MS = 1_500L
-        private const val COMMAND_RETRY_COUNT = 3
-        private const val COMMAND_RETRY_DELAY_MS = 150L
         private const val CHANNEL_STAGGER_DELAY_MS = 5L
-        private const val HEARTBEAT_INTERVAL_MS = 10_000L
         private val ALL_LENSES = Lens.values()
         private const val CONNECTION_FAILURE_THRESHOLD = 2
     }

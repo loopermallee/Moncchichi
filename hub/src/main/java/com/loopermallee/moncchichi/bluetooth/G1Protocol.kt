@@ -19,18 +19,14 @@ object G1Packets {
     private val textPacketBuilder = SendTextPacketBuilder()
     private val textPaginator = TextPaginator()
 
-    private const val OP_PING: Byte = 0x25
-    private const val OP_BRIGHTNESS: Byte = 0x01
-    private const val OPCODE_SYSTEM_COMMAND: Byte = 0x23
     private const val SYSTEM_COMMAND_REBOOT: Byte = 0x72
     private var pingSequence: Byte = 0x00
 
     private const val SUBCOMMAND_BATTERY: Byte = 0x01
     private const val SUBCOMMAND_FIRMWARE: Byte = 0x02
-    private const val OPCODE_GLASSES_INFO: Byte = 0x2C
 
-    fun batteryQuery(): ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, SUBCOMMAND_BATTERY)
-    fun firmwareQuery(): ByteArray = byteArrayOf(OPCODE_GLASSES_INFO, SUBCOMMAND_FIRMWARE)
+    fun batteryQuery(): ByteArray = byteArrayOf(G1Protocols.CMD_GLASSES_INFO.toByte(), SUBCOMMAND_BATTERY)
+    fun firmwareQuery(): ByteArray = byteArrayOf(G1Protocols.CMD_GLASSES_INFO.toByte(), SUBCOMMAND_FIRMWARE)
     fun textPagesUtf8(text: String, negotiatedMtu: Int? = null): List<ByteArray> {
         val mtu = negotiatedMtu ?: BluetoothConstants.DESIRED_MTU
         val mtuCapacity = BluetoothConstants.payloadCapacityFor(mtu)
@@ -81,7 +77,7 @@ object G1Packets {
     fun ping(): ByteArray {
         val seq = pingSequence
         pingSequence = (seq + 1).toInt().and(0xFF).toByte()
-        return byteArrayOf(OP_PING, seq)
+        return byteArrayOf(G1Protocols.CMD_PING.toByte(), seq)
     }
 
     internal fun resetPingSequenceForTests() {
@@ -90,11 +86,11 @@ object G1Packets {
 
     fun brightness(level: Int, target: BrightnessTarget = BrightnessTarget.RIGHT): ByteArray {
         val clamped = level.coerceIn(0, 100)
-        return byteArrayOf(OP_BRIGHTNESS, target.mask, clamped.toByte())
+        return byteArrayOf(G1Protocols.CMD_BRIGHTNESS.toByte(), target.mask, clamped.toByte())
     }
 
     fun reboot(): ByteArray =
-        byteArrayOf(OPCODE_SYSTEM_COMMAND, SYSTEM_COMMAND_REBOOT)
+        byteArrayOf(G1Protocols.CMD_SYSTEM.toByte(), SYSTEM_COMMAND_REBOOT)
 
     enum class BrightnessTarget(val mask: Byte) {
         BOTH(0x03),
