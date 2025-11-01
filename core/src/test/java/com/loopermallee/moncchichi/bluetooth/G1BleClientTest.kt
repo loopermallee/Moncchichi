@@ -9,6 +9,7 @@ import com.loopermallee.moncchichi.ble.G1BleUartClient
 import io.mockk.CapturingSlot
 import io.mockk.every
 import io.mockk.coEvery
+import io.mockk.match
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
@@ -404,6 +405,40 @@ class G1BleClientTest {
     }
 
     @Test
+    fun keepAliveResponderEmitsDebugLog() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+            every { harness.uartClient.write(any<ByteArray>()) } returns true
+
+            harness.client.connect()
+            runCurrent()
+
+            val collector = harness.notificationCollectorSlot.captured
+            val prompt = async { harness.client.keepAlivePrompts.first() }
+
+            collector.emit("ACK:KEEPALIVE\r\n".toByteArray())
+            runCurrent()
+
+            val result = async { harness.client.respondToKeepAlivePrompt(prompt.await()) }
+
+            launch {
+                delay(100)
+                collector.emit(byteArrayOf(0xF1.toByte(), 0xC9.toByte()))
+            }
+
+            advanceTimeBy(200)
+            runCurrent()
+            result.await()
+
+            verify { harness.logger.i(any(), match { it.contains("[BLE][KEEPALIVE]") }) }
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun warmupOkPromptStillCompletesWarmup() = runTest {
         val harness = buildClientHarness(this)
         try {
@@ -548,6 +583,7 @@ class G1BleClientTest {
         val mtuFlow: MutableStateFlow<Int>,
         val notificationsArmedFlow: MutableStateFlow<Boolean>,
         val notificationCollectorSlot: CapturingSlot<FlowCollector<ByteArray>>,
+        val logger: MoncchichiLogger,
     )
 
     private fun buildClientHarness(scope: CoroutineScope): ClientHarness {
@@ -586,6 +622,7 @@ class G1BleClientTest {
             mtuFlow = mtu,
             notificationsArmedFlow = notificationsArmed,
             notificationCollectorSlot = notificationCollectorSlot,
+            logger = logger,
         )
     }
 

@@ -291,6 +291,8 @@ class G1BleClient(
         private const val KEEP_ALIVE_INITIAL_SEQUENCE = 0x01
         internal const val KEEP_ALIVE_MAX_ATTEMPTS = G1Protocols.MAX_RETRIES
         internal const val KEEP_ALIVE_OPCODE = G1Protocols.CMD_KEEPALIVE
+        private const val INVALID_KEY_HELLO_TIMEOUT_MS = 5_000L
+        private val INVALID_KEY_STATUS_CODES = setOf(0x85, 0x13)
     }
 
     enum class ConnectionState {
@@ -322,6 +324,7 @@ class G1BleClient(
         val refreshCount: Int = 0,
         val smpFrameCount: Int = 0,
         val lastSmpOpcode: Int? = null,
+        val bondResetCount: Int = 0,
     )
 
     private val uartClient = uartClientFactory(
@@ -408,6 +411,8 @@ class G1BleClient(
     @Volatile private var warmupExpected: Boolean = false
     private val keepAliveSequence = AtomicInteger(KEEP_ALIVE_INITIAL_SEQUENCE)
     private val keepAliveInFlight = AtomicInteger(0)
+    private var invalidBondWatchJob: Job? = null
+    @Volatile private var invalidKeyResetInFlight: Boolean = false
 
     fun connect() {
         lastAckedMtu = null
@@ -416,6 +421,7 @@ class G1BleClient(
         keepAliveInFlight.set(0)
         settingsLaunchedThisSession = false
         dismissPairingNotification()
+        cancelInvalidKeyWatchdog()
         bondEvents.tryEmit(
             BondEvent(
                 state = device.bondState,
@@ -484,11 +490,14 @@ class G1BleClient(
                 when (event.newState) {
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         _state.value = _state.value.copy(lastDisconnectStatus = event.status)
+                        cancelInvalidKeyWatchdog()
+                        handleGattDisconnect(event.status)
                     }
                     BluetoothProfile.STATE_CONNECTED -> {
                         if (_state.value.lastDisconnectStatus != null) {
                             _state.value = _state.value.copy(lastDisconnectStatus = null)
                         }
+                        startInvalidKeyWatchdog()
                     }
                 }
             }
@@ -562,6 +571,9 @@ class G1BleClient(
                     if (deliverAck) {
                         ackSignals.trySend(ack)
                     }
+                    if (ack is AckOutcome.Success && ack.opcode == G1Protocols.CMD_HELLO) {
+                        cancelInvalidKeyWatchdog()
+                    }
                 }
                 val copy = payload.copyOf()
                 copy.toAudioFrameOrNull()?.let { frame -> _audioFrames.tryEmit(frame) }
@@ -602,6 +614,7 @@ class G1BleClient(
         smpJob = null
         unregisterBondReceiver()
         connectionInitiated = false
+        cancelInvalidKeyWatchdog()
         bondConnectJob?.cancel()
         bondConnectJob = null
         bondRetryJob?.cancel()
@@ -947,6 +960,10 @@ class G1BleClient(
                 label,
                 "${tt()} Keepalive acknowledged seq=${sequence.toByteHex()} rtt=${rttMs ?: -1}ms attempts=$attempt",
             )
+            logger.i(
+                label,
+                "${tt()} [BLE][KEEPALIVE] Responded seq=${sequence.toByteHex()} rtt=${rttMs ?: -1}ms",
+            )
         } else {
             logger.w(
                 label,
@@ -1016,6 +1033,69 @@ class G1BleClient(
             retries = retryCount,
             retryDelayMs = MTU_COMMAND_RETRY_DELAY_MS,
         )
+    }
+
+    private fun cancelInvalidKeyWatchdog() {
+        invalidBondWatchJob?.cancel()
+        invalidBondWatchJob = null
+    }
+
+    private fun startInvalidKeyWatchdog() {
+        cancelInvalidKeyWatchdog()
+        val currentState = _state.value
+        if (!currentState.bonded || currentState.isReady()) {
+            return
+        }
+        invalidBondWatchJob = scope.launch {
+            val acked = awaitHelloAck(INVALID_KEY_HELLO_TIMEOUT_MS)
+            if (!acked && state.value.bonded) {
+                resetBondForInvalidKey("HELLO timeout")
+            }
+        }
+    }
+
+    private fun handleGattDisconnect(status: Int) {
+        val bonded = state.value.bonded || device.bondState == BluetoothDevice.BOND_BONDED
+        if (!bonded) return
+        if (status in INVALID_KEY_STATUS_CODES) {
+            scope.launch { resetBondForInvalidKey("GATT status ${String.format("0x%02X", status and 0xFF)}") }
+        }
+    }
+
+    private suspend fun resetBondForInvalidKey(reason: String) {
+        bondMutex.withLock {
+            if (invalidKeyResetInFlight) {
+                return
+            }
+            val currentlyBonded = state.value.bonded || device.bondState == BluetoothDevice.BOND_BONDED
+            if (!currentlyBonded) return
+            invalidKeyResetInFlight = true
+            try {
+                logger.w(label, "${tt()} [PAIRING] Bond reset due to invalid key ($reason)")
+                val removed = device.removeBondCompat()
+                if (removed) {
+                    recordBondReset()
+                }
+                requestBond("invalid key fallback")
+            } finally {
+                invalidKeyResetInFlight = false
+            }
+        }
+    }
+
+    private fun recordBondReset() {
+        val current = _state.value
+        _state.value = current.copy(bondResetCount = current.bondResetCount + 1, bonded = false)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun BluetoothDevice.removeBondCompat(): Boolean {
+        return runCatching {
+            val method = this.javaClass.getMethod("removeBond")
+            method.invoke(this) as? Boolean ?: false
+        }.onFailure {
+            logger.w(label, "${tt()} removeBond() reflection failed: ${it.message}")
+        }.getOrElse { false }
     }
 
     private fun nextKeepAliveSequence(): Int {
