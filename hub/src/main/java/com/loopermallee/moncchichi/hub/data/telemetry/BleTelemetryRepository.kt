@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.hub.data.telemetry
 
+import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
@@ -41,6 +42,9 @@ class BleTelemetryRepository(
         val disconnectReason: Int? = null,
         val bondTransitions: Int = 0,
         val bondTimeouts: Int = 0,
+        val bondAttempts: Int = 0,
+        val lastBondResult: String? = null,
+        val pairingDialogsShown: Int = 0,
         val refreshCount: Int = 0,
         val smpFrames: Int = 0,
         val lastSmpOpcode: Int? = null,
@@ -53,6 +57,12 @@ class BleTelemetryRepository(
         val lastLens: Lens? = null,
         val lastFrameHex: String? = null,
         val connectionSequence: String? = null,
+        val leftBondAttempts: Int = 0,
+        val rightBondAttempts: Int = 0,
+        val leftBondResult: String? = null,
+        val rightBondResult: String? = null,
+        val pairingDialogsShown: Int = 0,
+        val gattRefreshCount: Int = 0,
     )
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -332,6 +342,24 @@ class BleTelemetryRepository(
                 _events.tryEmit("[BLE][PAIR] ${lensLabel} bond timeouts=${status.bondTimeouts}")
                 changed = true
             }
+            if (existing.bondAttempts != status.bondAttempts) {
+                updated = updated.copy(bondAttempts = status.bondAttempts)
+                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond attempts=${status.bondAttempts}")
+                changed = true
+            }
+            val bondResultLabel = status.lastBondResult.name
+            if (existing.lastBondResult != bondResultLabel) {
+                updated = updated.copy(lastBondResult = bondResultLabel)
+                if (status.lastBondResult != BondResult.Unknown) {
+                    _events.tryEmit("[BLE][PAIR] ${lensLabel} last bond=${bondResultLabel}")
+                }
+                changed = true
+            }
+            if (existing.pairingDialogsShown != status.pairingDialogsShown) {
+                updated = updated.copy(pairingDialogsShown = status.pairingDialogsShown)
+                _events.tryEmit("[BLE][PAIR] ${lensLabel} pairing dialogs=${status.pairingDialogsShown}")
+                changed = true
+            }
             if (existing.refreshCount != status.refreshCount) {
                 updated = updated.copy(refreshCount = status.refreshCount)
                 _events.tryEmit("[BLE][PAIR] ${lensLabel} refresh invoked=${status.refreshCount}")
@@ -380,9 +408,23 @@ class BleTelemetryRepository(
     private fun Snapshot.updateLens(
         lens: Lens,
         telemetry: LensTelemetry,
-    ): Snapshot = when (lens) {
-        Lens.LEFT -> copy(left = telemetry)
-        Lens.RIGHT -> copy(right = telemetry)
+    ): Snapshot {
+        val updated = when (lens) {
+            Lens.LEFT -> copy(left = telemetry)
+            Lens.RIGHT -> copy(right = telemetry)
+        }
+        return updated.recalculateDerived()
+    }
+
+    private fun Snapshot.recalculateDerived(): Snapshot {
+        return copy(
+            leftBondAttempts = left.bondAttempts,
+            rightBondAttempts = right.bondAttempts,
+            leftBondResult = left.lastBondResult,
+            rightBondResult = right.lastBondResult,
+            pairingDialogsShown = left.pairingDialogsShown + right.pairingDialogsShown,
+            gattRefreshCount = left.refreshCount + right.refreshCount,
+        )
     }
 
     private fun Snapshot.withFrame(lens: Lens, hex: String): Snapshot {

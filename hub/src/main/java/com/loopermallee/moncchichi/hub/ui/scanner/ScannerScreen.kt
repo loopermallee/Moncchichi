@@ -445,7 +445,18 @@ private fun detectionMessage(pair: PairedGlasses, progress: PairingProgress?): S
             }
 
             ScanStage.Ready -> return "Both lenses detected. Preparing to connect…"
-            ScanStage.Connecting -> return "Connecting both lenses…"
+            ScanStage.Connecting -> {
+                val leftDetail = state.leftChip.detail.orEmpty()
+                val rightDetail = state.rightChip.detail.orEmpty()
+                val leftBonded = leftDetail.contains("Bonded")
+                val rightBonded = rightDetail.contains("Bonded")
+                return when {
+                    leftBonded && rightBonded -> "Both lenses bonded. Finalizing…"
+                    leftBonded -> "Pairing right lens…"
+                    rightBonded -> "Pairing left lens…"
+                    else -> "Pairing both lenses…"
+                }
+            }
             ScanStage.Timeout -> return state.tip ?: "Timed out waiting for the companion lens. Keep the case open and retry."
             ScanStage.Completed -> return "Both lenses ready."
             ScanStage.Idle -> Unit

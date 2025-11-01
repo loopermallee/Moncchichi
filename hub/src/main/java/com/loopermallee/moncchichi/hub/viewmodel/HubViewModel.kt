@@ -532,13 +532,25 @@ class HubViewModel(
                 )
             }
 
-            ScanStage.Connecting -> ScanBannerState(
-                stage = stage,
-                headline = "Connecting to $label",
-                supporting = "Pairing both lenses now…",
-                showSpinner = true,
-                tip = tip,
-            )
+            ScanStage.Connecting -> {
+                val snapshot = telemetry.snapshot.value
+                val leftBonded = snapshot.left.bonded
+                val rightBonded = snapshot.right.bonded
+                val supportingText = when {
+                    leftBonded && rightBonded -> "Both lenses bonded – finalizing connection…"
+                    leftBonded -> "Pairing right lens…"
+                    rightBonded -> "Pairing left lens…"
+                    snapshot.leftBondAttempts > 0 || snapshot.rightBondAttempts > 0 -> "Pairing lenses…"
+                    else -> "Pairing both lenses now…"
+                }
+                ScanBannerState(
+                    stage = stage,
+                    headline = "Connecting to $label",
+                    supporting = supportingText,
+                    showSpinner = true,
+                    tip = tip,
+                )
+            }
 
             ScanStage.Ready -> ScanBannerState(
                 stage = stage,
@@ -583,9 +595,17 @@ class HubViewModel(
         val detected = discovery.ids.containsKey(lens)
         val rssi = discovery.rssis[lens]
         val name = discovery.names[lens]
+        val snapshot = telemetry.snapshot.value
+        val lensTelemetry = if (lens == Lens.LEFT) snapshot.left else snapshot.right
         val detailParts = buildList {
             if (!name.isNullOrBlank()) add(name)
             rssi?.let { add("Signal ${it} dBm") }
+            val statusDetail = when {
+                lensTelemetry.bonded -> "Bonded ✅"
+                lensTelemetry.bondAttempts > 0 -> "Pairing…"
+                else -> null
+            }
+            statusDetail?.let { add(it) }
         }
         val detail = detailParts.joinToString(" • ")
         return when {
