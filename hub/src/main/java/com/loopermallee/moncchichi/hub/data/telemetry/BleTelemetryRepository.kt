@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.util.Locale
 import java.util.regex.Pattern
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.text.Charsets
 
@@ -48,6 +49,10 @@ class BleTelemetryRepository(
         val refreshCount: Int = 0,
         val smpFrames: Int = 0,
         val lastSmpOpcode: Int? = null,
+        val reconnectAttempts: Int = 0,
+        val reconnectSuccesses: Int = 0,
+        val reconnecting: Boolean = false,
+        val bondResets: Int = 0,
     )
 
     data class Snapshot(
@@ -63,6 +68,10 @@ class BleTelemetryRepository(
         val rightBondResult: String? = null,
         val pairingDialogsShown: Int = 0,
         val gattRefreshCount: Int = 0,
+        val autoReconnectAttempts: Int = 0,
+        val autoReconnectSuccesses: Int = 0,
+        val rightBondRetries: Int = 0,
+        val bondResetEvents: Int = 0,
     )
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -133,6 +142,9 @@ class BleTelemetryRepository(
                 mergeDisconnectReason(Lens.RIGHT, state.right.disconnectStatus)
                 mergeBondDiagnostics(Lens.LEFT, state.left)
                 mergeBondDiagnostics(Lens.RIGHT, state.right)
+                mergeReconnectDiagnostics(Lens.LEFT, state.left)
+                mergeReconnectDiagnostics(Lens.RIGHT, state.right)
+                mergeServiceCounters(state)
                 updateConnectionSequence(state.connectionOrder)
             }
         }
@@ -386,6 +398,52 @@ class BleTelemetryRepository(
         }
     }
 
+    private fun mergeReconnectDiagnostics(lens: Lens, status: MoncchichiBleService.LensStatus) {
+        updateSnapshot(persist = false) { current ->
+            val existing = current.lens(lens)
+            var updated = existing
+            var changed = false
+            val lensLabel = lens.name.lowercase(Locale.US)
+
+            if (existing.reconnectAttempts != status.reconnectAttempts) {
+                updated = updated.copy(reconnectAttempts = status.reconnectAttempts)
+                _events.tryEmit("[BLE][LINK] ${lensLabel} auto-reconnect attempt ${status.reconnectAttempts}")
+                changed = true
+            }
+            if (existing.reconnectSuccesses != status.reconnectSuccesses) {
+                updated = updated.copy(reconnectSuccesses = status.reconnectSuccesses)
+                _events.tryEmit("[BLE][LINK] ${lensLabel} auto-reconnect success")
+                changed = true
+            }
+            if (existing.reconnecting != status.reconnecting) {
+                updated = updated.copy(reconnecting = status.reconnecting)
+                changed = true
+            }
+            if (existing.bondResets != status.bondResetCount) {
+                updated = updated.copy(bondResets = status.bondResetCount)
+                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond reset events=${status.bondResetCount}")
+                changed = true
+            }
+
+            if (!changed) {
+                current
+            } else {
+                current.updateLens(lens, updated)
+            }
+        }
+    }
+
+    private fun mergeServiceCounters(state: MoncchichiBleService.ServiceState) {
+        updateSnapshot(persist = false) { current ->
+            current.copy(
+                autoReconnectAttempts = state.autoReconnectAttemptCount,
+                autoReconnectSuccesses = state.autoReconnectSuccessCount,
+                rightBondRetries = state.rightBondRetryCount,
+                bondResetEvents = state.bondResetEvents,
+            )
+        }
+    }
+
     private fun updateConnectionSequence(order: List<Lens>) {
         val label = if (order.isEmpty()) null else order.joinToString(separator = "→") { it.name.lowercase(Locale.US) }
         val previous = _snapshot.value.connectionSequence
@@ -424,6 +482,9 @@ class BleTelemetryRepository(
             rightBondResult = right.lastBondResult,
             pairingDialogsShown = left.pairingDialogsShown + right.pairingDialogsShown,
             gattRefreshCount = left.refreshCount + right.refreshCount,
+            autoReconnectAttempts = left.reconnectAttempts + right.reconnectAttempts,
+            autoReconnectSuccesses = left.reconnectSuccesses + right.reconnectSuccesses,
+            bondResetEvents = max(bondResetEvents, left.bondResets + right.bondResets),
         )
     }
 

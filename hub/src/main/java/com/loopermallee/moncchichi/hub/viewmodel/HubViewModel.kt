@@ -597,6 +597,13 @@ class HubViewModel(
         val name = discovery.names[lens]
         val snapshot = telemetry.snapshot.value
         val lensTelemetry = if (lens == Lens.LEFT) snapshot.left else snapshot.right
+        if (lensTelemetry.reconnecting) {
+            return LensChipState(
+                title = "$titleBase reconnecting",
+                status = LensConnectionPhase.Connecting,
+                detail = "Reconnecting…",
+            )
+        }
         val detailParts = buildList {
             if (!name.isNullOrBlank()) add(name)
             rssi?.let { add("Signal ${it} dBm") }
