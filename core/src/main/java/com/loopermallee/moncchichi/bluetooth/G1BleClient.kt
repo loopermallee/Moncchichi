@@ -1,5 +1,10 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import android.app.ActivityManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothDevice.ACTION_BOND_STATE_CHANGED
@@ -11,6 +16,7 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.provider.Settings
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
@@ -32,6 +38,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -271,6 +278,10 @@ class G1BleClient(
         private const val BOND_RETRY_WINDOW_MS = 30_000L
         private const val BOND_RETRY_MAX_ATTEMPTS = 3
         private const val BOND_DIALOG_GRACE_MS = 5_000L
+        private const val PAIRING_NOTIFICATION_CHANNEL_ID = "moncchichi_ble_pairing"
+        private const val PAIRING_NOTIFICATION_CHANNEL_NAME = "Bonding prompts"
+        private const val PAIRING_NOTIFICATION_ID = 0xB10
+        private const val PAIRING_NOTIFICATION_REQUEST_CODE = 0x192
         private const val GATT_RESET_DELAY_MS = 250L
         internal const val KEEP_ALIVE_ACK_TIMEOUT_MS = G1Protocols.DEVICE_KEEPALIVE_ACK_TIMEOUT_MS
         internal const val KEEP_ALIVE_RETRY_BACKOFF_MS = G1Protocols.RETRY_BACKOFF_MS
@@ -332,6 +343,7 @@ class G1BleClient(
     val ackEvents: SharedFlow<AckEvent> = _ackEvents.asSharedFlow()
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var pairingDialogRunnable: Runnable? = null
+    @Volatile private var settingsLaunchedThisSession: Boolean = false
 
     data class KeepAlivePrompt(
         val timestampMs: Long,
@@ -401,6 +413,8 @@ class G1BleClient(
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
         keepAliveInFlight.set(0)
+        settingsLaunchedThisSession = false
+        dismissPairingNotification()
         bondEvents.tryEmit(
             BondEvent(
                 state = device.bondState,
@@ -599,6 +613,7 @@ class G1BleClient(
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
         keepAliveInFlight.set(0)
         cancelPairingDialogWatchdog()
+        dismissPairingNotification()
         _state.value = State(
             status = ConnectionState.DISCONNECTED,
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
@@ -616,33 +631,37 @@ class G1BleClient(
         return target?.status == ConnectionState.CONNECTED
     }
 
-    suspend fun awaitBonded(timeoutMs: Long): BondAwaitResult {
+    internal suspend fun awaitBonded(timeoutMs: Long): BondAwaitResult {
         if (state.value.bonded) {
             recordBondResult(BondResult.Success)
             return BondAwaitResult.Success
         }
-        val result = withTimeoutOrNull(timeoutMs) {
-            var sawBonding = device.bondState == BluetoothDevice.BOND_BONDING
-            bondEvents.collect { event ->
-                when (event.state) {
-                    BluetoothDevice.BOND_BONDING -> {
-                        sawBonding = true
-                        cancelPairingDialogWatchdog()
-                    }
-                    BluetoothDevice.BOND_BONDED -> {
-                        cancelPairingDialogWatchdog()
-                        return@withTimeoutOrNull BondAwaitResult.Success
-                    }
-                    BluetoothDevice.BOND_NONE -> {
-                        if (sawBonding) {
+        var sawBonding = device.bondState == BluetoothDevice.BOND_BONDING
+        val event = withTimeoutOrNull(timeoutMs) {
+            bondEvents
+                .onEach { event ->
+                    when (event.state) {
+                        BluetoothDevice.BOND_BONDING -> {
+                            sawBonding = true
                             cancelPairingDialogWatchdog()
-                            return@withTimeoutOrNull BondAwaitResult.Failed(event.reason)
                         }
+                        BluetoothDevice.BOND_BONDED -> cancelPairingDialogWatchdog()
+                        BluetoothDevice.BOND_NONE -> if (sawBonding) cancelPairingDialogWatchdog()
                     }
                 }
-            }
-            BondAwaitResult.Timeout
-        } ?: BondAwaitResult.Timeout
+                .first { event ->
+                    when (event.state) {
+                        BluetoothDevice.BOND_BONDED -> true
+                        BluetoothDevice.BOND_NONE -> sawBonding
+                        else -> false
+                    }
+                }
+        }
+        val result = when {
+            event == null -> BondAwaitResult.Timeout
+            event.state == BluetoothDevice.BOND_BONDED -> BondAwaitResult.Success
+            else -> BondAwaitResult.Failed(event.reason)
+        }
         when (result) {
             BondAwaitResult.Success -> recordBondResult(BondResult.Success)
             BondAwaitResult.Timeout -> {
@@ -1090,7 +1109,7 @@ class G1BleClient(
         }
         bondRetryJob?.cancel()
         bondRetryJob = scope.launch {
-            delay(BOND_RETRY_DELAY_MS)
+            delay(BOND_RETRY_DELAY_MS * attempt)
             logger.i(
                 label,
                 "${tt()} Scheduling createBond retry attempt=$attempt reason=${reason.toBondReasonString()}",
@@ -1186,15 +1205,28 @@ class G1BleClient(
             if (_state.value.bonded || device.bondState == BluetoothDevice.BOND_BONDED) {
                 return@Runnable
             }
-            logger.w(label, "${tt()} [PAIRING] Showing Bluetooth settings (reason=$reason)")
-            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (settingsLaunchedThisSession) {
+                logger.i(label, "${tt()} [PAIRING] Settings prompt already issued; skipping (reason=$reason)")
+                return@Runnable
             }
-            runCatching { context.startActivity(intent) }
-                .onSuccess { recordPairingDialogShown() }
-                .onFailure {
-                    logger.w(label, "${tt()} Failed to launch Bluetooth settings: ${it.message}")
+            if (appIsInForeground()) {
+                logger.w(label, "${tt()} [PAIRING] Showing Bluetooth settings (reason=$reason)")
+                val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
+                runCatching { context.startActivity(intent) }
+                    .onSuccess {
+                        settingsLaunchedThisSession = true
+                        recordPairingDialogShown()
+                    }
+                    .onFailure {
+                        logger.w(label, "${tt()} Failed to launch Bluetooth settings: ${it.message}")
+                        showPairingNotification(reason)
+                    }
+            } else {
+                logger.w(label, "${tt()} [PAIRING] App backgrounded; posting notification (reason=$reason)")
+                showPairingNotification(reason)
+            }
         }
         pairingDialogRunnable = runnable
         mainHandler.postDelayed(runnable, BOND_DIALOG_GRACE_MS)
@@ -1203,6 +1235,63 @@ class G1BleClient(
     private fun cancelPairingDialogWatchdog() {
         pairingDialogRunnable?.let { mainHandler.removeCallbacks(it) }
         pairingDialogRunnable = null
+        dismissPairingNotification()
+    }
+
+    private fun showPairingNotification(reason: String) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                PAIRING_NOTIFICATION_CHANNEL_ID,
+                PAIRING_NOTIFICATION_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                setShowBadge(false)
+                enableVibration(true)
+            }
+            manager.createNotificationChannel(channel)
+        }
+        val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            PAIRING_NOTIFICATION_REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(context, PAIRING_NOTIFICATION_CHANNEL_ID)
+        } else {
+            Notification.Builder(context)
+        }
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setContentTitle("Complete Bluetooth pairing")
+            .setContentText("Tap to continue pairing ${device.name ?: "your lens"}")
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_REMINDER)
+            .setPriority(Notification.PRIORITY_HIGH)
+
+        settingsLaunchedThisSession = true
+        manager.notify(PAIRING_NOTIFICATION_ID, builder.build())
+        recordPairingDialogShown()
+    }
+
+    private fun dismissPairingNotification() {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        manager.cancel(PAIRING_NOTIFICATION_ID)
+    }
+
+    private fun appIsInForeground(): Boolean {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+        val processes = manager.runningAppProcesses ?: return false
+        val myPid = Process.myPid()
+        return processes.any { process ->
+            process.pid == myPid &&
+                (process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                    process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE)
+        }
     }
 
     private suspend fun resetGattBeforeBond(reason: String) {
@@ -1262,7 +1351,7 @@ class G1BleClient(
     }
 
     private fun createBondWithTransport(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             device.createBond(BluetoothDevice.TRANSPORT_LE)
         } else {
             device.createBond()

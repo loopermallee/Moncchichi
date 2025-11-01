@@ -169,6 +169,13 @@ class MoncchichiBleService(
             }
 
             val readyResult = try {
+                if (lens == Lens.RIGHT) {
+                    val leftBonded = clientRecords[Lens.LEFT]?.client?.state?.value?.bonded
+                        ?: (knownDevices[Lens.LEFT]?.bondState == BluetoothDevice.BOND_BONDED)
+                    val rightBonded = record.client.state.value.bonded ||
+                        device.bondState == BluetoothDevice.BOND_BONDED
+                    log("[PAIRING] Right connect preflight leftBonded=$leftBonded rightBonded=$rightBonded")
+                }
                 record.client.connect()
                 when (val bondResult = record.client.awaitBonded(BOND_TIMEOUT_MS)) {
                     BondAwaitResult.Success -> {
