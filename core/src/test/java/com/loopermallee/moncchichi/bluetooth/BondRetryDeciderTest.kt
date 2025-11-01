@@ -12,6 +12,7 @@ private const val UNBOND_REASON_REMOTE_DEVICE_DOWN = 4
 private const val UNBOND_REASON_REMOVED = 5
 private const val UNBOND_REASON_OPERATION_CANCELED = 6
 private const val UNBOND_REASON_REMOTE_AUTH_CANCELED = 8
+private const val BOND_FAILURE_UNKNOWN = 10
 
 class BondRetryDeciderTest {
 
@@ -44,6 +45,7 @@ class BondRetryDeciderTest {
 
         assertEquals(1, decider.nextRetryAttempt(UNBOND_REASON_AUTH_FAILED))
         assertEquals(2, decider.nextRetryAttempt(UNBOND_REASON_REMOVED))
+        assertEquals(3, decider.nextRetryAttempt(BOND_FAILURE_UNKNOWN))
     }
 
     @Test
@@ -55,6 +57,7 @@ class BondRetryDeciderTest {
             UNBOND_REASON_REMOTE_DEVICE_DOWN,
             UNBOND_REASON_REMOVED,
             UNBOND_REASON_REMOTE_AUTH_CANCELED,
+            BOND_FAILURE_UNKNOWN,
         )
 
         expectedTransientReasons.forEach { reason ->

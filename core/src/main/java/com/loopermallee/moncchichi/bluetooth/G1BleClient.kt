@@ -110,6 +110,7 @@ internal class BondRetryDecider(
                 UNBOND_REASON_REMOTE_AUTH_CANCELED,
                 UNBOND_REASON_REMOTE_DEVICE_DOWN,
                 UNBOND_REASON_REMOVED,
+                BOND_FAILURE_UNKNOWN,
                 -> true
                 else -> false
             }
@@ -139,6 +140,17 @@ internal class BondRetryDecider(
         attemptCount += 1
         return attemptCount
     }
+}
+
+internal fun shouldAttemptRebondAfterLoss(
+    previousBondState: Int,
+    newBondState: Int,
+    reason: Int,
+): Boolean {
+    if (previousBondState != BluetoothDevice.BOND_BONDED) return false
+    if (newBondState != BluetoothDevice.BOND_NONE) return false
+    if (reason == UNBOND_REASON_REPEATED_ATTEMPTS) return false
+    return true
 }
 
 internal fun Int.toBondReasonString(): String {
@@ -1215,6 +1227,7 @@ class G1BleClient(
                     label,
                     "${tt()} Bond state changed=$bondState reason=${reason.toBondReasonString()}",
                 )
+                val previousBondState = lastBondState
                 updateBondState(bondState, reason)
                 when (bondState) {
                     BluetoothDevice.BOND_BONDED -> scheduleGattConnection("bond receiver")
@@ -1223,6 +1236,15 @@ class G1BleClient(
                         scope.launch {
                             val refreshed = refreshGattCache()
                             logger.i(label, "${tt()} [GATT] Cache refresh result=$refreshed")
+                        }
+                        if (shouldAttemptRebondAfterLoss(previousBondState, bondState, reason)) {
+                            scope.launch {
+                                logger.i(
+                                    label,
+                                    "${tt()} Bond lost from BONDED; requesting rebond (reason=${reason.toBondReasonString()})",
+                                )
+                                requestBond("rebond after loss (${reason.toBondReasonString()})")
+                            }
                         }
                         handleBondRetry(reason)
                     }
