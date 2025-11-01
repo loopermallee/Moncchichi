@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.hub.ui.developer
 
+import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -176,6 +177,9 @@ class DeveloperViewModel(
         appendLine("  Bond transitions: ${lens.bondTransitions}")
         appendLine("  Bond timeouts: ${lens.bondTimeouts}")
         appendLine("  Last bond result: ${lens.lastBondResult ?: "–"}")
+        appendLine("  Last bond state: ${formatBondState(lens.lastBondState)}")
+        appendLine("  Last bond reason: ${formatBondReason(lens.lastBondReason)}")
+        appendLine("  Bond event at: ${formatBondTimestamp(lens.lastBondEventAt)}")
         appendLine("  Disconnect reason: ${lens.disconnectReason ?: "–"}")
         appendLine("  Reconnect attempts: ${lens.reconnectAttempts}")
         appendLine("  Reconnect successes: ${lens.reconnectSuccesses}")
@@ -189,6 +193,36 @@ class DeveloperViewModel(
         }
         val lastUpdated = lens.lastUpdated?.let { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(it)) }
         appendLine("  Last update: ${lastUpdated ?: "–"}")
+    }
+
+    private fun formatBondState(state: Int?): String = when (state) {
+        null -> "–"
+        BluetoothDevice.BOND_NONE -> "BOND_NONE"
+        BluetoothDevice.BOND_BONDING -> "BOND_BONDING"
+        BluetoothDevice.BOND_BONDED -> "BOND_BONDED"
+        else -> state.toString()
+    }
+
+    private fun formatBondReason(reason: Int?): String = when (reason) {
+        null -> "–"
+        1 -> "UNBOND_REASON_AUTH_FAILED"
+        2 -> "UNBOND_REASON_AUTH_REJECTED"
+        3 -> "UNBOND_REASON_AUTH_CANCELED"
+        4 -> "UNBOND_REASON_REMOTE_DEVICE_DOWN"
+        5 -> "UNBOND_REASON_REMOVED"
+        6 -> "UNBOND_REASON_OPERATION_CANCELED"
+        7 -> "UNBOND_REASON_REPEATED_ATTEMPTS"
+        8 -> "UNBOND_REASON_REMOTE_AUTH_CANCELED"
+        9 -> "UNBOND_REASON_UNKNOWN"
+        10 -> "BOND_FAILURE_UNKNOWN"
+        else -> reason.toString()
+    }
+
+    private fun formatBondTimestamp(timestamp: Long?): String {
+        if (timestamp == null) return "–"
+        return runCatching {
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(timestamp))
+        }.getOrDefault("–")
     }
 
     private fun formatDuration(seconds: Long): String {

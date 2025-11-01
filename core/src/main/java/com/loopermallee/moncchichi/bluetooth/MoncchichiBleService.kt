@@ -74,6 +74,9 @@ class MoncchichiBleService(
         val reconnectSuccesses: Int = 0,
         val reconnecting: Boolean = false,
         val bondResetCount: Int = 0,
+        val lastBondState: Int? = null,
+        val lastBondReason: Int? = null,
+        val lastBondEventAt: Long? = null,
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
@@ -193,6 +196,8 @@ class MoncchichiBleService(
             }
             cancelReconnect(lens)
 
+            maybeClearStaleBond(device, lens)
+
             val record = buildClientRecord(lens, device)
             clientRecords[lens]?.dispose()
             clientRecords[lens] = record
@@ -296,6 +301,35 @@ class MoncchichiBleService(
             log("Connected ${device.address} on $lens")
             true
         }
+
+    private suspend fun maybeClearStaleBond(device: BluetoothDevice, lens: Lens) {
+        val status = clientState(lens)
+        val currentBondState = device.bondState
+        val staleBond = currentBondState == BluetoothDevice.BOND_BONDED && !status.bonded
+        val removalDetected = status.lastBondReason == UNBOND_REASON_REMOVED
+        if (!staleBond && !removalDetected) {
+            return
+        }
+        val shouldClear = staleBond || (removalDetected && currentBondState != BluetoothDevice.BOND_NONE)
+        val lensLabel = lens.name.lowercase(Locale.US)
+        val reasonLabel = formatBondReason(status.lastBondReason)
+        if (shouldClear) {
+            logWarn("[PAIRING] $lensLabel clearing stale bond before connect (bondState=$currentBondState reason=$reasonLabel)")
+            val cleared = clearBond(device)
+            log("[PAIRING] removeBond ${device.address} -> $cleared (pre-connect)")
+            if (cleared) {
+                delay(STALE_BOND_CLEAR_DELAY_MS)
+            }
+        }
+        if (removalDetected) {
+            val elapsed = status.lastBondEventAt?.let { System.currentTimeMillis() - it } ?: 0L
+            val remaining = (BOND_RECOVERY_GUARD_MS - elapsed).coerceAtLeast(0L)
+            if (remaining > 0L) {
+                logWarn("[PAIRING] $lensLabel delaying reconnect by ${remaining}ms after bond removal (reason=$reasonLabel)")
+                delay(remaining)
+            }
+        }
+    }
 
     fun disconnect(lens: Lens) {
         clientRecords.remove(lens)?.let { record ->
@@ -447,6 +481,9 @@ class MoncchichiBleService(
                         smpFrameCount = state.smpFrameCount,
                         lastSmpOpcode = state.lastSmpOpcode,
                         bondResetCount = state.bondResetCount,
+                        lastBondState = state.lastBondState,
+                        lastBondReason = state.lastBondReason,
+                        lastBondEventAt = state.lastBondEventAt,
                     )
                 }
                 handleBondTransitions(lens, previousStatus, state)
@@ -889,6 +926,23 @@ class MoncchichiBleService(
         is G1ReplyParser.EvenAiEvent.Unknown -> "unknown(${"0x%02X".format(event.subcommand)})"
     }
 
+    private fun formatBondReason(reason: Int?): String {
+        return when (reason) {
+            null -> "n/a"
+            1 -> "UNBOND_REASON_AUTH_FAILED"
+            2 -> "UNBOND_REASON_AUTH_REJECTED"
+            3 -> "UNBOND_REASON_AUTH_CANCELED"
+            4 -> "UNBOND_REASON_REMOTE_DEVICE_DOWN"
+            5 -> "UNBOND_REASON_REMOVED"
+            6 -> "UNBOND_REASON_OPERATION_CANCELED"
+            7 -> "UNBOND_REASON_REPEATED_ATTEMPTS"
+            8 -> "UNBOND_REASON_REMOTE_AUTH_CANCELED"
+            9 -> "UNBOND_REASON_UNKNOWN"
+            10 -> "BOND_FAILURE_UNKNOWN"
+            else -> reason.toString()
+        }
+    }
+
     companion object {
         private const val TAG = "[MoncchichiBle]"
         private const val CONNECT_TIMEOUT_MS = 20_000L
@@ -899,6 +953,9 @@ class MoncchichiBleService(
         private const val MAX_BOND_FAILURE_STREAK = 3
         private const val RIGHT_BOND_INITIAL_DELAY_MS = 500L
         private const val RIGHT_BOND_RETRY_BASE_DELAY_MS = 10_000L
+        private const val STALE_BOND_CLEAR_DELAY_MS = 500L
+        private const val BOND_RECOVERY_GUARD_MS = 3_000L
+        private const val UNBOND_REASON_REMOVED = 5
     }
 }
 
