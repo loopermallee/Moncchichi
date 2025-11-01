@@ -74,11 +74,18 @@ class BleTelemetryRepository(
 
     private val leftBuffer = ByteArrayOutputStream()
     private val rightBuffer = ByteArrayOutputStream()
+    private data class KeepAliveSnapshot(
+        var lastAt: Long? = null,
+        var rtt: Long? = null,
+        var failures: Int = 0,
+    )
+    private val keepAliveSnapshots = mutableMapOf<Lens, KeepAliveSnapshot>()
 
     fun reset() {
         _snapshot.value = Snapshot()
         _events.tryEmit("[BLE][DIAG] telemetry reset")
         clearBuffers()
+        keepAliveSnapshots.clear()
     }
 
     fun bindToService(service: MoncchichiBleService, scope: CoroutineScope) {
@@ -98,6 +105,8 @@ class BleTelemetryRepository(
                 lastConnected = connected
                 mergeRssi(Lens.LEFT, state.left.rssi)
                 mergeRssi(Lens.RIGHT, state.right.rssi)
+                mergeKeepAlive(Lens.LEFT, state.left)
+                mergeKeepAlive(Lens.RIGHT, state.right)
             }
         }
         ackJob = scope.launch {
@@ -113,6 +122,7 @@ class BleTelemetryRepository(
         ackJob?.cancel(); ackJob = null
         lastConnected = false
         clearBuffers()
+        keepAliveSnapshots.clear()
     }
 
     fun onFrame(lens: Lens, frame: ByteArray) {
@@ -210,6 +220,29 @@ class BleTelemetryRepository(
         val message = "[ACK][$lensTag] opcode=$opcode status=$status → $outcome"
         logger("[BLE][ACK][$lensTag] opcode=$opcode status=$status success=${event.success}")
         _uartText.tryEmit(UartLine(event.lens, message))
+    }
+
+    private fun mergeKeepAlive(lens: Lens, status: MoncchichiBleService.LensStatus) {
+        val snapshot = keepAliveSnapshots.getOrPut(lens) { KeepAliveSnapshot() }
+        if (
+            snapshot.lastAt == status.lastKeepAliveAt &&
+            snapshot.rtt == status.keepAliveRttMs &&
+            snapshot.failures == status.consecutiveKeepAliveFailures
+        ) {
+            return
+        }
+        snapshot.lastAt = status.lastKeepAliveAt
+        snapshot.rtt = status.keepAliveRttMs
+        snapshot.failures = status.consecutiveKeepAliveFailures
+        val now = System.currentTimeMillis()
+        val agoLabel = status.lastKeepAliveAt?.let { "${now - it}ms ago" } ?: "n/a"
+        val rttLabel = status.keepAliveRttMs?.let { "${it}ms" } ?: "n/a"
+        val failures = status.consecutiveKeepAliveFailures
+        val line = "keepalive last=$agoLabel rtt=$rttLabel failures=$failures"
+        _events.tryEmit("[BLE][DIAG] ${lens.name.lowercase(Locale.US)} $line")
+        if (status.lastKeepAliveAt != null || failures > 0) {
+            _uartText.tryEmit(UartLine(lens, line))
+        }
     }
 
     private fun mergeRssi(lens: Lens, newValue: Int?) {
