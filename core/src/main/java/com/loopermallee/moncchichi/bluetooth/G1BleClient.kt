@@ -45,7 +45,7 @@ private const val UNBOND_REASON_REMOTE_AUTH_CANCELED = 8
 private const val UNBOND_REASON_UNKNOWN = 9
 private const val BOND_FAILURE_UNKNOWN = 10
 private const val EXTRA_REASON = "android.bluetooth.device.extra.REASON"
-private const val OPCODE_SET_MTU = 0x4D
+private const val OPCODE_SET_MTU = G1Protocols.CMD_HELLO
 
 internal sealed interface AckOutcome {
     val opcode: Int?
@@ -133,8 +133,8 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
 
     val statusByteFromHeader = getOrNull(1)?.toInt()?.and(0xFF)
     when (statusByteFromHeader) {
-        0xC9 -> return AckOutcome.Success(opcode, statusByteFromHeader)
-        0xCA -> return AckOutcome.Failure(opcode, statusByteFromHeader)
+        G1Protocols.STATUS_OK -> return AckOutcome.Success(opcode, statusByteFromHeader)
+        G1Protocols.STATUS_FAIL -> return AckOutcome.Failure(opcode, statusByteFromHeader)
     }
 
     statusByteFromHeader
@@ -150,8 +150,8 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
             val payloadEndExclusive = minOf(size, payloadStart + payloadLength)
             for (index in (payloadEndExclusive - 1) downTo payloadStart) {
                 when (this[index]) {
-                    0xC9.toByte() -> return AckOutcome.Success(opcode, 0xC9)
-                    0xCA.toByte() -> return AckOutcome.Failure(opcode, 0xCA)
+                    G1Protocols.STATUS_OK.toByte() -> return AckOutcome.Success(opcode, G1Protocols.STATUS_OK)
+                    G1Protocols.STATUS_FAIL.toByte() -> return AckOutcome.Failure(opcode, G1Protocols.STATUS_FAIL)
                 }
             }
         }
@@ -159,8 +159,8 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
     if (size >= 2) {
         for (index in (size - 1) downTo 1) {
             when (this[index]) {
-                0xC9.toByte() -> return AckOutcome.Success(opcode, 0xC9)
-                0xCA.toByte() -> return AckOutcome.Failure(opcode, 0xCA)
+                G1Protocols.STATUS_OK.toByte() -> return AckOutcome.Success(opcode, G1Protocols.STATUS_OK)
+                G1Protocols.STATUS_FAIL.toByte() -> return AckOutcome.Failure(opcode, G1Protocols.STATUS_FAIL)
             }
         }
     }
@@ -238,22 +238,22 @@ class G1BleClient(
 ) {
 
     companion object {
-        private const val MTU_COMMAND_ACK_TIMEOUT_MS = 1_500L
-        private const val MTU_COMMAND_WARMUP_GRACE_MS = 7_500L
-        private const val MTU_COMMAND_RETRY_COUNT = 3
-        private const val MTU_COMMAND_RETRY_DELAY_MS = 200L
+        private const val MTU_COMMAND_ACK_TIMEOUT_MS = G1Protocols.MTU_ACK_TIMEOUT_MS
+        private const val MTU_COMMAND_WARMUP_GRACE_MS = G1Protocols.MTU_WARMUP_GRACE_MS
+        private const val MTU_COMMAND_RETRY_COUNT = G1Protocols.MAX_RETRIES
+        private const val MTU_COMMAND_RETRY_DELAY_MS = G1Protocols.MTU_RETRY_DELAY_MS
         private const val POST_BOND_CONNECT_DELAY_MS = 1_000L
         private const val BOND_STATE_REMOVED = 9
         private const val BOND_RETRY_DELAY_MS = 750L
         private const val BOND_RETRY_WINDOW_MS = 30_000L
         private const val BOND_RETRY_MAX_ATTEMPTS = 3
-        internal const val KEEP_ALIVE_ACK_TIMEOUT_MS = 1_000L
-        internal const val KEEP_ALIVE_RETRY_BACKOFF_MS = 150L
+        internal const val KEEP_ALIVE_ACK_TIMEOUT_MS = G1Protocols.DEVICE_KEEPALIVE_ACK_TIMEOUT_MS
+        internal const val KEEP_ALIVE_RETRY_BACKOFF_MS = G1Protocols.RETRY_BACKOFF_MS
         internal const val KEEP_ALIVE_LOCK_POLL_INTERVAL_MS = 20L
         // Handshake capture shows firmware initiating keep-alive at sequence 0x01.
         private const val KEEP_ALIVE_INITIAL_SEQUENCE = 0x01
-        internal const val KEEP_ALIVE_MAX_ATTEMPTS = 3
-        internal const val KEEP_ALIVE_OPCODE = 0xF1
+        internal const val KEEP_ALIVE_MAX_ATTEMPTS = G1Protocols.MAX_RETRIES
+        internal const val KEEP_ALIVE_OPCODE = G1Protocols.CMD_KEEPALIVE
     }
 
     enum class ConnectionState {
@@ -550,6 +550,7 @@ class G1BleClient(
         ackTimeoutMs: Long,
         retries: Int,
         retryDelayMs: Long,
+        expectAck: Boolean = true,
         onAttemptResult: ((CommandAttemptTelemetry) -> Unit)? = null,
     ): Boolean {
         return writeMutex.withLock {
@@ -558,6 +559,7 @@ class G1BleClient(
                 ackTimeoutMs = ackTimeoutMs,
                 retries = retries,
                 retryDelayMs = retryDelayMs,
+                expectAck = expectAck,
                 onAttemptResult = onAttemptResult,
             )
         }
@@ -568,19 +570,22 @@ class G1BleClient(
         ackTimeoutMs: Long,
         retries: Int,
         retryDelayMs: Long,
+        expectAck: Boolean = true,
         onAttemptResult: ((CommandAttemptTelemetry) -> Unit)? = null,
     ): Boolean {
         val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
         repeat(retries) { attempt ->
-            // Clear any stale ACK before writing.
-            while (ackSignals.tryReceive().isSuccess) {
-                // Drain the channel.
+            if (expectAck) {
+                // Clear any stale ACK before writing.
+                while (ackSignals.tryReceive().isSuccess) {
+                    // Drain the channel.
+                }
             }
             val queued = uartClient.write(payload)
             if (!queued) {
                 logger.w(
                     label,
-                    "${tt()} Failed to enqueue write opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
+                    "${tt()} Failed to enqueue write opcode=${opcode.toLabel()} (attempt ${attempt + 1})",
                 )
                 onAttemptResult?.invoke(
                     CommandAttemptTelemetry(
@@ -594,6 +599,18 @@ class G1BleClient(
                 delay(retryDelayMs)
                 return@repeat
             }
+            if (!expectAck) {
+                onAttemptResult?.invoke(
+                    CommandAttemptTelemetry(
+                        attemptIndex = attempt + 1,
+                        success = true,
+                        ackTimedOut = false,
+                        ackFailed = false,
+                        queueFailed = false,
+                    )
+                )
+                return true
+            }
             val ackResult = withTimeoutOrNull(ackTimeoutMs) {
                 while (true) {
                     val ack = ackSignals.receive()
@@ -604,15 +621,15 @@ class G1BleClient(
                         is AckOutcome.Success -> {
                             logger.i(
                                 label,
-                                "${tt()} Ignoring ACK success opcode=${ack.opcode.toHexString()} " +
-                                    "while awaiting ${opcode.toHexString()}",
+                                "${tt()} Ignoring ACK success opcode=${ack.opcode.toLabel()} " +
+                                    "while awaiting ${opcode.toLabel()}",
                             )
                         }
                         is AckOutcome.Failure -> {
                             logger.w(
                                 label,
-                                "${tt()} Ignoring ACK failure opcode=${ack.opcode.toHexString()} " +
-                                    "status=${ack.status.toHexString()} while awaiting ${opcode.toHexString()}",
+                                "${tt()} Ignoring ACK failure opcode=${ack.opcode.toLabel()} " +
+                                    "status=${ack.status.toHexString()} while awaiting ${opcode.toLabel()}",
                             )
                         }
                     }
@@ -634,7 +651,7 @@ class G1BleClient(
                 is AckOutcome.Failure -> {
                     logger.w(
                         label,
-                        "${tt()} ACK failure opcode=${ackResult.opcode.toHexString()} " +
+                        "${tt()} ACK failure opcode=${ackResult.opcode.toLabel()} " +
                             "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
                     )
                     onAttemptResult?.invoke(
@@ -650,7 +667,7 @@ class G1BleClient(
                 null -> {
                     logger.w(
                         label,
-                        "${tt()} ACK timeout opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
+                        "${tt()} ACK timeout opcode=${opcode.toLabel()} (attempt ${attempt + 1})",
                     )
                     onAttemptResult?.invoke(
                         CommandAttemptTelemetry(
@@ -821,7 +838,7 @@ class G1BleClient(
     private suspend fun sendMtuCommand(mtu: Int, warmupInProgress: Boolean): Boolean {
         val mtuLow = (mtu and 0xFF).toByte()
         val mtuHigh = ((mtu ushr 8) and 0xFF).toByte()
-        val payload = byteArrayOf(0x4D, mtuLow, mtuHigh)
+        val payload = byteArrayOf(G1Protocols.CMD_HELLO.toByte(), mtuLow, mtuHigh)
         val ackTimeout = if (warmupInProgress) {
             MTU_COMMAND_WARMUP_GRACE_MS
         } else {
@@ -875,12 +892,13 @@ class G1BleClient(
     private fun ByteArray.toAudioFrameOrNull(): AudioFrame? {
         if (isEmpty()) return null
         val opcode = this[0].toInt() and 0xFF
-        if (opcode != 0xF1) return null
+        if (opcode != G1Protocols.CMD_KEEPALIVE) return null
         val sequence = this.getOrNull(1)?.toUByte()?.toInt() ?: 0
         val payload = if (size > 2) copyOfRange(2, size) else ByteArray(0)
         return AudioFrame(sequence, payload)
     }
 
+    private fun Int?.toLabel(): String = this?.let { "${G1Protocols.opcodeName(it)}(${String.format("0x%02X", it)})" } ?: "unknown"
     private fun Int?.toHexString(): String = this?.let { String.format("0x%02X", it) } ?: "n/a"
 
     private fun Int.toByteHex(): String = String.format("0x%02X", this and 0xFF)
