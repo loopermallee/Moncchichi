@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <item
         android:id="@+id/action_copy_logs"
-        android:icon="@android:drawable/ic_menu_copy"
+        android:icon="@drawable/ic_content_copy_24"
         android:title="@string/developer_action_copy"
         app:showAsAction="ifRoom" />
     <item
@@ -13,7 +13,7 @@
         app:showAsAction="ifRoom" />
     <item
         android:id="@+id/action_export_logs"
-        android:icon="@android:drawable/ic_menu_share"
+        android:icon="@drawable/ic_share_24"
         android:title="@string/developer_action_export"
         app:showAsAction="ifRoom" />
 </menu>
