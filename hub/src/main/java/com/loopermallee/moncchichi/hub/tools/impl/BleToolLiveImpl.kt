@@ -46,6 +46,7 @@ class BleToolLiveImpl(
     private val telemetry: BleTelemetryRepository,
     private val scanner: BluetoothScanner,
     private val appScope: CoroutineScope,
+    private val resolveDeviceFn: (String) -> BluetoothDevice? = { mac -> defaultResolveDevice(mac) },
 ) : BleTool {
 
     private val appContext = context.applicationContext
@@ -143,7 +144,7 @@ class BleToolLiveImpl(
     }
 
     override suspend fun connect(deviceId: String): Boolean {
-        val device = resolveDevice(deviceId) ?: return false
+        val device = resolveDeviceFn(deviceId) ?: return false
         val descriptor = describeDevice(device.name, device.address)
         cacheDescriptor(device.address, descriptor)
         val pairKey = addressToPairToken[device.address] ?: descriptor.token
@@ -172,19 +173,36 @@ class BleToolLiveImpl(
             LensSlot.RIGHT -> device.address
         }
 
-        val leftDevice = leftAddress?.let { resolveDevice(it) }
-        val rightDevice = rightAddress?.let { resolveDevice(it) }
+        val outcomes = mutableMapOf<LensSlot, Boolean>()
+        val leftDevice = leftAddress?.let(resolveDeviceFn)
+        val rightDevice = rightAddress?.let(resolveDeviceFn)
 
-        val connectionOrder = if (primarySlot == LensSlot.RIGHT) {
-            listOfNotNull(rightDevice?.let { it to LensSlot.RIGHT }, leftDevice?.let { it to LensSlot.LEFT })
-        } else {
-            listOfNotNull(leftDevice?.let { it to LensSlot.LEFT }, rightDevice?.let { it to LensSlot.RIGHT })
+        if (leftDevice != null) {
+            if (primarySlot == LensSlot.RIGHT) {
+                Log.i(TAG, "[PAIRING] Right lens selected — connecting left first for handshake")
+            }
+            val ok = connectLens(leftDevice, LensSlot.LEFT)
+            outcomes[LensSlot.LEFT] = ok
+            if (!ok && rightDevice != null) {
+                Toast.makeText(
+                    appContext,
+                    "Left lens handshake failed — retry before connecting the right lens.",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                Log.w(TAG, "[PAIRING] Left lens handshake failed; skipping right lens connect")
+            }
         }
 
-        val outcomes = mutableMapOf<LensSlot, Boolean>()
-        connectionOrder.forEach { (targetDevice, slot) ->
-            val ok = connectLens(targetDevice, slot)
-            outcomes[slot] = ok
+        val shouldAttemptRight = when {
+            rightDevice == null -> false
+            leftDevice == null -> true
+            else -> outcomes[LensSlot.LEFT] == true
+        }
+        if (shouldAttemptRight) {
+            val ok = connectLens(rightDevice!!, LensSlot.RIGHT)
+            outcomes[LensSlot.RIGHT] = ok
+        } else if (rightDevice != null && leftDevice != null) {
+            Log.i(TAG, "[PAIRING] Skipped right lens connect because left lens is not ready")
         }
 
         val leftConnected = outcomes[LensSlot.LEFT] == true
@@ -259,7 +277,7 @@ class BleToolLiveImpl(
             }
     }
 
-    private fun resolveDevice(mac: String): BluetoothDevice? {
+    private fun defaultResolveDevice(mac: String): BluetoothDevice? {
         val mgr = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter = mgr?.adapter ?: BluetoothAdapter.getDefaultAdapter()
         return try {
