@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -295,6 +296,8 @@ class G1BleClientTest {
             val keepAliveResult = result.await()
             assertTrue(keepAliveResult.success)
             assertEquals(1, keepAliveResult.sequence)
+            assertEquals(0, keepAliveResult.lockContentionCount)
+            assertEquals(0, keepAliveResult.ackTimeoutCount)
             verify(exactly = 1) {
                 harness.uartClient.write(match { payload ->
                     payload.size == 2 &&
@@ -339,7 +342,62 @@ class G1BleClientTest {
             assertFalse(result.success)
             assertEquals(G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS, result.attemptCount)
             assertEquals(1, result.sequence)
+            assertEquals(0, result.lockContentionCount)
+            assertEquals(G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS, result.ackTimeoutCount)
             verify(exactly = G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS) { harness.uartClient.write(any<ByteArray>()) }
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
+    fun keepAliveResponderTracksLockContention() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+            every { harness.uartClient.write(any<ByteArray>()) } returns true
+
+            harness.client.connect()
+            runCurrent()
+
+            val collector = harness.notificationCollectorSlot.captured
+            val prompt = async { harness.client.keepAlivePrompts.first() }
+
+            collector.emit("ACK:KEEPALIVE\r\n".toByteArray())
+            runCurrent()
+
+            val blockingCommand = launch {
+                harness.client.sendCommand(
+                    payload = byteArrayOf(0x7F.toByte()),
+                    ackTimeoutMs = 5_000L,
+                    retries = 1,
+                    retryDelayMs = 100L,
+                )
+            }
+
+            runCurrent()
+
+            val resultDeferred = async { harness.client.respondToKeepAlivePrompt(prompt.await()) }
+
+            repeat(G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS) { attempt ->
+                advanceTimeBy(KEEP_ALIVE_ACK_TIMEOUT_MS)
+                runCurrent()
+                if (attempt < G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS - 1) {
+                    advanceTimeBy(KEEP_ALIVE_RETRY_BACKOFF_MS * (attempt + 1))
+                    runCurrent()
+                }
+            }
+
+            val result = resultDeferred.await()
+            assertFalse(result.success)
+            assertEquals(G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS, result.attemptCount)
+            assertEquals(G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS, result.lockContentionCount)
+            assertEquals(0, result.ackTimeoutCount)
+
+            advanceTimeBy(5_000L)
+            runCurrent()
+            blockingCommand.cancelAndJoin()
         } finally {
             harness.client.close()
         }
