@@ -240,6 +240,14 @@ class MoncchichiBleService(
         ALL_LENSES.forEach { disconnect(it) }
     }
 
+    suspend fun refreshGattCache(
+        lens: Lens,
+        logger: (String) -> Unit = { message -> log("${lens.name}: $message") },
+    ): Boolean {
+        val record = clientRecords[lens] ?: return false
+        return record.client.refreshGattCache { message -> logger(message) }
+    }
+
     suspend fun send(
         payload: ByteArray,
         target: Target = Target.Both,

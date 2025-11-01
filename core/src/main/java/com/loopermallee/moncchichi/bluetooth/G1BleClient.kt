@@ -1083,30 +1083,16 @@ class G1BleClient(
                     BluetoothDevice.BOND_NONE -> {
                         logger.i(label, "${tt()} Bond cleared; refreshing GATT cache")
                         scope.launch {
-                            runCatching { uartClient.refresh() }
-                                .onFailure {
-                                    logger.w(label, "${tt()} GATT refresh failed: ${it.message}")
-                                }
-                            val refreshed = device.refreshGattCacheCompat { message ->
-                                logger.i(label, "${tt()} $message")
-                            }
-                            recordRefreshInvocation()
-                            logger.i(label, "${tt()} [GATT] Device cache refresh result=$refreshed")
+                            val refreshed = refreshGattCache()
+                            logger.i(label, "${tt()} [GATT] Cache refresh result=$refreshed")
                         }
                         handleBondRetry(reason)
                     }
                     BOND_STATE_REMOVED -> {
                         logger.w(label, "${tt()} Bond removed; refreshing GATT cache")
                         scope.launch {
-                            runCatching { uartClient.refresh() }
-                                .onFailure {
-                                    logger.w(label, "${tt()} GATT refresh failed: ${it.message}")
-                                }
-                            val refreshed = device.refreshGattCacheCompat { message ->
-                                logger.i(label, "${tt()} $message")
-                            }
-                            recordRefreshInvocation()
-                            logger.i(label, "${tt()} [GATT] Device cache refresh result=$refreshed")
+                            val refreshed = refreshGattCache()
+                            logger.i(label, "${tt()} [GATT] Cache refresh result=$refreshed")
                         }
                         handleBondRetry(reason)
                     }
@@ -1199,12 +1185,22 @@ class G1BleClient(
         }
     }
 
+    suspend fun refreshGattCache(loggerOverride: ((String) -> Unit)? = null): Boolean {
+        val log = loggerOverride ?: { message: String ->
+            logger.i(label, "${tt()} $message")
+        }
+        val refreshed = runCatching {
+            uartClient.refreshGattCache(log)
+        }.onFailure {
+            logger.w(label, "${tt()} GATT refresh failed: ${it.message}")
+        }.getOrElse { false }
+        recordRefreshInvocation()
+        return refreshed
+    }
+
     fun refreshDeviceCache() {
         scope.launch {
-            val refreshed = device.refreshGattCacheCompat { message ->
-                logger.i(label, "${tt()} $message")
-            }
-            recordRefreshInvocation()
+            val refreshed = refreshGattCache()
             logger.i(label, "${tt()} [GATT] Manual refresh result=$refreshed")
         }
     }

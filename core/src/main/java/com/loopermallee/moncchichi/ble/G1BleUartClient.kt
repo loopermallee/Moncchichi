@@ -7,7 +7,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.content.Context
-import android.os.Build
+import com.loopermallee.moncchichi.bluetooth.refreshCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -133,23 +133,19 @@ class G1BleUartClient(
         maybeSendWarmupAfterNotifyArmed()
     }
 
-    suspend fun refresh() {
-        val existing = gatt ?: return
-        runCatching { existing.close() }
-        gatt = null
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            logger("[GATT] refresh() skipped – API < 24")
-            return
+    fun currentGatt(): BluetoothGatt? = gatt
+
+    suspend fun refreshGattCache(log: (String) -> Unit): Boolean {
+        val existing = gatt
+        if (existing == null) {
+            log("[GATT] refresh() skipped – no active connection")
+            return false
         }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val method = existing.javaClass.getMethod("refresh")
-                val refreshed = method.invoke(existing) as? Boolean ?: false
-                logger("[GATT] refresh() invoked result=$refreshed")
-            }.onFailure {
-                logger("[GATT] refresh() invocation failed: ${it.message}")
-            }
+        val refreshed = withContext(Dispatchers.IO) {
+            existing.refreshCompat(log)
         }
+        close()
+        return refreshed
     }
 
     fun write(bytes: ByteArray, withResponse: Boolean = false): Boolean {
