@@ -43,6 +43,9 @@ class MoncchichiBleService(
         val lastAckAt: Long? = null,
         val degraded: Boolean = false,
         val attMtu: Int? = null,
+        val lastKeepAliveAt: Long? = null,
+        val keepAliveRttMs: Long? = null,
+        val consecutiveKeepAliveFailures: Int = 0,
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
@@ -291,12 +294,59 @@ class MoncchichiBleService(
                 _audioFrames.tryEmit(AudioFrame(lens, frame.sequence, frame.payload))
             }
         }
+        jobs += scope.launch {
+            client.keepAlivePrompts.collect { prompt ->
+                val result = client.respondToKeepAlivePrompt(prompt)
+                handleKeepAliveResult(lens, result)
+            }
+        }
+        jobs += scope.launch {
+            client.keepAliveResults.collect { result ->
+                logKeepAliveTelemetry(lens, result)
+            }
+        }
         return ClientRecord(lens, client, jobs)
     }
 
     private fun ClientRecord.clientState(): LensStatus = when (lens) {
         Lens.LEFT -> state.value.left
         Lens.RIGHT -> state.value.right
+    }
+
+    private suspend fun handleKeepAliveResult(
+        lens: Lens,
+        result: G1BleClient.KeepAliveResult,
+    ) {
+        updateLens(lens) { status ->
+            val previousFailures = status.consecutiveKeepAliveFailures
+            val nextFailures = if (result.success) 0 else previousFailures + 1
+            val threshold = G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS
+            val degraded = when {
+                result.success && previousFailures >= threshold -> false
+                result.success -> status.degraded
+                else -> status.degraded || nextFailures >= threshold
+            }
+            status.copy(
+                lastKeepAliveAt = if (result.success) result.completedTimestampMs else status.lastKeepAliveAt,
+                keepAliveRttMs = result.rttMs ?: status.keepAliveRttMs,
+                consecutiveKeepAliveFailures = nextFailures,
+                degraded = degraded,
+            )
+        }
+    }
+
+    private fun logKeepAliveTelemetry(lens: Lens, result: G1BleClient.KeepAliveResult) {
+        val lensLabel = lens.name.lowercase(Locale.US)
+        val seqLabel = String.format("0x%02X", result.sequence)
+        val rttLabel = result.rttMs?.let { "${it}ms" } ?: "n/a"
+        val attemptsLabel = result.attemptCount
+        val promptLatency = result.completedTimestampMs - result.promptTimestampMs
+        val message = "[KEEPALIVE][$lensLabel] seq=$seqLabel rtt=$rttLabel attempts=$attemptsLabel latency=${promptLatency}ms"
+        if (result.success) {
+            log(message)
+        } else {
+            logWarn(message)
+        }
     }
 
     private fun inferLens(device: BluetoothDevice): Lens {

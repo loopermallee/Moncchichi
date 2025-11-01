@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.jvm.Volatile
 
@@ -54,6 +55,7 @@ internal sealed interface AckOutcome {
         override val opcode: Int?,
         override val status: Int?,
         val warmupPrompt: Boolean = false,
+        val keepAlivePrompt: Boolean = false,
     ) : AckOutcome
 
     data class Failure(
@@ -185,7 +187,12 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
         // These ACK:<TOKEN> strings are observed from the firmware but not part of
         // any published protocol specification. Treat them as successful ACKs so the
         // client remains resilient to keepalive and ping responses.
-        return AckOutcome.Success(opcode = null, status = null)
+        val keepAlivePrompt = normalized == "ACK:KEEPALIVE"
+        return AckOutcome.Success(
+            opcode = null,
+            status = null,
+            keepAlivePrompt = keepAlivePrompt,
+        )
     }
 
     return null
@@ -240,6 +247,13 @@ class G1BleClient(
         private const val BOND_RETRY_DELAY_MS = 750L
         private const val BOND_RETRY_WINDOW_MS = 30_000L
         private const val BOND_RETRY_MAX_ATTEMPTS = 3
+        private const val KEEP_ALIVE_ACK_TIMEOUT_MS = 1_000L
+        private const val KEEP_ALIVE_RETRY_BACKOFF_MS = 150L
+        private const val KEEP_ALIVE_LOCK_POLL_INTERVAL_MS = 20L
+        // Handshake capture shows firmware initiating keep-alive at sequence 0x01.
+        private const val KEEP_ALIVE_INITIAL_SEQUENCE = 0x01
+        internal const val KEEP_ALIVE_MAX_ATTEMPTS = 3
+        internal const val KEEP_ALIVE_OPCODE = 0xF1
     }
 
     enum class ConnectionState {
@@ -279,6 +293,27 @@ class G1BleClient(
     )
     private val _ackEvents = MutableSharedFlow<AckEvent>(extraBufferCapacity = 8)
     val ackEvents: SharedFlow<AckEvent> = _ackEvents.asSharedFlow()
+
+    data class KeepAlivePrompt(
+        val timestampMs: Long,
+        val source: Source,
+    ) {
+        enum class Source { Opcode, Token }
+    }
+
+    data class KeepAliveResult(
+        val promptTimestampMs: Long,
+        val completedTimestampMs: Long,
+        val success: Boolean,
+        val attemptCount: Int,
+        val sequence: Int,
+        val rttMs: Long?,
+    )
+
+    private val _keepAlivePrompts = MutableSharedFlow<KeepAlivePrompt>(extraBufferCapacity = 8)
+    val keepAlivePrompts: SharedFlow<KeepAlivePrompt> = _keepAlivePrompts.asSharedFlow()
+    private val _keepAliveResults = MutableSharedFlow<KeepAliveResult>(extraBufferCapacity = 8)
+    val keepAliveResults: SharedFlow<KeepAliveResult> = _keepAliveResults.asSharedFlow()
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val incoming: SharedFlow<ByteArray> = _incoming.asSharedFlow()
     private val _audioFrames = MutableSharedFlow<AudioFrame>(extraBufferCapacity = 64)
@@ -305,10 +340,14 @@ class G1BleClient(
     private val mtuCommandMutex = Mutex()
     @Volatile private var lastAckedMtu: Int? = null
     @Volatile private var warmupExpected: Boolean = false
+    private val keepAliveSequence = AtomicInteger(KEEP_ALIVE_INITIAL_SEQUENCE)
+    private val keepAliveInFlight = AtomicInteger(0)
 
     fun connect() {
         lastAckedMtu = null
         warmupExpected = false
+        keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
+        keepAliveInFlight.set(0)
         if (_state.value.warmupOk) {
             _state.value = _state.value.copy(warmupOk = false)
         }
@@ -368,6 +407,8 @@ class G1BleClient(
             uartClient.observeNotifications { payload ->
                 payload.parseAckOutcome()?.let { ack ->
                     val now = System.currentTimeMillis()
+                    var deliverAck = true
+                    var keepAlivePrompt: KeepAlivePrompt? = null
                     if (ack is AckOutcome.Success) {
                         lastAckTimestamp.set(now)
                         if (warmupExpected && ack.satisfiesWarmupAck()) {
@@ -383,6 +424,25 @@ class G1BleClient(
                                 warmupOk = true,
                             )
                         }
+                        when {
+                            ack.keepAlivePrompt -> {
+                                keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Token)
+                                deliverAck = false
+                            }
+                            ack.opcode == KEEP_ALIVE_OPCODE -> {
+                                val previous = decrementKeepAliveInFlight()
+                                if (previous <= 0) {
+                                    keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
+                                    deliverAck = false
+                                }
+                            }
+                        }
+                    } else if (ack is AckOutcome.Failure && ack.opcode == KEEP_ALIVE_OPCODE) {
+                        val previous = decrementKeepAliveInFlight()
+                        if (previous <= 0) {
+                            keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
+                            deliverAck = false
+                        }
                     }
                     val event = AckEvent(
                         timestampMs = now,
@@ -391,7 +451,10 @@ class G1BleClient(
                         success = ack is AckOutcome.Success,
                     )
                     _ackEvents.tryEmit(event)
-                    ackSignals.trySend(ack)
+                    keepAlivePrompt?.let { prompt -> _keepAlivePrompts.tryEmit(prompt) }
+                    if (deliverAck) {
+                        ackSignals.trySend(ack)
+                    }
                 }
                 val copy = payload.copyOf()
                 copy.toAudioFrameOrNull()?.let { frame -> _audioFrames.tryEmit(frame) }
@@ -435,6 +498,8 @@ class G1BleClient(
         uartClient.close()
         lastAckedMtu = null
         warmupExpected = false
+        keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
+        keepAliveInFlight.set(0)
         _state.value = State(
             status = ConnectionState.DISCONNECTED,
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
@@ -477,74 +542,151 @@ class G1BleClient(
         retryDelayMs: Long,
     ): Boolean {
         return writeMutex.withLock {
-            val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
-            repeat(retries) { attempt ->
-                // Clear any stale ACK before writing.
-                while (ackSignals.tryReceive().isSuccess) {
-                    // Drain the channel.
-                }
-                val queued = uartClient.write(payload)
-                if (!queued) {
-                    logger.w(
-                        label,
-                        "${tt()} Failed to enqueue write opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
-                    )
-                    delay(retryDelayMs)
-                    return@repeat
-                }
-                val ackResult = withTimeoutOrNull(ackTimeoutMs) {
-                    while (true) {
-                        val ack = ackSignals.receive()
-                        if (ack.matchesOpcode(opcode)) {
-                            return@withTimeoutOrNull ack
+            sendCommandLocked(payload, ackTimeoutMs, retries, retryDelayMs)
+        }
+    }
+
+    private suspend fun sendCommandLocked(
+        payload: ByteArray,
+        ackTimeoutMs: Long,
+        retries: Int,
+        retryDelayMs: Long,
+    ): Boolean {
+        val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
+        repeat(retries) { attempt ->
+            // Clear any stale ACK before writing.
+            while (ackSignals.tryReceive().isSuccess) {
+                // Drain the channel.
+            }
+            val queued = uartClient.write(payload)
+            if (!queued) {
+                logger.w(
+                    label,
+                    "${tt()} Failed to enqueue write opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
+                )
+                delay(retryDelayMs)
+                return@repeat
+            }
+            val ackResult = withTimeoutOrNull(ackTimeoutMs) {
+                while (true) {
+                    val ack = ackSignals.receive()
+                    if (ack.matchesOpcode(opcode)) {
+                        return@withTimeoutOrNull ack
+                    }
+                    when (ack) {
+                        is AckOutcome.Success -> {
+                            logger.i(
+                                label,
+                                "${tt()} Ignoring ACK success opcode=${ack.opcode.toHexString()} " +
+                                    "while awaiting ${opcode.toHexString()}",
+                            )
                         }
-                        when (ack) {
-                            is AckOutcome.Success -> {
-                                logger.i(
-                                    label,
-                                    "${tt()} Ignoring ACK success opcode=${ack.opcode.toHexString()} " +
-                                        "while awaiting ${opcode.toHexString()}",
-                                )
-                            }
-                            is AckOutcome.Failure -> {
-                                logger.w(
-                                    label,
-                                    "${tt()} Ignoring ACK failure opcode=${ack.opcode.toHexString()} " +
-                                        "status=${ack.status.toHexString()} while awaiting ${opcode.toHexString()}",
-                                )
-                            }
+                        is AckOutcome.Failure -> {
+                            logger.w(
+                                label,
+                                "${tt()} Ignoring ACK failure opcode=${ack.opcode.toHexString()} " +
+                                    "status=${ack.status.toHexString()} while awaiting ${opcode.toHexString()}",
+                            )
                         }
                     }
-                }
-                when (ackResult) {
-                    is AckOutcome.Success -> {
-                        return true
-                    }
-                    is AckOutcome.Failure -> {
-                        logger.w(
-                            label,
-                            "${tt()} ACK failure opcode=${ackResult.opcode.toHexString()} " +
-                                "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
-                        )
-                    }
-                    null -> {
-                        logger.w(
-                            label,
-                            "${tt()} ACK timeout opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
-                        )
-                    }
-                }
-                if (attempt < retries - 1) {
-                    delay(retryDelayMs)
                 }
             }
-            false
+            when (ackResult) {
+                is AckOutcome.Success -> {
+                    return true
+                }
+                is AckOutcome.Failure -> {
+                    logger.w(
+                        label,
+                        "${tt()} ACK failure opcode=${ackResult.opcode.toHexString()} " +
+                            "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
+                    )
+                }
+                null -> {
+                    logger.w(
+                        label,
+                        "${tt()} ACK timeout opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
+                    )
+                }
+            }
+            if (attempt < retries - 1) {
+                delay(retryDelayMs)
+            }
         }
+        return false
     }
 
     fun readRemoteRssi(): Boolean = uartClient.readRemoteRssi()
 
     fun lastAckTimestamp(): Long = lastAckTimestamp.get()
+
+    suspend fun respondToKeepAlivePrompt(prompt: KeepAlivePrompt): KeepAliveResult {
+        var attempt = 0
+        var success = false
+        var rttMs: Long? = null
+        val sequence = nextKeepAliveSequence()
+        val payload = buildKeepAlivePayload(sequence)
+        while (attempt < KEEP_ALIVE_MAX_ATTEMPTS && scope.isActive) {
+            if (!writeMutex.tryLock()) {
+                delay(KEEP_ALIVE_LOCK_POLL_INTERVAL_MS)
+                continue
+            }
+            attempt += 1
+            val sentAt = System.currentTimeMillis()
+            var acked = false
+            keepAliveInFlight.incrementAndGet()
+            try {
+            logger.i(
+                label,
+                "${tt()} Responding to keepalive seq=${sequence.toByteHex()} attempt=$attempt source=${prompt.source}",
+            )
+                acked = sendCommandLocked(
+                    payload = payload,
+                    ackTimeoutMs = KEEP_ALIVE_ACK_TIMEOUT_MS,
+                    retries = 1,
+                    retryDelayMs = KEEP_ALIVE_RETRY_BACKOFF_MS,
+                )
+            } finally {
+                if (!acked) {
+                    keepAliveInFlight.getAndUpdate { current -> if (current <= 0) 0 else current - 1 }
+                }
+                writeMutex.unlock()
+            }
+            if (acked) {
+                success = true
+                rttMs = System.currentTimeMillis() - sentAt
+                break
+            }
+            if (attempt < KEEP_ALIVE_MAX_ATTEMPTS) {
+                delay(KEEP_ALIVE_RETRY_BACKOFF_MS * attempt)
+            }
+        }
+        val completedTimestamp = System.currentTimeMillis()
+        if (!success && keepAliveInFlight.get() > 0) {
+            keepAliveInFlight.set(0)
+        }
+        val result = KeepAliveResult(
+            promptTimestampMs = prompt.timestampMs,
+            completedTimestampMs = completedTimestamp,
+            success = success,
+            attemptCount = attempt,
+            sequence = sequence,
+            rttMs = rttMs,
+        )
+        if (success) {
+            logger.i(
+                label,
+                "${tt()} Keepalive acknowledged seq=${sequence.toByteHex()} rtt=${rttMs ?: -1}ms attempts=$attempt",
+            )
+        } else {
+            logger.w(
+                label,
+                "${tt()} Keepalive failed seq=${sequence.toByteHex()} attempts=$attempt",
+            )
+        }
+        _keepAliveResults.emit(result)
+        return result
+    }
 
     private suspend fun sendMtuCommandIfNeeded(mtu: Int) {
         if (lastAckedMtu == mtu) return
@@ -607,6 +749,24 @@ class G1BleClient(
         )
     }
 
+    private fun nextKeepAliveSequence(): Int {
+        return keepAliveSequence.getAndUpdate { current ->
+            val next = (current + 1) and 0xFF
+            if (next == 0) KEEP_ALIVE_INITIAL_SEQUENCE else next
+        }.and(0xFF)
+    }
+
+    private fun buildKeepAlivePayload(sequence: Int): ByteArray {
+        val seqByte = (sequence and 0xFF).toByte()
+        return byteArrayOf(KEEP_ALIVE_OPCODE.toByte(), seqByte)
+    }
+
+    private fun decrementKeepAliveInFlight(): Int {
+        return keepAliveInFlight.getAndUpdate { current ->
+            if (current <= 0) 0 else current - 1
+        }
+    }
+
     private fun ByteArray.toAudioFrameOrNull(): AudioFrame? {
         if (isEmpty()) return null
         val opcode = this[0].toInt() and 0xFF
@@ -617,6 +777,8 @@ class G1BleClient(
     }
 
     private fun Int?.toHexString(): String = this?.let { String.format("0x%02X", it) } ?: "n/a"
+
+    private fun Int.toByteHex(): String = String.format("0x%02X", this and 0xFF)
 
     private fun requestWarmupOnNextNotify() {
         warmupExpected = true
