@@ -1,18 +1,25 @@
 package com.loopermallee.moncchichi.bluetooth
 
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothDevice.ACTION_BOND_STATE_CHANGED
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
+import com.loopermallee.moncchichi.bluetooth.refreshCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.jvm.Volatile
@@ -64,6 +72,19 @@ internal sealed interface AckOutcome {
         override val opcode: Int?,
         override val status: Int?,
     ) : AckOutcome
+}
+
+enum class BondResult {
+    Unknown,
+    Success,
+    Failed,
+    Timeout,
+}
+
+internal sealed class BondAwaitResult {
+    data object Success : BondAwaitResult()
+    data object Timeout : BondAwaitResult()
+    data class Failed(val reason: Int) : BondAwaitResult()
 }
 
 internal class BondRetryDecider(
@@ -249,6 +270,8 @@ class G1BleClient(
         private const val BOND_RETRY_DELAY_MS = 750L
         private const val BOND_RETRY_WINDOW_MS = 30_000L
         private const val BOND_RETRY_MAX_ATTEMPTS = 3
+        private const val BOND_DIALOG_GRACE_MS = 5_000L
+        private const val GATT_RESET_DELAY_MS = 250L
         internal const val KEEP_ALIVE_ACK_TIMEOUT_MS = G1Protocols.DEVICE_KEEPALIVE_ACK_TIMEOUT_MS
         internal const val KEEP_ALIVE_RETRY_BACKOFF_MS = G1Protocols.RETRY_BACKOFF_MS
         internal const val KEEP_ALIVE_LOCK_POLL_INTERVAL_MS = 20L
@@ -281,6 +304,9 @@ class G1BleClient(
         val lastDisconnectStatus: Int? = null,
         val bondTransitionCount: Int = 0,
         val bondTimeoutCount: Int = 0,
+        val bondAttemptCount: Int = 0,
+        val lastBondResult: BondResult = BondResult.Unknown,
+        val pairingDialogsShown: Int = 0,
         val refreshCount: Int = 0,
         val smpFrameCount: Int = 0,
         val lastSmpOpcode: Int? = null,
@@ -293,6 +319,7 @@ class G1BleClient(
         scope,
     )
     private val ackSignals = Channel<AckOutcome>(capacity = Channel.CONFLATED)
+    private val bondMutex = Mutex()
     data class BondEvent(val state: Int, val reason: Int, val timestampMs: Long)
     private val bondEvents = MutableSharedFlow<BondEvent>(replay = 1, extraBufferCapacity = 8)
     data class AckEvent(
@@ -303,6 +330,8 @@ class G1BleClient(
     )
     private val _ackEvents = MutableSharedFlow<AckEvent>(extraBufferCapacity = 8)
     val ackEvents: SharedFlow<AckEvent> = _ackEvents.asSharedFlow()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var pairingDialogRunnable: Runnable? = null
 
     data class KeepAlivePrompt(
         val timestampMs: Long,
@@ -530,31 +559,18 @@ class G1BleClient(
         updateBondState(device.bondState)
         when (device.bondState) {
             BluetoothDevice.BOND_BONDED -> {
+                recordBondResult(BondResult.Success)
+                cancelPairingDialogWatchdog()
                 requestWarmupOnNextNotify()
                 scheduleGattConnection("already bonded")
             }
             BluetoothDevice.BOND_NONE -> {
-                val name = device.name ?: device.address ?: "unknown"
-                logger.i(label, "${tt()} [PAIRING] Requesting bond with $name")
-                val bonded = device.createBond()
-                logger.i(label, "${tt()} Initiating bond=${bonded}")
-                if (!bonded) {
-                    when (device.bondState) {
-                        BluetoothDevice.BOND_BONDED -> {
-                            logger.i(label, "${tt()} Bond already completed prior to request")
-                            scheduleGattConnection("pre-bonded")
-                        }
-                        BluetoothDevice.BOND_BONDING -> {
-                            logger.i(label, "${tt()} Bond already in progress; awaiting broadcast")
-                        }
-                        else -> {
-                            logger.w(label, "${tt()} createBond() returned false; emitting current state")
-                            emitBondEvent(device.bondState, BOND_FAILURE_UNKNOWN)
-                        }
-                    }
-                }
+                scope.launch { requestBond("connect() initial") }
             }
-            BluetoothDevice.BOND_BONDING -> logger.i(label, "${tt()} Awaiting ongoing bond")
+            BluetoothDevice.BOND_BONDING -> {
+                cancelPairingDialogWatchdog()
+                logger.i(label, "${tt()} Awaiting ongoing bond")
+            }
         }
     }
 
@@ -582,6 +598,7 @@ class G1BleClient(
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
         keepAliveInFlight.set(0)
+        cancelPairingDialogWatchdog()
         _state.value = State(
             status = ConnectionState.DISCONNECTED,
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
@@ -599,20 +616,42 @@ class G1BleClient(
         return target?.status == ConnectionState.CONNECTED
     }
 
-    suspend fun awaitBonded(timeoutMs: Long): Boolean {
+    suspend fun awaitBonded(timeoutMs: Long): BondAwaitResult {
         if (state.value.bonded) {
-            return true
+            recordBondResult(BondResult.Success)
+            return BondAwaitResult.Success
         }
-        val event = withTimeoutOrNull(timeoutMs) {
-            bondEvents
-                .filter { it.state != BluetoothDevice.BOND_BONDING }
-                .first { it.state == BluetoothDevice.BOND_BONDED || it.state == BluetoothDevice.BOND_NONE }
+        val result = withTimeoutOrNull(timeoutMs) {
+            var sawBonding = device.bondState == BluetoothDevice.BOND_BONDING
+            bondEvents.collect { event ->
+                when (event.state) {
+                    BluetoothDevice.BOND_BONDING -> {
+                        sawBonding = true
+                        cancelPairingDialogWatchdog()
+                    }
+                    BluetoothDevice.BOND_BONDED -> {
+                        cancelPairingDialogWatchdog()
+                        return@withTimeoutOrNull BondAwaitResult.Success
+                    }
+                    BluetoothDevice.BOND_NONE -> {
+                        if (sawBonding) {
+                            cancelPairingDialogWatchdog()
+                            return@withTimeoutOrNull BondAwaitResult.Failed(event.reason)
+                        }
+                    }
+                }
+            }
+            BondAwaitResult.Timeout
+        } ?: BondAwaitResult.Timeout
+        when (result) {
+            BondAwaitResult.Success -> recordBondResult(BondResult.Success)
+            BondAwaitResult.Timeout -> {
+                incrementBondTimeout()
+                recordBondResult(BondResult.Timeout)
+            }
+            is BondAwaitResult.Failed -> recordBondResult(BondResult.Failed)
         }
-        val bonded = event?.state == BluetoothDevice.BOND_BONDED
-        if (!bonded) {
-            incrementBondTimeout()
-        }
-        return bonded
+        return result
     }
 
     suspend fun awaitHelloAck(timeoutMs: Long): Boolean {
@@ -1056,8 +1095,7 @@ class G1BleClient(
                 label,
                 "${tt()} Scheduling createBond retry attempt=$attempt reason=${reason.toBondReasonString()}",
             )
-            val result = device.createBond()
-            logger.i(label, "${tt()} createBond retry queued=$result")
+            requestBond("retry #$attempt (${reason.toBondReasonString()})")
         }
     }
 
@@ -1126,6 +1164,111 @@ class G1BleClient(
         _state.value = current.copy(refreshCount = current.refreshCount + 1)
     }
 
+    private fun recordBondAttempt() {
+        val current = _state.value
+        _state.value = current.copy(bondAttemptCount = current.bondAttemptCount + 1)
+    }
+
+    private fun recordBondResult(result: BondResult) {
+        val current = _state.value
+        if (current.lastBondResult == result) return
+        _state.value = current.copy(lastBondResult = result)
+    }
+
+    private fun recordPairingDialogShown() {
+        val current = _state.value
+        _state.value = current.copy(pairingDialogsShown = current.pairingDialogsShown + 1)
+    }
+
+    private fun schedulePairingDialogWatchdog(reason: String) {
+        cancelPairingDialogWatchdog()
+        val runnable = Runnable {
+            if (_state.value.bonded || device.bondState == BluetoothDevice.BOND_BONDED) {
+                return@Runnable
+            }
+            logger.w(label, "${tt()} [PAIRING] Showing Bluetooth settings (reason=$reason)")
+            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            runCatching { context.startActivity(intent) }
+                .onSuccess { recordPairingDialogShown() }
+                .onFailure {
+                    logger.w(label, "${tt()} Failed to launch Bluetooth settings: ${it.message}")
+                }
+        }
+        pairingDialogRunnable = runnable
+        mainHandler.postDelayed(runnable, BOND_DIALOG_GRACE_MS)
+    }
+
+    private fun cancelPairingDialogWatchdog() {
+        pairingDialogRunnable?.let { mainHandler.removeCallbacks(it) }
+        pairingDialogRunnable = null
+    }
+
+    private suspend fun resetGattBeforeBond(reason: String) {
+        val existing = uartClient.currentGatt() ?: return
+        logger.i(label, "${tt()} [PAIRING] Resetting cached GATT before bond ($reason)")
+        runCatching { existing.disconnect() }
+            .onFailure { logger.w(label, "${tt()} GATT disconnect before bond failed: ${it.message}") }
+        val refreshed = withContext(Dispatchers.IO) {
+            existing.refreshCompat { message ->
+                logger.i(label, "${tt()} $message")
+            }
+        }
+        runCatching { existing.close() }
+            .onFailure { logger.w(label, "${tt()} GATT close before bond failed: ${it.message}") }
+        uartClient.close()
+        if (refreshed) {
+            recordRefreshInvocation()
+        }
+        delay(GATT_RESET_DELAY_MS)
+    }
+
+    private suspend fun requestBond(reason: String) {
+        bondMutex.withLock {
+            if (_state.value.bonded) {
+                logger.i(label, "${tt()} [PAIRING] Bond already completed; skipping request ($reason)")
+                return
+            }
+            resetGattBeforeBond(reason)
+            recordBondAttempt()
+            val name = device.name ?: device.address ?: "unknown"
+            logger.i(label, "${tt()} [PAIRING] Requesting bond with $name ($reason)")
+            val initiated = withContext(Dispatchers.Main) {
+                createBondWithTransport()
+            }
+            logger.i(label, "${tt()} Initiating bond (transport LE) queued=$initiated")
+            if (initiated) {
+                schedulePairingDialogWatchdog(reason)
+                return
+            }
+            when (device.bondState) {
+                BluetoothDevice.BOND_BONDED -> {
+                    recordBondResult(BondResult.Success)
+                    logger.i(label, "${tt()} Bond already completed prior to request")
+                    scheduleGattConnection("pre-bonded")
+                }
+                BluetoothDevice.BOND_BONDING -> {
+                    cancelPairingDialogWatchdog()
+                    logger.i(label, "${tt()} Bond already in progress; awaiting broadcast")
+                }
+                else -> {
+                    recordBondResult(BondResult.Failed)
+                    logger.w(label, "${tt()} createBond() returned false; emitting current state")
+                    emitBondEvent(device.bondState, BOND_FAILURE_UNKNOWN)
+                }
+            }
+        }
+    }
+
+    private fun createBondWithTransport(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            device.createBond(BluetoothDevice.TRANSPORT_LE)
+        } else {
+            device.createBond()
+        }
+    }
+
     private fun maybeStartGattConnection() {
         if (connectionInitiated) return
         connectionInitiated = true
@@ -1133,12 +1276,13 @@ class G1BleClient(
     }
 
     private fun updateBondState(state: Int, reason: Int = BOND_FAILURE_UNKNOWN) {
+        val previousBondState = lastBondState
         emitBondEvent(state, reason)
         val current = _state.value
         val wasBonded = current.bonded
         val isBonded = state == BluetoothDevice.BOND_BONDED
         var next = current.copy(bonded = isBonded)
-        if (state != lastBondState) {
+        if (state != previousBondState) {
             next = next.copy(bondTransitionCount = next.bondTransitionCount + 1)
         }
         _state.value = next
@@ -1150,6 +1294,8 @@ class G1BleClient(
             bondRetryDecider.reset()
             bondRetryJob?.cancel()
             bondRetryJob = null
+            cancelPairingDialogWatchdog()
+            recordBondResult(BondResult.Success)
         } else if (!isBonded) {
             warmupExpected = false
             if (_state.value.warmupOk) {
@@ -1160,6 +1306,14 @@ class G1BleClient(
             if (state != BluetoothDevice.BOND_BONDING) {
                 bondRetryJob?.cancel()
                 bondRetryJob = null
+            }
+            if (state == BluetoothDevice.BOND_NONE && previousBondState == BluetoothDevice.BOND_BONDING) {
+                recordBondResult(BondResult.Failed)
+            }
+            if (state == BluetoothDevice.BOND_BONDING) {
+                cancelPairingDialogWatchdog()
+            } else if (state == BluetoothDevice.BOND_NONE) {
+                cancelPairingDialogWatchdog()
             }
         }
     }

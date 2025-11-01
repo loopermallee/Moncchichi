@@ -3,6 +3,8 @@ package com.loopermallee.moncchichi.bluetooth
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
+import com.loopermallee.moncchichi.bluetooth.BondAwaitResult
+import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.core.MicControlPacket
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import kotlinx.coroutines.CoroutineScope
@@ -61,6 +63,9 @@ class MoncchichiBleService(
         val disconnectStatus: Int? = null,
         val bondTransitions: Int = 0,
         val bondTimeouts: Int = 0,
+        val bondAttempts: Int = 0,
+        val lastBondResult: BondResult = BondResult.Unknown,
+        val pairingDialogsShown: Int = 0,
         val refreshCount: Int = 0,
         val smpFrameCount: Int = 0,
         val lastSmpOpcode: Int? = null,
@@ -129,6 +134,8 @@ class MoncchichiBleService(
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
     private val connectionOrder = mutableListOf<Lens>()
     private val hostHeartbeatSequence = IntArray(Lens.values().size)
+    private val knownDevices = mutableMapOf<Lens, BluetoothDevice>()
+    private val bondFailureStreak = mutableMapOf<Lens, Int>()
 
     private var heartbeatJob: Job? = null
     private var consecutiveConnectionFailures = 0
@@ -143,6 +150,7 @@ class MoncchichiBleService(
                 return@withContext false
             }
 
+            knownDevices[lens] = device
             if (!connectionOrder.contains(lens)) {
                 connectionOrder.add(lens)
                 refreshConnectionOrderState()
@@ -162,11 +170,30 @@ class MoncchichiBleService(
 
             val readyResult = try {
                 record.client.connect()
-                val bonded = record.client.awaitBonded(BOND_TIMEOUT_MS)
-                if (!bonded) {
-                    logWarn("Bond wait timed out for ${device.address} (${lens.name.lowercase(Locale.US)})")
-                    handleConnectionFailure(lens, record)
-                    return@withContext false
+                when (val bondResult = record.client.awaitBonded(BOND_TIMEOUT_MS)) {
+                    BondAwaitResult.Success -> {
+                        bondFailureStreak[lens] = 0
+                    }
+                    BondAwaitResult.Timeout -> {
+                        logWarn("Bond wait timed out for ${device.address} (${lens.name.lowercase(Locale.US)})")
+                        val restart = onBondFailure(lens, device, bondResult)
+                        handleConnectionFailure(lens, record)
+                        if (restart) {
+                            disconnectAll()
+                        }
+                        return@withContext false
+                    }
+                    is BondAwaitResult.Failed -> {
+                        logWarn(
+                            "Bond failed for ${device.address} (${lens.name.lowercase(Locale.US)}) reason=${bondResult.reason.toBondReasonString()}"
+                        )
+                        val restart = onBondFailure(lens, device, bondResult)
+                        handleConnectionFailure(lens, record)
+                        if (restart) {
+                            disconnectAll()
+                        }
+                        return@withContext false
+                    }
                 }
                 val timeout = if (lens == Lens.LEFT) {
                     CONNECT_TIMEOUT_MS
@@ -219,6 +246,8 @@ class MoncchichiBleService(
             record.dispose()
         }
         hostHeartbeatSequence[lens.ordinal] = 0
+        knownDevices.remove(lens)
+        bondFailureStreak.remove(lens)
         updateLens(lens) { LensStatus() }
         if (connectionOrder.remove(lens)) {
             refreshConnectionOrderState()
@@ -343,6 +372,9 @@ class MoncchichiBleService(
                         disconnectStatus = state.lastDisconnectStatus,
                         bondTransitions = state.bondTransitionCount,
                         bondTimeouts = state.bondTimeoutCount,
+                        bondAttempts = state.bondAttemptCount,
+                        lastBondResult = state.lastBondResult,
+                        pairingDialogsShown = state.pairingDialogsShown,
                         refreshCount = state.refreshCount,
                         smpFrameCount = state.smpFrameCount,
                         lastSmpOpcode = state.lastSmpOpcode,
@@ -525,6 +557,28 @@ class MoncchichiBleService(
         _state.value = _state.value.copy(connectionOrder = connectionOrder.toList())
     }
 
+    private fun onBondFailure(
+        lens: Lens,
+        device: BluetoothDevice,
+        result: BondAwaitResult,
+    ): Boolean {
+        val next = (bondFailureStreak[lens] ?: 0) + 1
+        bondFailureStreak[lens] = next
+        val label = when (result) {
+            BondAwaitResult.Timeout -> "timeout"
+            is BondAwaitResult.Failed -> "reason=${result.reason.toBondReasonString()}"
+            BondAwaitResult.Success -> "success"
+        }
+        logWarn("[PAIRING] ${lens.name.lowercase(Locale.US)} bond failure ($label) streak=$next")
+        if (next >= MAX_BOND_FAILURE_STREAK) {
+            logWarn("[PAIRING] Clearing cached bonds after $next failures for ${device.address}")
+            clearAllKnownBonds()
+            bondFailureStreak.clear()
+            return true
+        }
+        return false
+    }
+
     private fun handleConnectionFailure(lens: Lens, record: ClientRecord) {
         record.client.refreshDeviceCache()
         record.dispose()
@@ -571,6 +625,23 @@ class MoncchichiBleService(
         return true
     }
 
+    private fun clearAllKnownBonds() {
+        val uniqueDevices = knownDevices.values.distinctBy { it.address }
+        uniqueDevices.forEach { device ->
+            val cleared = clearBond(device)
+            log("[PAIRING] removeBond ${device.address} -> $cleared")
+        }
+    }
+
+    private fun clearBond(device: BluetoothDevice): Boolean {
+        return runCatching {
+            val method = device.javaClass.getMethod("removeBond")
+            (method.invoke(device) as? Boolean) == true
+        }.onFailure {
+            logWarn("[PAIRING] removeBond failed for ${device.address}: ${it.message}")
+        }.getOrElse { false }
+    }
+
     private fun setStage(stage: ConnectionStage) {
         if (_connectionStage.value != stage) {
             _connectionStage.value = stage
@@ -611,9 +682,10 @@ class MoncchichiBleService(
     companion object {
         private const val TAG = "[MoncchichiBle]"
         private const val CONNECT_TIMEOUT_MS = 20_000L
-        private const val BOND_TIMEOUT_MS = 15_000L
+        private const val BOND_TIMEOUT_MS = 30_000L
         private const val CHANNEL_STAGGER_DELAY_MS = 5L
         private val ALL_LENSES = Lens.values()
         private const val CONNECTION_FAILURE_THRESHOLD = 2
+        private const val MAX_BOND_FAILURE_STREAK = 3
     }
 }
