@@ -303,6 +303,41 @@ class G1BleClientTest {
     }
 
     @Test
+    fun sendCommandIgnoresKeepaliveWhileAwaitingMtuAck() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+
+            harness.client.connect()
+            runCurrent()
+
+            val collector = harness.notificationCollectorSlot.captured
+            val command = async {
+                harness.client.sendCommand(
+                    payload = byteArrayOf(0x4D),
+                    ackTimeoutMs = 10_000,
+                    retries = 1,
+                    retryDelayMs = 0,
+                )
+            }
+
+            runCurrent()
+
+            collector.emit("ACK:KEEPALIVE\r\n".toByteArray())
+            runCurrent()
+            assertFalse(command.isCompleted)
+
+            collector.emit(byteArrayOf(0x4D, 0xC9.toByte()))
+            runCurrent()
+
+            assertTrue(command.await())
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun bondRemovalSchedulesRetry() = runTest {
         val harness = buildClientHarness(this)
         try {

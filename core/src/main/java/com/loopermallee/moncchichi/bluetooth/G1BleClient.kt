@@ -202,7 +202,13 @@ private fun AckOutcome.matchesOpcode(expectedOpcode: Int?): Boolean {
         return ackOpcode == null
     }
     if (expectedOpcode == OPCODE_SET_MTU) {
-        return ackOpcode == null || ackOpcode == OPCODE_SET_MTU
+        if (ackOpcode == OPCODE_SET_MTU) {
+            return true
+        }
+        if (this is AckOutcome.Success) {
+            return warmupPrompt && ackOpcode == null
+        }
+        return false
     }
     return ackOpcode == expectedOpcode
 }
