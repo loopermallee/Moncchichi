@@ -39,6 +39,11 @@ class BleTelemetryRepository(
         val notes: String? = null,
         val bonded: Boolean = false,
         val disconnectReason: Int? = null,
+        val bondTransitions: Int = 0,
+        val bondTimeouts: Int = 0,
+        val refreshCount: Int = 0,
+        val smpFrames: Int = 0,
+        val lastSmpOpcode: Int? = null,
     )
 
     data class Snapshot(
@@ -116,6 +121,8 @@ class BleTelemetryRepository(
                 mergeBondState(Lens.RIGHT, state.right.bonded)
                 mergeDisconnectReason(Lens.LEFT, state.left.disconnectStatus)
                 mergeDisconnectReason(Lens.RIGHT, state.right.disconnectStatus)
+                mergeBondDiagnostics(Lens.LEFT, state.left)
+                mergeBondDiagnostics(Lens.RIGHT, state.right)
                 updateConnectionSequence(state.connectionOrder)
             }
         }
@@ -282,8 +289,11 @@ class BleTelemetryRepository(
             val updated = existing.copy(bonded = bonded)
             val next = current.updateLens(lens, updated)
             val lensLabel = lens.name.lowercase(Locale.US)
-            val statusLabel = if (bonded) "Bonded ✅" else "Bond missing ⚠️"
-            _events.tryEmit("[BLE][PAIR] ${lensLabel} ${statusLabel}")
+            if (!bonded) {
+                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond missing ⚠️")
+            } else if (next.left.bonded && next.right.bonded) {
+                _events.tryEmit("[BLE][PAIR] bonded ✅ (both lenses)")
+            }
             next
         }
     }
@@ -305,6 +315,49 @@ class BleTelemetryRepository(
         }
     }
 
+    private fun mergeBondDiagnostics(lens: Lens, status: MoncchichiBleService.LensStatus) {
+        updateSnapshot(persist = false) { current ->
+            val existing = current.lens(lens)
+            var updated = existing
+            var changed = false
+            val lensLabel = lens.name.lowercase(Locale.US)
+
+            if (existing.bondTransitions != status.bondTransitions) {
+                updated = updated.copy(bondTransitions = status.bondTransitions)
+                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond transitions=${status.bondTransitions}")
+                changed = true
+            }
+            if (existing.bondTimeouts != status.bondTimeouts) {
+                updated = updated.copy(bondTimeouts = status.bondTimeouts)
+                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond timeouts=${status.bondTimeouts}")
+                changed = true
+            }
+            if (existing.refreshCount != status.refreshCount) {
+                updated = updated.copy(refreshCount = status.refreshCount)
+                _events.tryEmit("[BLE][PAIR] ${lensLabel} refresh invoked=${status.refreshCount}")
+                changed = true
+            }
+            if (
+                existing.smpFrames != status.smpFrameCount ||
+                existing.lastSmpOpcode != status.lastSmpOpcode
+            ) {
+                updated = updated.copy(
+                    smpFrames = status.smpFrameCount,
+                    lastSmpOpcode = status.lastSmpOpcode,
+                )
+                val opcodeLabel = formatOpcode(status.lastSmpOpcode)
+                _events.tryEmit("[BLE][SMP] ${lensLabel} frames=${status.smpFrameCount} last=$opcodeLabel")
+                changed = true
+            }
+
+            if (!changed) {
+                current
+            } else {
+                current.updateLens(lens, updated)
+            }
+        }
+    }
+
     private fun updateConnectionSequence(order: List<Lens>) {
         val label = if (order.isEmpty()) null else order.joinToString(separator = "→") { it.name.lowercase(Locale.US) }
         val previous = _snapshot.value.connectionSequence
@@ -321,6 +374,8 @@ class BleTelemetryRepository(
         Lens.LEFT -> left
         Lens.RIGHT -> right
     }
+
+    private fun formatOpcode(value: Int?): String = value?.let { String.format("0x%02X", it) } ?: "n/a"
 
     private fun Snapshot.updateLens(
         lens: Lens,

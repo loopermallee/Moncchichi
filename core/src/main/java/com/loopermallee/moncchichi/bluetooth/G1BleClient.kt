@@ -279,6 +279,11 @@ class G1BleClient(
         val attMtu: Int? = null,
         val warmupOk: Boolean = false,
         val lastDisconnectStatus: Int? = null,
+        val bondTransitionCount: Int = 0,
+        val bondTimeoutCount: Int = 0,
+        val refreshCount: Int = 0,
+        val smpFrameCount: Int = 0,
+        val lastSmpOpcode: Int? = null,
     )
 
     private val uartClient = uartClientFactory(
@@ -288,6 +293,8 @@ class G1BleClient(
         scope,
     )
     private val ackSignals = Channel<AckOutcome>(capacity = Channel.CONFLATED)
+    data class BondEvent(val state: Int, val reason: Int, val timestampMs: Long)
+    private val bondEvents = MutableSharedFlow<BondEvent>(replay = 1, extraBufferCapacity = 8)
     data class AckEvent(
         val timestampMs: Long,
         val opcode: Int?,
@@ -341,6 +348,7 @@ class G1BleClient(
     private var rssiJob: Job? = null
     private var mtuJob: Job? = null
     private var gattEventJob: Job? = null
+    private var smpJob: Job? = null
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionInitiated = false
     private var bondConnectJob: Job? = null
@@ -349,6 +357,8 @@ class G1BleClient(
         maxAttempts = BOND_RETRY_MAX_ATTEMPTS,
         retryWindowMs = BOND_RETRY_WINDOW_MS,
     )
+
+    private var lastBondState: Int = device.bondState
 
     private val lastAckTimestamp = AtomicLong(0L)
     private val mtuCommandMutex = Mutex()
@@ -362,6 +372,13 @@ class G1BleClient(
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
         keepAliveInFlight.set(0)
+        bondEvents.tryEmit(
+            BondEvent(
+                state = device.bondState,
+                reason = BOND_FAILURE_UNKNOWN,
+                timestampMs = System.currentTimeMillis(),
+            )
+        )
         if (_state.value.warmupOk) {
             _state.value = _state.value.copy(warmupOk = false)
         }
@@ -430,6 +447,22 @@ class G1BleClient(
                         }
                     }
                 }
+            }
+        }
+
+        smpJob?.cancel()
+        smpJob = scope.launch {
+            uartClient.smpNotifications.collect { frame ->
+                val opcode = frame.firstOrNull()?.toInt()?.and(0xFF)
+                logger.i(
+                    label,
+                    "${tt()} [SMP] Notification opcode=${opcode?.let { String.format("0x%02X", it) } ?: "n/a"} size=${frame.size}",
+                )
+                val current = _state.value
+                _state.value = current.copy(
+                    smpFrameCount = current.smpFrameCount + 1,
+                    lastSmpOpcode = opcode,
+                )
             }
         }
 
@@ -505,6 +538,21 @@ class G1BleClient(
                 logger.i(label, "${tt()} [PAIRING] Requesting bond with $name")
                 val bonded = device.createBond()
                 logger.i(label, "${tt()} Initiating bond=${bonded}")
+                if (!bonded) {
+                    when (device.bondState) {
+                        BluetoothDevice.BOND_BONDED -> {
+                            logger.i(label, "${tt()} Bond already completed prior to request")
+                            scheduleGattConnection("pre-bonded")
+                        }
+                        BluetoothDevice.BOND_BONDING -> {
+                            logger.i(label, "${tt()} Bond already in progress; awaiting broadcast")
+                        }
+                        else -> {
+                            logger.w(label, "${tt()} createBond() returned false; emitting current state")
+                            emitBondEvent(device.bondState, BOND_FAILURE_UNKNOWN)
+                        }
+                    }
+                }
             }
             BluetoothDevice.BOND_BONDING -> logger.i(label, "${tt()} Awaiting ongoing bond")
         }
@@ -515,10 +563,12 @@ class G1BleClient(
         rssiJob?.cancel()
         mtuJob?.cancel()
         gattEventJob?.cancel()
+        smpJob?.cancel()
         monitorJob = null
         rssiJob = null
         mtuJob = null
         gattEventJob = null
+        smpJob = null
         unregisterBondReceiver()
         connectionInitiated = false
         bondConnectJob?.cancel()
@@ -553,12 +603,16 @@ class G1BleClient(
         if (state.value.bonded) {
             return true
         }
-        val bondedState = withTimeoutOrNull(timeoutMs) {
-            state.drop(1).first { candidate ->
-                candidate.bonded || candidate.status == ConnectionState.DISCONNECTED
-            }
+        val event = withTimeoutOrNull(timeoutMs) {
+            bondEvents
+                .filter { it.state != BluetoothDevice.BOND_BONDING }
+                .first { it.state == BluetoothDevice.BOND_BONDED || it.state == BluetoothDevice.BOND_NONE }
         }
-        return bondedState?.bonded == true
+        val bonded = event?.state == BluetoothDevice.BOND_BONDED
+        if (!bonded) {
+            incrementBondTimeout()
+        }
+        return bonded
     }
 
     suspend fun awaitHelloAck(timeoutMs: Long): Boolean {
@@ -1023,22 +1077,36 @@ class G1BleClient(
                     label,
                     "${tt()} Bond state changed=$bondState reason=${reason.toBondReasonString()}",
                 )
-                updateBondState(bondState)
+                updateBondState(bondState, reason)
                 when (bondState) {
                     BluetoothDevice.BOND_BONDED -> scheduleGattConnection("bond receiver")
                     BluetoothDevice.BOND_NONE -> {
                         logger.i(label, "${tt()} Bond cleared; refreshing GATT cache")
-                        uartClient.refresh()
-                        device.refreshGattCacheCompat { message ->
-                            logger.i(label, "${tt()} $message")
+                        scope.launch {
+                            runCatching { uartClient.refresh() }
+                                .onFailure {
+                                    logger.w(label, "${tt()} GATT refresh failed: ${it.message}")
+                                }
+                            val refreshed = device.refreshGattCacheCompat { message ->
+                                logger.i(label, "${tt()} $message")
+                            }
+                            recordRefreshInvocation()
+                            logger.i(label, "${tt()} [GATT] Device cache refresh result=$refreshed")
                         }
                         handleBondRetry(reason)
                     }
                     BOND_STATE_REMOVED -> {
                         logger.w(label, "${tt()} Bond removed; refreshing GATT cache")
-                        uartClient.refresh()
-                        device.refreshGattCacheCompat { message ->
-                            logger.i(label, "${tt()} $message")
+                        scope.launch {
+                            runCatching { uartClient.refresh() }
+                                .onFailure {
+                                    logger.w(label, "${tt()} GATT refresh failed: ${it.message}")
+                                }
+                            val refreshed = device.refreshGattCacheCompat { message ->
+                                logger.i(label, "${tt()} $message")
+                            }
+                            recordRefreshInvocation()
+                            logger.i(label, "${tt()} [GATT] Device cache refresh result=$refreshed")
                         }
                         handleBondRetry(reason)
                     }
@@ -1056,16 +1124,39 @@ class G1BleClient(
         bondReceiver = null
     }
 
+    private fun emitBondEvent(state: Int, reason: Int) {
+        bondEvents.tryEmit(BondEvent(state, reason, System.currentTimeMillis()))
+    }
+
+    private fun incrementBondTimeout() {
+        val current = _state.value
+        val nextCount = current.bondTimeoutCount + 1
+        _state.value = current.copy(bondTimeoutCount = nextCount)
+        logger.w(label, "${tt()} Bond await timed out (count=$nextCount)")
+    }
+
+    private fun recordRefreshInvocation() {
+        val current = _state.value
+        _state.value = current.copy(refreshCount = current.refreshCount + 1)
+    }
+
     private fun maybeStartGattConnection() {
         if (connectionInitiated) return
         connectionInitiated = true
         uartClient.connect()
     }
 
-    private fun updateBondState(state: Int) {
-        val wasBonded = _state.value.bonded
+    private fun updateBondState(state: Int, reason: Int = BOND_FAILURE_UNKNOWN) {
+        emitBondEvent(state, reason)
+        val current = _state.value
+        val wasBonded = current.bonded
         val isBonded = state == BluetoothDevice.BOND_BONDED
-        _state.value = _state.value.copy(bonded = isBonded)
+        var next = current.copy(bonded = isBonded)
+        if (state != lastBondState) {
+            next = next.copy(bondTransitionCount = next.bondTransitionCount + 1)
+        }
+        _state.value = next
+        lastBondState = state
         if (isBonded && !wasBonded) {
             logger.i(label, "${tt()} [PAIRING] Bonded ✅")
             requestWarmupOnNextNotify()
@@ -1109,8 +1200,12 @@ class G1BleClient(
     }
 
     fun refreshDeviceCache() {
-        device.refreshGattCacheCompat { message ->
-            logger.i(label, "${tt()} $message")
+        scope.launch {
+            val refreshed = device.refreshGattCacheCompat { message ->
+                logger.i(label, "${tt()} $message")
+            }
+            recordRefreshInvocation()
+            logger.i(label, "${tt()} [GATT] Manual refresh result=$refreshed")
         }
     }
 

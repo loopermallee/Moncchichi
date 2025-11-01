@@ -251,7 +251,8 @@ class BleToolLiveImpl(
             addAll(staleAddresses)
             lastConnectedMac?.let { add(it) }
         }
-        refreshTargets.mapNotNull { resolveDevice(it) }.forEach { device ->
+        val devices = refreshTargets.mapNotNull { resolveDevice(it) }
+        for (device in devices) {
             device.refreshGattCacheCompat { message ->
                 Log.i(TAG, "[PAIRING] ${device.address} $message")
             }

@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -131,14 +133,22 @@ class G1BleUartClient(
         maybeSendWarmupAfterNotifyArmed()
     }
 
-    fun refresh() {
-        val g = gatt ?: return
-        runCatching {
-            val method = g.javaClass.getMethod("refresh")
-            val refreshed = method.invoke(g) as? Boolean ?: false
-            logger("[GATT] refresh() invoked result=$refreshed")
-        }.onFailure {
-            logger("[GATT] refresh() invocation failed: ${it.message}")
+    suspend fun refresh() {
+        val existing = gatt ?: return
+        runCatching { existing.close() }
+        gatt = null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            logger("[GATT] refresh() skipped – API < 24")
+            return
+        }
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val method = existing.javaClass.getMethod("refresh")
+                val refreshed = method.invoke(existing) as? Boolean ?: false
+                logger("[GATT] refresh() invoked result=$refreshed")
+            }.onFailure {
+                logger("[GATT] refresh() invocation failed: ${it.message}")
+            }
         }
     }
 
@@ -230,7 +240,12 @@ class G1BleUartClient(
                 logger("[DEVICE][NOTIFY] ${characteristic.uuid} (${value.size} bytes)")
                 _incoming.tryEmit(value)
             } else if (characteristic.uuid == SMP_CHAR) {
-                logger("[SMP][NOTIFY] ${value.size} bytes")
+                val opcode = value.firstOrNull()?.toInt()?.and(0xFF)
+                val opcodeLabel = opcode?.let { String.format("0x%02X", it) } ?: "n/a"
+                logger("[SMP][NOTIFY] ${value.size} bytes opcode=$opcodeLabel")
+                if (opcode == 0x01) {
+                    logger("[SMP] Pairing Request detected; relying on Android bonding stack")
+                }
                 _smpNotifications.tryEmit(value)
             }
         }
