@@ -2,6 +2,7 @@ package com.loopermallee.moncchichi.bluetooth
 
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothDevice.ACTION_BOND_STATE_CHANGED
+import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -276,6 +278,7 @@ class G1BleClient(
         val bonded: Boolean = false,
         val attMtu: Int? = null,
         val warmupOk: Boolean = false,
+        val lastDisconnectStatus: Int? = null,
     )
 
     private val uartClient = uartClientFactory(
@@ -337,6 +340,7 @@ class G1BleClient(
     private var monitorJob: Job? = null
     private var rssiJob: Job? = null
     private var mtuJob: Job? = null
+    private var gattEventJob: Job? = null
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionInitiated = false
     private var bondConnectJob: Job? = null
@@ -411,6 +415,22 @@ class G1BleClient(
                         _state.value = _state.value.copy(attMtu = mtu)
                     }
                 }
+        }
+
+        gattEventJob?.cancel()
+        gattEventJob = scope.launch {
+            uartClient.connectionEvents.collect { event ->
+                when (event.newState) {
+                    BluetoothProfile.STATE_DISCONNECTED -> {
+                        _state.value = _state.value.copy(lastDisconnectStatus = event.status)
+                    }
+                    BluetoothProfile.STATE_CONNECTED -> {
+                        if (_state.value.lastDisconnectStatus != null) {
+                            _state.value = _state.value.copy(lastDisconnectStatus = null)
+                        }
+                    }
+                }
+            }
         }
 
         scope.launch {
@@ -494,9 +514,11 @@ class G1BleClient(
         monitorJob?.cancel()
         rssiJob?.cancel()
         mtuJob?.cancel()
+        gattEventJob?.cancel()
         monitorJob = null
         rssiJob = null
         mtuJob = null
+        gattEventJob = null
         unregisterBondReceiver()
         connectionInitiated = false
         bondConnectJob?.cancel()
@@ -515,6 +537,7 @@ class G1BleClient(
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
             attMtu = null,
             warmupOk = false,
+            lastDisconnectStatus = null,
         )
     }
 
@@ -524,6 +547,31 @@ class G1BleClient(
                 .first { it.status != ConnectionState.CONNECTING }
         }
         return target?.status == ConnectionState.CONNECTED
+    }
+
+    suspend fun awaitBonded(timeoutMs: Long): Boolean {
+        if (state.value.bonded) {
+            return true
+        }
+        val bondedState = withTimeoutOrNull(timeoutMs) {
+            state.drop(1).first { candidate ->
+                candidate.bonded || candidate.status == ConnectionState.DISCONNECTED
+            }
+        }
+        return bondedState?.bonded == true
+    }
+
+    suspend fun awaitHelloAck(timeoutMs: Long): Boolean {
+        if (state.value.attMtu != null) {
+            return true
+        }
+        return withTimeoutOrNull(timeoutMs) {
+            ackEvents
+                .filter { event ->
+                    event.success && event.opcode == G1Protocols.CMD_HELLO
+                }
+                .first()
+        } != null
     }
 
     suspend fun awaitReady(timeoutMs: Long): AwaitReadyResult {
@@ -981,11 +1029,17 @@ class G1BleClient(
                     BluetoothDevice.BOND_NONE -> {
                         logger.i(label, "${tt()} Bond cleared; refreshing GATT cache")
                         uartClient.refresh()
+                        device.refreshGattCacheCompat { message ->
+                            logger.i(label, "${tt()} $message")
+                        }
                         handleBondRetry(reason)
                     }
                     BOND_STATE_REMOVED -> {
                         logger.w(label, "${tt()} Bond removed; refreshing GATT cache")
                         uartClient.refresh()
+                        device.refreshGattCacheCompat { message ->
+                            logger.i(label, "${tt()} $message")
+                        }
                         handleBondRetry(reason)
                     }
                 }
@@ -1051,6 +1105,12 @@ class G1BleClient(
                 maybeStartGattConnection()
                 break
             }
+        }
+    }
+
+    fun refreshDeviceCache() {
+        device.refreshGattCacheCompat { message ->
+            logger.i(label, "${tt()} $message")
         }
     }
 

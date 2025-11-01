@@ -133,6 +133,11 @@ class HubViewModel(
             }
         }
         viewModelScope.launch {
+            telemetry.events.collect { event ->
+                hubAddLog(event)
+            }
+        }
+        viewModelScope.launch {
             ble.events.collect { event ->
                 when (event) {
                     BleTool.Event.ConnectionFailed -> {

@@ -15,6 +15,7 @@ import com.loopermallee.moncchichi.bluetooth.DiscoveredDevice
 import com.loopermallee.moncchichi.bluetooth.G1Packets
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+import com.loopermallee.moncchichi.bluetooth.refreshGattCacheCompat
 import com.loopermallee.moncchichi.core.BleNameParser
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
@@ -245,6 +246,16 @@ class BleToolLiveImpl(
     }
 
     override suspend fun resetPairingCache() {
+        val staleAddresses = addressToSlot.keys.toList()
+        val refreshTargets = buildSet {
+            addAll(staleAddresses)
+            lastConnectedMac?.let { add(it) }
+        }
+        refreshTargets.mapNotNull { resolveDevice(it) }.forEach { device ->
+            device.refreshGattCacheCompat { message ->
+                Log.i(TAG, "[PAIRING] ${device.address} $message")
+            }
+        }
         pairInventory.clear()
         addressToPairToken.clear()
         addressToSlot.clear()

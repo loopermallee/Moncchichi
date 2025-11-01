@@ -37,6 +37,8 @@ class BleTelemetryRepository(
         val rssi: Int? = null,
         val firmwareVersion: String? = null,
         val notes: String? = null,
+        val bonded: Boolean = false,
+        val disconnectReason: Int? = null,
     )
 
     data class Snapshot(
@@ -45,6 +47,7 @@ class BleTelemetryRepository(
         val uptimeSeconds: Long? = null,
         val lastLens: Lens? = null,
         val lastFrameHex: String? = null,
+        val connectionSequence: String? = null,
     )
 
     private val _snapshot = MutableStateFlow(Snapshot())
@@ -109,6 +112,11 @@ class BleTelemetryRepository(
                 mergeRssi(Lens.RIGHT, state.right.rssi)
                 mergeKeepAlive(Lens.LEFT, state.left)
                 mergeKeepAlive(Lens.RIGHT, state.right)
+                mergeBondState(Lens.LEFT, state.left.bonded)
+                mergeBondState(Lens.RIGHT, state.right.bonded)
+                mergeDisconnectReason(Lens.LEFT, state.left.disconnectStatus)
+                mergeDisconnectReason(Lens.RIGHT, state.right.disconnectStatus)
+                updateConnectionSequence(state.connectionOrder)
             }
         }
         ackJob = scope.launch {
@@ -265,6 +273,50 @@ class BleTelemetryRepository(
         }
     }
 
+    private fun mergeBondState(lens: Lens, bonded: Boolean) {
+        updateSnapshot(persist = false) { current ->
+            val existing = current.lens(lens)
+            if (existing.bonded == bonded) {
+                return@updateSnapshot current
+            }
+            val updated = existing.copy(bonded = bonded)
+            val next = current.updateLens(lens, updated)
+            val lensLabel = lens.name.lowercase(Locale.US)
+            val statusLabel = if (bonded) "Bonded ✅" else "Bond missing ⚠️"
+            _events.tryEmit("[BLE][PAIR] ${lensLabel} ${statusLabel}")
+            next
+        }
+    }
+
+    private fun mergeDisconnectReason(lens: Lens, reason: Int?) {
+        updateSnapshot(persist = false) { current ->
+            val existing = current.lens(lens)
+            if (existing.disconnectReason == reason) {
+                return@updateSnapshot current
+            }
+            val updated = existing.copy(disconnectReason = reason)
+            val next = current.updateLens(lens, updated)
+            reason?.let {
+                val lensLabel = lens.name.lowercase(Locale.US)
+                val label = formatGattStatus(it)
+                _events.tryEmit("[BLE][LINK] ${lensLabel} disconnect status=$label")
+            }
+            next
+        }
+    }
+
+    private fun updateConnectionSequence(order: List<Lens>) {
+        val label = if (order.isEmpty()) null else order.joinToString(separator = "→") { it.name.lowercase(Locale.US) }
+        val previous = _snapshot.value.connectionSequence
+        if (previous == label) {
+            return
+        }
+        updateSnapshot(persist = false) { current -> current.copy(connectionSequence = label) }
+        label?.let {
+            _events.tryEmit("[BLE][PAIR] connect sequence $it")
+        }
+    }
+
     private fun Snapshot.lens(lens: Lens): LensTelemetry = when (lens) {
         Lens.LEFT -> left
         Lens.RIGHT -> right
@@ -285,6 +337,8 @@ class BleTelemetryRepository(
             copy(lastLens = lens, lastFrameHex = hex)
         }
     }
+
+    private fun formatGattStatus(code: Int): String = "0x%02X".format(code and 0xFF)
 
     private fun maybeEmitUtf8(lens: Lens, frame: ByteArray): Boolean {
         val first = frame.first().toInt() and 0xFF
