@@ -146,7 +146,12 @@ class MoncchichiBleService(
 
         val readyResult = try {
             record.client.connect()
-            val timeout = if (lens == Lens.LEFT) CONNECT_TIMEOUT_MS else G1Protocols.HELLO_TIMEOUT_MS
+            val timeout = if (lens == Lens.LEFT) {
+                CONNECT_TIMEOUT_MS
+            } else {
+                // Firmware can take up to MTU_WARMUP_GRACE_MS after HELLO; add a small buffer.
+                G1Protocols.MTU_WARMUP_GRACE_MS + 2_000L
+            }
             record.client.awaitReady(timeout)
         } catch (error: Throwable) {
             logWarn("Connection failed for ${device.address}: ${error.message ?: "unknown error"}")
