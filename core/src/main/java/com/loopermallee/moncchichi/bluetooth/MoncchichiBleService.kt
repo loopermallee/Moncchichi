@@ -430,7 +430,7 @@ class MoncchichiBleService(
         val jobs = mutableListOf<Job>()
         jobs += scope.launch {
             client.state.collectLatest { state ->
-                val previousStatus = record.clientState()
+                val previousStatus = clientState(lens)
                 updateLens(lens) {
                     it.copy(
                         state = state.status,
@@ -509,10 +509,12 @@ class MoncchichiBleService(
         return ClientRecord(lens, client, jobs)
     }
 
-    private fun ClientRecord.clientState(): LensStatus = when (lens) {
+    private fun clientState(lens: Lens): LensStatus = when (lens) {
         Lens.LEFT -> state.value.left
         Lens.RIGHT -> state.value.right
     }
+
+    private fun ClientRecord.clientState(): LensStatus = clientState(lens)
 
     private suspend fun handleKeepAliveResult(
         lens: Lens,
