@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.annotation.IdRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentManager
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.loopermallee.moncchichi.hub.R
@@ -56,9 +57,14 @@ class HubMainActivity : AppCompatActivity() {
         }
 
         supportFragmentManager.addOnBackStackChangedListener {
-            if (supportFragmentManager.backStackEntryCount == 0) {
-                updateToolbarForTab(currentTabId)
-                bottomNav.selectedItemId = currentTabId
+            val topFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
+            val newTabId = tabIdForFragment(topFragment)
+            if (newTabId != null) {
+                if (newTabId != currentTabId) {
+                    currentTabId = newTabId
+                    bottomNav.selectedItemId = newTabId
+                }
+                updateToolbarForTab(newTabId)
             }
         }
 
@@ -78,6 +84,7 @@ class HubMainActivity : AppCompatActivity() {
     }
 
     private fun navigateTo(fragment: Fragment, @IdRes tabId: Int) {
+        supportFragmentManager.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
         supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, fragment)
             .commit()
@@ -109,6 +116,14 @@ class HubMainActivity : AppCompatActivity() {
             tabId == R.id.tab_assistant -> getString(R.string.assistant_title)
             else -> getString(R.string.hub_title)
         }
+    }
+
+    private fun tabIdForFragment(fragment: Fragment?): Int? = when (fragment) {
+        is HubFragment -> R.id.tab_hub
+        is HudFragment -> R.id.tab_hud
+        is AssistantFragment -> R.id.tab_assistant
+        is DeveloperFragment -> R.id.tab_developer
+        else -> null
     }
 
     private fun showOverlayFragment(fragment: Fragment, titleRes: Int) {
