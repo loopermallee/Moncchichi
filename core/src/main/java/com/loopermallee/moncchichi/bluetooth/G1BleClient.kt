@@ -53,6 +53,7 @@ internal sealed interface AckOutcome {
     data class Success(
         override val opcode: Int?,
         override val status: Int?,
+        val warmupPrompt: Boolean = false,
     ) : AckOutcome
 
     data class Failure(
@@ -174,7 +175,7 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
                 .trimStart { it == '>' }
                 .trim { char -> char.code <= 0x20 }
             if (withoutPrompt.equals("OK", ignoreCase = true)) {
-                return AckOutcome.Success(opcode = null, status = null)
+                return AckOutcome.Success(opcode = null, status = null, warmupPrompt = true)
             }
         }
 
@@ -191,7 +192,7 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
 }
 
 private fun AckOutcome.Success.satisfiesWarmupAck(): Boolean {
-    val opcode = opcode ?: return true
+    val opcode = opcode ?: return warmupPrompt
     return opcode == OPCODE_SET_MTU
 }
 
