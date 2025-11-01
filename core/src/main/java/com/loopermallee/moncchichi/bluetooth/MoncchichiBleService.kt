@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -56,6 +57,13 @@ class MoncchichiBleService(
         val consecutiveKeepAliveFailures: Int = 0,
         val keepAliveLockSkips: Int = 0,
         val keepAliveAckTimeouts: Int = 0,
+        val bonded: Boolean = false,
+        val disconnectStatus: Int? = null,
+        val bondTransitions: Int = 0,
+        val bondTimeouts: Int = 0,
+        val refreshCount: Int = 0,
+        val smpFrameCount: Int = 0,
+        val lastSmpOpcode: Int? = null,
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
@@ -63,6 +71,7 @@ class MoncchichiBleService(
     data class ServiceState(
         val left: LensStatus = LensStatus(),
         val right: LensStatus = LensStatus(),
+        val connectionOrder: List<Lens> = emptyList(),
     )
 
     sealed interface Target {
@@ -118,89 +127,110 @@ class MoncchichiBleService(
     val events: SharedFlow<MoncchichiEvent> = _events.asSharedFlow()
 
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
+    private val connectionOrder = mutableListOf<Lens>()
     private val hostHeartbeatSequence = IntArray(Lens.values().size)
 
     private var heartbeatJob: Job? = null
     private var consecutiveConnectionFailures = 0
 
-    suspend fun connect(device: BluetoothDevice, lensOverride: Lens? = null): Boolean {
-        val lens = lensOverride ?: inferLens(device)
-        log("Connecting ${device.address} as $lens")
+    suspend fun connect(device: BluetoothDevice, lensOverride: Lens? = null): Boolean =
+        withContext(Dispatchers.IO) {
+            val lens = lensOverride ?: inferLens(device)
+            log("Connecting ${device.address} as $lens")
 
-        if (lens == Lens.RIGHT && !awaitLeftReadyForRight()) {
-            logWarn("Left lens not ready; postponing right lens connection")
-            return false
-        }
+            if (lens == Lens.RIGHT && !awaitLeftReadyForRight()) {
+                logWarn("Left lens not ready; postponing right lens connection")
+                return@withContext false
+            }
 
-        val record = buildClientRecord(lens, device)
-        clientRecords[lens]?.dispose()
-        clientRecords[lens] = record
-        hostHeartbeatSequence[lens.ordinal] = 0
-        updateLens(lens) { it.copy(state = G1BleClient.ConnectionState.CONNECTING, rssi = null) }
+            if (!connectionOrder.contains(lens)) {
+                connectionOrder.add(lens)
+                refreshConnectionOrderState()
+            }
 
-        if (lens == Lens.LEFT) {
-            setStage(ConnectionStage.ConnectLeft)
-        } else {
-            setStage(ConnectionStage.ConnectRight)
-        }
+            val record = buildClientRecord(lens, device)
+            clientRecords[lens]?.dispose()
+            clientRecords[lens] = record
+            hostHeartbeatSequence[lens.ordinal] = 0
+            updateLens(lens) { it.copy(state = G1BleClient.ConnectionState.CONNECTING, rssi = null) }
 
-        val readyResult = try {
-            record.client.connect()
-            val timeout = if (lens == Lens.LEFT) {
-                CONNECT_TIMEOUT_MS
+            if (lens == Lens.LEFT) {
+                setStage(ConnectionStage.ConnectLeft)
             } else {
-                // Firmware can take up to MTU_WARMUP_GRACE_MS after HELLO; add a small buffer.
-                G1Protocols.MTU_WARMUP_GRACE_MS + 2_000L
+                setStage(ConnectionStage.ConnectRight)
             }
-            record.client.awaitReady(timeout)
-        } catch (error: Throwable) {
-            logWarn("Connection failed for ${device.address}: ${error.message ?: "unknown error"}")
-            null
-        }
-        when (readyResult) {
-            G1BleClient.AwaitReadyResult.Ready -> Unit
-            G1BleClient.AwaitReadyResult.Timeout -> {
-                logWarn("Ready wait timed out for ${device.address} (${lens.name.lowercase(Locale.US)})")
-                handleConnectionFailure(lens, record)
-                return false
-            }
-            G1BleClient.AwaitReadyResult.Disconnected -> {
-                logWarn("Link disconnected before ready for ${device.address} (${lens.name.lowercase(Locale.US)})")
-                handleConnectionFailure(lens, record)
-                return false
-            }
-            null -> {
-                handleConnectionFailure(lens, record)
-                return false
-            }
-        }
 
-        consecutiveConnectionFailures = 0
-        if (lens == Lens.LEFT) {
-            setStage(ConnectionStage.LeftReady)
-            delay(G1Protocols.WARMUP_DELAY_MS)
-            setStage(ConnectionStage.Warmup)
+            val readyResult = try {
+                record.client.connect()
+                val bonded = record.client.awaitBonded(BOND_TIMEOUT_MS)
+                if (!bonded) {
+                    logWarn("Bond wait timed out for ${device.address} (${lens.name.lowercase(Locale.US)})")
+                    handleConnectionFailure(lens, record)
+                    return@withContext false
+                }
+                val timeout = if (lens == Lens.LEFT) {
+                    CONNECT_TIMEOUT_MS
+                } else {
+                    // Firmware can take up to MTU_WARMUP_GRACE_MS after HELLO; add a small buffer.
+                    G1Protocols.MTU_WARMUP_GRACE_MS + 2_000L
+                }
+                record.client.awaitReady(timeout)
+            } catch (error: Throwable) {
+                logWarn("Connection failed for ${device.address}: ${error.message ?: "unknown error"}")
+                null
+            }
+            when (readyResult) {
+                G1BleClient.AwaitReadyResult.Ready -> Unit
+                G1BleClient.AwaitReadyResult.Timeout -> {
+                    logWarn("Ready wait timed out for ${device.address} (${lens.name.lowercase(Locale.US)})")
+                    handleConnectionFailure(lens, record)
+                    return@withContext false
+                }
+                G1BleClient.AwaitReadyResult.Disconnected -> {
+                    logWarn("Link disconnected before ready for ${device.address} (${lens.name.lowercase(Locale.US)})")
+                    handleConnectionFailure(lens, record)
+                    return@withContext false
+                }
+                null -> {
+                    handleConnectionFailure(lens, record)
+                    return@withContext false
+                }
+            }
+
+            consecutiveConnectionFailures = 0
+            if (lens == Lens.LEFT) {
+                setStage(ConnectionStage.LeftReady)
+                delay(G1Protocols.WARMUP_DELAY_MS)
+                setStage(ConnectionStage.Warmup)
+            }
+            if (state.value.left.isConnected && state.value.right.isConnected) {
+                setStage(ConnectionStage.BothReady)
+                setStage(ConnectionStage.Connected)
+            }
+            ensureHeartbeatLoop()
+            log("Connected ${device.address} on $lens")
+            true
         }
-        if (state.value.left.isConnected && state.value.right.isConnected) {
-            setStage(ConnectionStage.BothReady)
-            setStage(ConnectionStage.Connected)
-        }
-        ensureHeartbeatLoop()
-        log("Connected ${device.address} on $lens")
-        return true
-    }
 
     fun disconnect(lens: Lens) {
         clientRecords.remove(lens)?.let { record ->
             log("Disconnecting $lens")
+            record.client.refreshDeviceCache()
             record.dispose()
         }
         hostHeartbeatSequence[lens.ordinal] = 0
         updateLens(lens) { LensStatus() }
+        if (connectionOrder.remove(lens)) {
+            refreshConnectionOrderState()
+        }
         ensureHeartbeatLoop()
         val current = state.value
         if (!current.left.isConnected && !current.right.isConnected) {
             setStage(ConnectionStage.Idle)
+            if (connectionOrder.isNotEmpty()) {
+                connectionOrder.clear()
+                refreshConnectionOrderState()
+            }
         } else if (current.left.isConnected && !current.right.isConnected) {
             setStage(ConnectionStage.LeftReady)
         }
@@ -208,6 +238,14 @@ class MoncchichiBleService(
 
     fun disconnectAll() {
         ALL_LENSES.forEach { disconnect(it) }
+    }
+
+    suspend fun refreshGattCache(
+        lens: Lens,
+        logger: (String) -> Unit = { message -> log("${lens.name}: $message") },
+    ): Boolean {
+        val record = clientRecords[lens] ?: return false
+        return record.client.refreshGattCache { message -> logger(message) }
     }
 
     suspend fun send(
@@ -278,6 +316,10 @@ class MoncchichiBleService(
         clientRecords.clear()
         hostHeartbeatSequence.fill(0)
         ALL_LENSES.forEach { updateLens(it) { LensStatus() } }
+        if (connectionOrder.isNotEmpty()) {
+            connectionOrder.clear()
+            refreshConnectionOrderState()
+        }
         setStage(ConnectionStage.Idle)
     }
 
@@ -297,6 +339,13 @@ class MoncchichiBleService(
                         state = state.status,
                         rssi = state.rssi,
                         attMtu = state.attMtu,
+                        bonded = state.bonded,
+                        disconnectStatus = state.lastDisconnectStatus,
+                        bondTransitions = state.bondTransitionCount,
+                        bondTimeouts = state.bondTimeoutCount,
+                        refreshCount = state.refreshCount,
+                        smpFrameCount = state.smpFrameCount,
+                        lastSmpOpcode = state.lastSmpOpcode,
                     )
                 }
             }
@@ -463,17 +512,27 @@ class MoncchichiBleService(
     }
 
     private fun updateLens(lens: Lens, reducer: (LensStatus) -> LensStatus) {
-        _state.value = when (lens) {
-            Lens.LEFT -> _state.value.copy(left = reducer(_state.value.left))
-            Lens.RIGHT -> _state.value.copy(right = reducer(_state.value.right))
+        val current = _state.value
+        val updated = when (lens) {
+            Lens.LEFT -> current.copy(left = reducer(current.left))
+            Lens.RIGHT -> current.copy(right = reducer(current.right))
         }
+        _state.value = updated
         ensureHeartbeatLoop()
     }
 
+    private fun refreshConnectionOrderState() {
+        _state.value = _state.value.copy(connectionOrder = connectionOrder.toList())
+    }
+
     private fun handleConnectionFailure(lens: Lens, record: ClientRecord) {
+        record.client.refreshDeviceCache()
         record.dispose()
         clientRecords.remove(lens)
         updateLens(lens) { LensStatus() }
+        if (connectionOrder.remove(lens)) {
+            refreshConnectionOrderState()
+        }
         consecutiveConnectionFailures += 1
         if (consecutiveConnectionFailures == CONNECTION_FAILURE_THRESHOLD) {
             logger.i(
@@ -485,6 +544,10 @@ class MoncchichiBleService(
         val current = state.value
         if (!current.left.isConnected && !current.right.isConnected) {
             setStage(ConnectionStage.Idle)
+            if (connectionOrder.isNotEmpty()) {
+                connectionOrder.clear()
+                refreshConnectionOrderState()
+            }
         } else if (current.left.isConnected && !current.right.isConnected) {
             setStage(ConnectionStage.LeftReady)
         }
@@ -492,6 +555,9 @@ class MoncchichiBleService(
 
     private suspend fun awaitLeftReadyForRight(): Boolean {
         val leftRecord = clientRecords[Lens.LEFT] ?: return false
+        if (!leftRecord.client.awaitHelloAck(G1Protocols.HELLO_TIMEOUT_MS)) {
+            return false
+        }
         val result = leftRecord.client.awaitReady(G1Protocols.HELLO_TIMEOUT_MS)
         if (result != G1BleClient.AwaitReadyResult.Ready) {
             return false
@@ -545,6 +611,7 @@ class MoncchichiBleService(
     companion object {
         private const val TAG = "[MoncchichiBle]"
         private const val CONNECT_TIMEOUT_MS = 20_000L
+        private const val BOND_TIMEOUT_MS = 15_000L
         private const val CHANNEL_STAGGER_DELAY_MS = 5L
         private val ALL_LENSES = Lens.values()
         private const val CONNECTION_FAILURE_THRESHOLD = 2

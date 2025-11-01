@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import com.loopermallee.moncchichi.bluetooth.refreshCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,12 +17,14 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
-import java.nio.charset.StandardCharsets
 
 /**
  * Robust Nordic UART (NUS) client for Even G1 smart glasses.
@@ -37,6 +40,8 @@ class G1BleUartClient(
         val NUS_SERVICE: UUID = UUID.fromString("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
         val NUS_RX: UUID = UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
         val NUS_TX: UUID = UUID.fromString("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+        val SMP_SERVICE: UUID = UUID.fromString("8D53DC1D-1DB7-4CD3-868B-8A527460AA84")
+        val SMP_CHAR: UUID = UUID.fromString("8D53DC1D-1DB7-4CD3-868B-8A527460AA85")
         val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private val ENABLE_NOTIFY = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
         private val ENABLE_NOTIFY_IND = byteArrayOf(0x03, 0x00)
@@ -53,6 +58,7 @@ class G1BleUartClient(
     private var gatt: BluetoothGatt? = null
     private var rxChar: BluetoothGattCharacteristic? = null
     private var txChar: BluetoothGattCharacteristic? = null
+    private var smpChar: BluetoothGattCharacteristic? = null
 
     /** Indicates whether we should issue a diagnostic warm-up once notifications arm. */
     @Volatile private var warmupPending: Boolean = false
@@ -63,6 +69,14 @@ class G1BleUartClient(
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    data class ConnectionEvent(val status: Int, val newState: Int)
+
+    private val _connectionEvents = MutableSharedFlow<ConnectionEvent>(extraBufferCapacity = 8)
+    val connectionEvents: SharedFlow<ConnectionEvent> = _connectionEvents.asSharedFlow()
+
+    private val _smpNotifications = MutableSharedFlow<ByteArray>(extraBufferCapacity = 8)
+    val smpNotifications: SharedFlow<ByteArray> = _smpNotifications.asSharedFlow()
 
     private val _rssi = MutableStateFlow<Int?>(null)
     val rssi: StateFlow<Int?> = _rssi.asStateFlow()
@@ -98,6 +112,7 @@ class G1BleUartClient(
         gatt = null
         rxChar = null
         txChar = null
+        smpChar = null
         connecting.set(false)
         _connectionState.value = ConnectionState.DISCONNECTED
         _rssi.value = null
@@ -118,15 +133,19 @@ class G1BleUartClient(
         maybeSendWarmupAfterNotifyArmed()
     }
 
-    fun refresh() {
-        val g = gatt ?: return
-        runCatching {
-            val method = g.javaClass.getMethod("refresh")
-            val refreshed = method.invoke(g) as? Boolean ?: false
-            logger("[GATT] refresh() invoked result=$refreshed")
-        }.onFailure {
-            logger("[GATT] refresh() invocation failed: ${it.message}")
+    fun currentGatt(): BluetoothGatt? = gatt
+
+    suspend fun refreshGattCache(log: (String) -> Unit): Boolean {
+        val existing = gatt
+        if (existing == null) {
+            log("[GATT] refresh() skipped – no active connection")
+            return false
         }
+        val refreshed = withContext(Dispatchers.IO) {
+            existing.refreshCompat(log)
+        }
+        close()
+        return refreshed
     }
 
     fun write(bytes: ByteArray, withResponse: Boolean = false): Boolean {
@@ -152,6 +171,7 @@ class G1BleUartClient(
 
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             logger("[GATT] Connection state change status=$status newState=$newState")
+            _connectionEvents.tryEmit(ConnectionEvent(status, newState))
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 close()
                 return
@@ -164,6 +184,7 @@ class G1BleUartClient(
                     g.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
+                    logger("[SERVICE] Disconnected with status=$status")
                     warmupSentOnce = false
                     notifyArmed.set(false)
                     _connectionState.value = ConnectionState.DISCONNECTED
@@ -176,6 +197,7 @@ class G1BleUartClient(
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            logger("[GATT] Services discovered status=$status")
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 logger("[SERVICE] Service discovery failed with status=$status")
                 return
@@ -195,6 +217,15 @@ class G1BleUartClient(
             }
             logger("[SERVICE] Found NUS RX/TX; arming TX notifications…")
             armNotificationsWithRetry(g, txChar!!)
+
+            val smpService = g.getService(SMP_SERVICE)
+            smpChar = smpService?.getCharacteristic(SMP_CHAR)
+            if (smpChar != null) {
+                logger("[SMP] Service discovered; enabling notifications")
+                enableSmpNotifications(g, smpChar!!)
+            } else {
+                logger("[SMP] Service not present on peripheral")
+            }
         }
 
         // Android 13+ variant
@@ -204,6 +235,14 @@ class G1BleUartClient(
             if (characteristic.uuid == NUS_TX) {
                 logger("[DEVICE][NOTIFY] ${characteristic.uuid} (${value.size} bytes)")
                 _incoming.tryEmit(value)
+            } else if (characteristic.uuid == SMP_CHAR) {
+                val opcode = value.firstOrNull()?.toInt()?.and(0xFF)
+                val opcodeLabel = opcode?.let { String.format("0x%02X", it) } ?: "n/a"
+                logger("[SMP][NOTIFY] ${value.size} bytes opcode=$opcodeLabel")
+                if (opcode == 0x01) {
+                    logger("[SMP] Pairing Request detected; relying on Android bonding stack")
+                }
+                _smpNotifications.tryEmit(value)
             }
         }
 
@@ -221,6 +260,8 @@ class G1BleUartClient(
                 if (armed) {
                     maybeSendWarmupAfterNotifyArmed()
                 }
+            } else if (d.uuid == CCCD && d.characteristic.uuid == SMP_CHAR) {
+                logger("[SMP][CCCD] Write status=$status value=${d.value?.toHex()}")
             }
         }
 
@@ -267,6 +308,23 @@ class G1BleUartClient(
             Thread.sleep(50)
         }
         return notifyArmed.get()
+    }
+
+    private fun enableSmpNotifications(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+        scope.launch {
+            val enabled = g.setCharacteristicNotification(characteristic, true)
+            logger("[SMP][CCCD] setCharacteristicNotification=$enabled")
+            if (enabled) {
+                val descriptor = characteristic.getDescriptor(CCCD)
+                if (descriptor != null) {
+                    descriptor.value = ENABLE_NOTIFY
+                    val queued = g.writeDescriptor(descriptor)
+                    logger("[SMP][CCCD] writeDescriptor queued=$queued value=${descriptor.value?.toHex()}")
+                } else {
+                    logger("[SMP] CCCD missing; notifications unavailable")
+                }
+            }
+        }
     }
 }
 

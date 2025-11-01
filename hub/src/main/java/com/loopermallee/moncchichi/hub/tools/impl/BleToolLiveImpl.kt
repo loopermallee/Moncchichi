@@ -245,6 +245,12 @@ class BleToolLiveImpl(
     }
 
     override suspend fun resetPairingCache() {
+        MoncchichiBleService.Lens.values().forEach { lens ->
+            val refreshed = service.refreshGattCache(lens) { message ->
+                Log.i(TAG, "[PAIRING][${lens.name}] $message")
+            }
+            Log.i(TAG, "[PAIRING][${lens.name}] refreshCompat=$refreshed")
+        }
         pairInventory.clear()
         addressToPairToken.clear()
         addressToSlot.clear()
