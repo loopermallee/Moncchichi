@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -1324,7 +1325,7 @@ class G1BleClient(
             val name = device.name ?: device.address ?: "unknown"
             logger.i(label, "${tt()} [PAIRING] Requesting bond with $name ($reason)")
             val initiated = withContext(Dispatchers.Main) {
-                createBondWithTransport()
+                device.createBondCompat()
             }
             logger.i(label, "${tt()} Initiating bond (transport LE) queued=$initiated")
             if (initiated) {
@@ -1350,12 +1351,20 @@ class G1BleClient(
         }
     }
 
-    private fun createBondWithTransport(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            device.createBond(BluetoothDevice.TRANSPORT_LE)
-        } else {
-            device.createBond()
+    @SuppressLint("MissingPermission")
+    private fun BluetoothDevice.createBondCompat(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return runCatching {
+                val method = BluetoothDevice::class.java.getMethod(
+                    "createBond",
+                    Int::class.javaPrimitiveType,
+                )
+                method.invoke(this, BluetoothDevice.TRANSPORT_LE) as? Boolean ?: false
+            }.onFailure {
+                logger.w(label, "${tt()} createBondCompat reflection failed: ${it.message}")
+            }.getOrElse { false }
         }
+        return createBond()
     }
 
     private fun maybeStartGattConnection() {
