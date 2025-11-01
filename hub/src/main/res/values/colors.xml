@@ -25,4 +25,6 @@
     <color name="er_text_secondary">#FFCCCCCC</color>
     <color name="er_text_disabled">#FF777777</color>
     <color name="er_console_accent">#FFA691F2</color>
+    <color name="developer_console_background">#12131A</color>
+    <color name="developer_diagnostics_background">#F4F6FA</color>
 </resources>
