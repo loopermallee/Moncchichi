@@ -237,7 +237,7 @@ class G1BleClient(
     ) -> G1BleUartClient = ::G1BleUartClient,
 ) {
 
-    private companion object {
+    internal companion object {
         private const val MTU_COMMAND_ACK_TIMEOUT_MS = 1_500L
         private const val MTU_COMMAND_WARMUP_GRACE_MS = 7_500L
         private const val MTU_COMMAND_RETRY_COUNT = 3
@@ -247,9 +247,9 @@ class G1BleClient(
         private const val BOND_RETRY_DELAY_MS = 750L
         private const val BOND_RETRY_WINDOW_MS = 30_000L
         private const val BOND_RETRY_MAX_ATTEMPTS = 3
-        private const val KEEP_ALIVE_ACK_TIMEOUT_MS = 1_000L
-        private const val KEEP_ALIVE_RETRY_BACKOFF_MS = 150L
-        private const val KEEP_ALIVE_LOCK_POLL_INTERVAL_MS = 20L
+        internal const val KEEP_ALIVE_ACK_TIMEOUT_MS = 1_000L
+        internal const val KEEP_ALIVE_RETRY_BACKOFF_MS = 150L
+        internal const val KEEP_ALIVE_LOCK_POLL_INTERVAL_MS = 20L
         // Handshake capture shows firmware initiating keep-alive at sequence 0x01.
         private const val KEEP_ALIVE_INITIAL_SEQUENCE = 0x01
         internal const val KEEP_ALIVE_MAX_ATTEMPTS = 3
