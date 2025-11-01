@@ -221,6 +221,46 @@ class G1BleClientTest {
     }
 
     @Test
+    fun sendCommandIgnoresMismatchedAckUntilMatchingOpcodeArrives() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+
+            harness.client.connect()
+            runCurrent()
+
+            val collector = harness.notificationCollectorSlot.captured
+
+            val command = async {
+                harness.client.sendCommand(
+                    payload = byteArrayOf(0x25),
+                    ackTimeoutMs = 10_000,
+                    retries = 1,
+                    retryDelayMs = 0,
+                )
+            }
+
+            runCurrent()
+
+            collector.emit(byteArrayOf(0xF1.toByte(), 0xCA.toByte()))
+            runCurrent()
+            assertFalse(command.isCompleted)
+
+            collector.emit(byteArrayOf(0xF1.toByte(), 0xC9.toByte()))
+            runCurrent()
+            assertFalse(command.isCompleted)
+
+            collector.emit(byteArrayOf(0x25, 0xC9.toByte()))
+            runCurrent()
+
+            assertTrue(command.await())
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun bondRemovalSchedulesRetry() = runTest {
         val harness = buildClientHarness(this)
         try {
@@ -288,6 +328,7 @@ class G1BleClientTest {
             every { rssi } returns rssi
             every { mtu } returns mtu
             every { notificationsArmed } returns notificationsArmed
+            every { write(any()) } returns true
         }
         coEvery { uartClient.observeNotifications(capture(notificationCollectorSlot)) } coAnswers { }
         val client = G1BleClient(

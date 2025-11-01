@@ -195,6 +195,17 @@ private fun AckOutcome.Success.satisfiesWarmupAck(): Boolean {
     return opcode == OPCODE_SET_MTU
 }
 
+private fun AckOutcome.matchesOpcode(expectedOpcode: Int?): Boolean {
+    val ackOpcode = opcode
+    if (expectedOpcode == null) {
+        return ackOpcode == null
+    }
+    if (expectedOpcode == OPCODE_SET_MTU) {
+        return ackOpcode == null || ackOpcode == OPCODE_SET_MTU
+    }
+    return ackOpcode == expectedOpcode
+}
+
 /**
  * Thin wrapper around [G1BleUartClient] that adds command sequencing and ACK tracking.
  */
@@ -475,7 +486,28 @@ class G1BleClient(
                     return@repeat
                 }
                 val ackResult = withTimeoutOrNull(ackTimeoutMs) {
-                    ackSignals.receive()
+                    while (true) {
+                        val ack = ackSignals.receive()
+                        if (ack.matchesOpcode(opcode)) {
+                            return@withTimeoutOrNull ack
+                        }
+                        when (ack) {
+                            is AckOutcome.Success -> {
+                                logger.i(
+                                    label,
+                                    "${tt()} Ignoring ACK success opcode=${ack.opcode.toHexString()} " +
+                                        "while awaiting ${opcode.toHexString()}",
+                                )
+                            }
+                            is AckOutcome.Failure -> {
+                                logger.w(
+                                    label,
+                                    "${tt()} Ignoring ACK failure opcode=${ack.opcode.toHexString()} " +
+                                        "status=${ack.status.toHexString()} while awaiting ${opcode.toHexString()}",
+                                )
+                            }
+                        }
+                    }
                 }
                 when (ackResult) {
                     is AckOutcome.Success -> {
