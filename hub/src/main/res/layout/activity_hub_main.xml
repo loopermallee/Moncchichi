@@ -8,38 +8,51 @@
     android:fitsSystemWindows="true"
     tools:context=".ui.HubMainActivity">
 
-    <com.google.android.material.appbar.MaterialToolbar
-        android:id="@+id/titleBar"
-        style="@style/Widget.Material3.Toolbar.Surface"
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
-        android:background="?attr/colorSurface"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:title="@string/hub_title"
-        android:titleTextColor="?attr/colorOnSurface" />
+        android:layout_height="match_parent">
 
-    <FrameLayout
-        android:id="@+id/fragment_container"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_marginTop="?attr/actionBarSize"
-        android:layout_marginBottom="@dimen/bottom_nav_height"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior" />
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/titleBar"
+            style="@style/Widget.Material3.Toolbar.Surface"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="?attr/colorSurface"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:title="@string/hub_title"
+            android:titleTextColor="?attr/colorOnSurface"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
-    <com.google.android.material.bottomnavigation.BottomNavigationView
-        android:id="@+id/bottom_nav"
-        android:layout_width="match_parent"
-        android:layout_height="@dimen/bottom_nav_height"
-        android:layout_gravity="bottom"
-        android:elevation="@dimen/bottom_nav_elevation"
-        android:paddingStart="@dimen/bottom_nav_padding"
-        android:paddingEnd="@dimen/bottom_nav_padding"
-        android:paddingTop="@dimen/bottom_nav_padding_small"
-        android:paddingBottom="@dimen/bottom_nav_padding_small"
-        android:background="?attr/colorSurface"
-        app:itemIconTint="@color/selector_nav_item"
-        app:itemTextColor="@color/selector_nav_item"
-        app:menu="@menu/menu_bottom_nav" />
+        <FrameLayout
+            android:id="@+id/fragment_container"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            app:layout_constraintBottom_toTopOf="@id/bottom_nav"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/titleBar" />
+
+        <com.google.android.material.bottomnavigation.BottomNavigationView
+            android:id="@+id/bottom_nav"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="?attr/colorSurface"
+            android:elevation="@dimen/bottom_nav_elevation"
+            android:paddingStart="@dimen/bottom_nav_padding"
+            android:paddingEnd="@dimen/bottom_nav_padding"
+            android:paddingTop="@dimen/bottom_nav_padding_small"
+            android:paddingBottom="@dimen/bottom_nav_padding_small"
+            app:itemIconTint="@color/selector_nav_item"
+            app:itemTextColor="@color/selector_nav_item"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:menu="@menu/menu_bottom_nav" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
