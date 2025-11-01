@@ -627,37 +627,62 @@ class G1BleClient(
         val sequence = nextKeepAliveSequence()
         val payload = buildKeepAlivePayload(sequence)
         while (attempt < KEEP_ALIVE_MAX_ATTEMPTS && scope.isActive) {
-            if (!writeMutex.tryLock()) {
-                delay(KEEP_ALIVE_LOCK_POLL_INTERVAL_MS)
+            val attemptIndex = attempt + 1
+            val attemptStart = System.currentTimeMillis()
+            val attemptDeadline = attemptStart + KEEP_ALIVE_ACK_TIMEOUT_MS
+            val lockAcquired = acquireKeepAliveLock(attemptDeadline)
+            val waitedForLockMs = System.currentTimeMillis() - attemptStart
+            if (!lockAcquired) {
+                attempt = attemptIndex
+                logger.w(
+                    label,
+                    "${tt()} Keepalive lock contention seq=${sequence.toByteHex()} attempt=$attemptIndex " +
+                        "waited=${waitedForLockMs}ms",
+                )
+                if (attempt < KEEP_ALIVE_MAX_ATTEMPTS && scope.isActive) {
+                    delay(KEEP_ALIVE_RETRY_BACKOFF_MS * attempt)
+                }
                 continue
             }
-            attempt += 1
-            val sentAt = System.currentTimeMillis()
+
             var acked = false
+            var sentAt: Long? = null
             keepAliveInFlight.incrementAndGet()
+            attempt = attemptIndex
             try {
-            logger.i(
-                label,
-                "${tt()} Responding to keepalive seq=${sequence.toByteHex()} attempt=$attempt source=${prompt.source}",
-            )
-                acked = sendCommandLocked(
-                    payload = payload,
-                    ackTimeoutMs = KEEP_ALIVE_ACK_TIMEOUT_MS,
-                    retries = 1,
-                    retryDelayMs = KEEP_ALIVE_RETRY_BACKOFF_MS,
+                val remainingAckBudget = (attemptDeadline - System.currentTimeMillis()).coerceAtLeast(0L)
+                logger.i(
+                    label,
+                    "${tt()} Responding to keepalive seq=${sequence.toByteHex()} attempt=$attempt " +
+                        "source=${prompt.source} remainingBudget=${remainingAckBudget}ms",
                 )
+                if (remainingAckBudget > 0) {
+                    sentAt = System.currentTimeMillis()
+                    acked = sendCommandLocked(
+                        payload = payload,
+                        ackTimeoutMs = remainingAckBudget,
+                        retries = 1,
+                        retryDelayMs = KEEP_ALIVE_RETRY_BACKOFF_MS,
+                    )
+                } else {
+                    logger.w(
+                        label,
+                        "${tt()} Keepalive budget exhausted before write seq=${sequence.toByteHex()} " +
+                            "attempt=$attempt",
+                    )
+                }
             } finally {
                 if (!acked) {
-                    keepAliveInFlight.getAndUpdate { current -> if (current <= 0) 0 else current - 1 }
+                    decrementKeepAliveInFlight()
                 }
                 writeMutex.unlock()
             }
             if (acked) {
                 success = true
-                rttMs = System.currentTimeMillis() - sentAt
+                rttMs = sentAt?.let { System.currentTimeMillis() - it }
                 break
             }
-            if (attempt < KEEP_ALIVE_MAX_ATTEMPTS) {
+            if (attempt < KEEP_ALIVE_MAX_ATTEMPTS && scope.isActive) {
                 delay(KEEP_ALIVE_RETRY_BACKOFF_MS * attempt)
             }
         }
@@ -759,6 +784,20 @@ class G1BleClient(
     private fun buildKeepAlivePayload(sequence: Int): ByteArray {
         val seqByte = (sequence and 0xFF).toByte()
         return byteArrayOf(KEEP_ALIVE_OPCODE.toByte(), seqByte)
+    }
+
+    private suspend fun acquireKeepAliveLock(deadlineMs: Long): Boolean {
+        while (scope.isActive && System.currentTimeMillis() < deadlineMs) {
+            if (writeMutex.tryLock()) {
+                return true
+            }
+            val remaining = deadlineMs - System.currentTimeMillis()
+            if (remaining <= 0) {
+                break
+            }
+            delay(minOf(KEEP_ALIVE_LOCK_POLL_INTERVAL_MS, remaining))
+        }
+        return false
     }
 
     private fun decrementKeepAliveInFlight(): Int {
