@@ -337,6 +337,9 @@ class G1BleClient(
         val smpFrameCount: Int = 0,
         val lastSmpOpcode: Int? = null,
         val bondResetCount: Int = 0,
+        val lastBondState: Int = BluetoothDevice.BOND_NONE,
+        val lastBondReason: Int? = null,
+        val lastBondEventAt: Long? = null,
     )
 
     private val uartClient = uartClientFactory(
@@ -396,7 +399,10 @@ class G1BleClient(
     private val _audioFrames = MutableSharedFlow<AudioFrame>(extraBufferCapacity = 64)
     val audioFrames: SharedFlow<AudioFrame> = _audioFrames.asSharedFlow()
     private val _state = MutableStateFlow(
-        State(bonded = device.bondState == BluetoothDevice.BOND_BONDED)
+        State(
+            bonded = device.bondState == BluetoothDevice.BOND_BONDED,
+            lastBondState = device.bondState,
+        )
     )
     val state: StateFlow<State> = _state.asStateFlow()
 
@@ -1232,7 +1238,8 @@ class G1BleClient(
                 when (bondState) {
                     BluetoothDevice.BOND_BONDED -> scheduleGattConnection("bond receiver")
                     BluetoothDevice.BOND_NONE -> {
-                        logger.i(label, "${tt()} Bond cleared; refreshing GATT cache")
+                        val reasonLabel = reason.toBondReasonString()
+                        logger.i(label, "${tt()} Bond cleared; refreshing GATT cache (reason=$reasonLabel)")
                         scope.launch {
                             val refreshed = refreshGattCache()
                             logger.i(label, "${tt()} [GATT] Cache refresh result=$refreshed")
@@ -1241,18 +1248,37 @@ class G1BleClient(
                             scope.launch {
                                 logger.i(
                                     label,
-                                    "${tt()} Bond lost from BONDED; requesting rebond (reason=${reason.toBondReasonString()})",
+                                    "${tt()} Bond lost from BONDED; requesting rebond (reason=$reasonLabel)",
                                 )
-                                requestBond("rebond after loss (${reason.toBondReasonString()})")
+                                requestBond("rebond after loss ($reasonLabel)")
+                            }
+                        } else if (reason == UNBOND_REASON_REMOVED) {
+                            scope.launch {
+                                logger.w(
+                                    label,
+                                    "${tt()} Bond removed by system; requesting new bond (reason=$reasonLabel)",
+                                )
+                                requestBond("rebond after removal ($reasonLabel)")
                             }
                         }
                         handleBondRetry(reason)
                     }
                     BOND_STATE_REMOVED -> {
-                        logger.w(label, "${tt()} Bond removed; refreshing GATT cache")
+                        val reasonLabel = reason.toBondReasonString()
+                        logger.w(
+                            label,
+                            "${tt()} Bond removed; refreshing GATT cache (reason=$reasonLabel)",
+                        )
                         scope.launch {
                             val refreshed = refreshGattCache()
                             logger.i(label, "${tt()} [GATT] Cache refresh result=$refreshed")
+                        }
+                        scope.launch {
+                            logger.w(
+                                label,
+                                "${tt()} Bond entry removed by system; requesting new bond (reason=$reasonLabel)",
+                            )
+                            requestBond("rebond after removal ($reasonLabel)")
                         }
                         handleBondRetry(reason)
                     }
@@ -1481,7 +1507,13 @@ class G1BleClient(
         val current = _state.value
         val wasBonded = current.bonded
         val isBonded = state == BluetoothDevice.BOND_BONDED
-        var next = current.copy(bonded = isBonded)
+        val eventTimestamp = System.currentTimeMillis()
+        var next = current.copy(
+            bonded = isBonded,
+            lastBondState = state,
+            lastBondReason = reason.takeUnless { it == BOND_FAILURE_UNKNOWN },
+            lastBondEventAt = eventTimestamp,
+        )
         if (state != previousBondState) {
             next = next.copy(bondTransitionCount = next.bondTransitionCount + 1)
         }

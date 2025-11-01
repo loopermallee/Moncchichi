@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.hub.data.telemetry
 
+import android.bluetooth.BluetoothDevice
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
@@ -17,6 +18,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.regex.Pattern
 import kotlin.math.max
@@ -53,6 +56,9 @@ class BleTelemetryRepository(
         val reconnectSuccesses: Int = 0,
         val reconnecting: Boolean = false,
         val bondResets: Int = 0,
+        val lastBondState: Int? = null,
+        val lastBondReason: Int? = null,
+        val lastBondEventAt: Long? = null,
     )
 
     data class Snapshot(
@@ -377,6 +383,30 @@ class BleTelemetryRepository(
                 _events.tryEmit("[BLE][PAIR] ${lensLabel} refresh invoked=${status.refreshCount}")
                 changed = true
             }
+            if (existing.lastBondState != status.lastBondState) {
+                updated = updated.copy(lastBondState = status.lastBondState)
+                status.lastBondState?.let { bondState ->
+                    _events.tryEmit("[BLE][PAIR] ${lensLabel} bond state=${formatBondState(bondState)}")
+                }
+                changed = true
+            }
+            if (
+                existing.lastBondReason != status.lastBondReason ||
+                existing.lastBondEventAt != status.lastBondEventAt
+            ) {
+                updated = updated.copy(
+                    lastBondReason = status.lastBondReason,
+                    lastBondEventAt = status.lastBondEventAt,
+                )
+                status.lastBondReason?.let { reasonCode ->
+                    val reasonLabel = formatBondReason(reasonCode)
+                    val timestampLabel = status.lastBondEventAt?.let { at ->
+                        formatBondTimestamp(at)?.let { formatted -> " at $formatted" }
+                    } ?: ""
+                    _events.tryEmit("[BLE][PAIR] ${lensLabel} bond reason=$reasonLabel$timestampLabel")
+                }
+                changed = true
+            }
             if (
                 existing.smpFrames != status.smpFrameCount ||
                 existing.lastSmpOpcode != status.lastSmpOpcode
@@ -497,6 +527,37 @@ class BleTelemetryRepository(
     }
 
     private fun formatGattStatus(code: Int): String = "0x%02X".format(code and 0xFF)
+
+    private fun formatBondState(state: Int): String {
+        return when (state) {
+            BluetoothDevice.BOND_NONE -> "BOND_NONE"
+            BluetoothDevice.BOND_BONDING -> "BOND_BONDING"
+            BluetoothDevice.BOND_BONDED -> "BOND_BONDED"
+            else -> state.toString()
+        }
+    }
+
+    private fun formatBondReason(reason: Int): String {
+        return when (reason) {
+            1 -> "UNBOND_REASON_AUTH_FAILED"
+            2 -> "UNBOND_REASON_AUTH_REJECTED"
+            3 -> "UNBOND_REASON_AUTH_CANCELED"
+            4 -> "UNBOND_REASON_REMOTE_DEVICE_DOWN"
+            5 -> "UNBOND_REASON_REMOVED"
+            6 -> "UNBOND_REASON_OPERATION_CANCELED"
+            7 -> "UNBOND_REASON_REPEATED_ATTEMPTS"
+            8 -> "UNBOND_REASON_REMOTE_AUTH_CANCELED"
+            9 -> "UNBOND_REASON_UNKNOWN"
+            10 -> "BOND_FAILURE_UNKNOWN"
+            else -> reason.toString()
+        }
+    }
+
+    private fun formatBondTimestamp(timestampMs: Long): String? {
+        return runCatching {
+            SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(timestampMs))
+        }.getOrNull()
+    }
 
     private fun maybeEmitUtf8(lens: Lens, frame: ByteArray): Boolean {
         val first = frame.first().toInt() and 0xFF
