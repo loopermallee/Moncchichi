@@ -78,6 +78,8 @@ class BleTelemetryRepository(
         var lastAt: Long? = null,
         var rtt: Long? = null,
         var failures: Int = 0,
+        var lockSkips: Int = 0,
+        var ackTimeouts: Int = 0,
     )
     private val keepAliveSnapshots = mutableMapOf<Lens, KeepAliveSnapshot>()
 
@@ -227,18 +229,25 @@ class BleTelemetryRepository(
         if (
             snapshot.lastAt == status.lastKeepAliveAt &&
             snapshot.rtt == status.keepAliveRttMs &&
-            snapshot.failures == status.consecutiveKeepAliveFailures
+            snapshot.failures == status.consecutiveKeepAliveFailures &&
+            snapshot.lockSkips == status.keepAliveLockSkips &&
+            snapshot.ackTimeouts == status.keepAliveAckTimeouts
         ) {
             return
         }
         snapshot.lastAt = status.lastKeepAliveAt
         snapshot.rtt = status.keepAliveRttMs
         snapshot.failures = status.consecutiveKeepAliveFailures
+        snapshot.lockSkips = status.keepAliveLockSkips
+        snapshot.ackTimeouts = status.keepAliveAckTimeouts
         val now = System.currentTimeMillis()
         val agoLabel = status.lastKeepAliveAt?.let { "${now - it}ms ago" } ?: "n/a"
         val rttLabel = status.keepAliveRttMs?.let { "${it}ms" } ?: "n/a"
         val failures = status.consecutiveKeepAliveFailures
-        val line = "keepalive last=$agoLabel rtt=$rttLabel failures=$failures"
+        val lockSkips = status.keepAliveLockSkips
+        val ackTimeouts = status.keepAliveAckTimeouts
+        val line =
+            "keepalive last=$agoLabel rtt=$rttLabel failures=$failures lockSkips=$lockSkips ackTimeouts=$ackTimeouts"
         _events.tryEmit("[BLE][DIAG] ${lens.name.lowercase(Locale.US)} $line")
         if (status.lastKeepAliveAt != null || failures > 0) {
             _uartText.tryEmit(UartLine(lens, line))

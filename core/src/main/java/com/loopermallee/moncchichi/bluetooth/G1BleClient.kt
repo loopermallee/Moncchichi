@@ -237,7 +237,7 @@ class G1BleClient(
     ) -> G1BleUartClient = ::G1BleUartClient,
 ) {
 
-    internal companion object {
+    companion object {
         private const val MTU_COMMAND_ACK_TIMEOUT_MS = 1_500L
         private const val MTU_COMMAND_WARMUP_GRACE_MS = 7_500L
         private const val MTU_COMMAND_RETRY_COUNT = 3
@@ -308,6 +308,16 @@ class G1BleClient(
         val attemptCount: Int,
         val sequence: Int,
         val rttMs: Long?,
+        val lockContentionCount: Int,
+        val ackTimeoutCount: Int,
+    )
+
+    data class CommandAttemptTelemetry(
+        val attemptIndex: Int,
+        val success: Boolean,
+        val ackTimedOut: Boolean,
+        val ackFailed: Boolean,
+        val queueFailed: Boolean,
     )
 
     private val _keepAlivePrompts = MutableSharedFlow<KeepAlivePrompt>(extraBufferCapacity = 8)
@@ -540,9 +550,16 @@ class G1BleClient(
         ackTimeoutMs: Long,
         retries: Int,
         retryDelayMs: Long,
+        onAttemptResult: ((CommandAttemptTelemetry) -> Unit)? = null,
     ): Boolean {
         return writeMutex.withLock {
-            sendCommandLocked(payload, ackTimeoutMs, retries, retryDelayMs)
+            sendCommandLocked(
+                payload = payload,
+                ackTimeoutMs = ackTimeoutMs,
+                retries = retries,
+                retryDelayMs = retryDelayMs,
+                onAttemptResult = onAttemptResult,
+            )
         }
     }
 
@@ -551,6 +568,7 @@ class G1BleClient(
         ackTimeoutMs: Long,
         retries: Int,
         retryDelayMs: Long,
+        onAttemptResult: ((CommandAttemptTelemetry) -> Unit)? = null,
     ): Boolean {
         val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
         repeat(retries) { attempt ->
@@ -563,6 +581,15 @@ class G1BleClient(
                 logger.w(
                     label,
                     "${tt()} Failed to enqueue write opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
+                )
+                onAttemptResult?.invoke(
+                    CommandAttemptTelemetry(
+                        attemptIndex = attempt + 1,
+                        success = false,
+                        ackTimedOut = false,
+                        ackFailed = false,
+                        queueFailed = true,
+                    )
                 )
                 delay(retryDelayMs)
                 return@repeat
@@ -593,6 +620,15 @@ class G1BleClient(
             }
             when (ackResult) {
                 is AckOutcome.Success -> {
+                    onAttemptResult?.invoke(
+                        CommandAttemptTelemetry(
+                            attemptIndex = attempt + 1,
+                            success = true,
+                            ackTimedOut = false,
+                            ackFailed = false,
+                            queueFailed = false,
+                        )
+                    )
                     return true
                 }
                 is AckOutcome.Failure -> {
@@ -601,11 +637,29 @@ class G1BleClient(
                         "${tt()} ACK failure opcode=${ackResult.opcode.toHexString()} " +
                             "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
                     )
+                    onAttemptResult?.invoke(
+                        CommandAttemptTelemetry(
+                            attemptIndex = attempt + 1,
+                            success = false,
+                            ackTimedOut = false,
+                            ackFailed = true,
+                            queueFailed = false,
+                        )
+                    )
                 }
                 null -> {
                     logger.w(
                         label,
                         "${tt()} ACK timeout opcode=${opcode.toHexString()} (attempt ${attempt + 1})",
+                    )
+                    onAttemptResult?.invoke(
+                        CommandAttemptTelemetry(
+                            attemptIndex = attempt + 1,
+                            success = false,
+                            ackTimedOut = true,
+                            ackFailed = false,
+                            queueFailed = false,
+                        )
                     )
                 }
             }
@@ -626,6 +680,8 @@ class G1BleClient(
         var rttMs: Long? = null
         val sequence = nextKeepAliveSequence()
         val payload = buildKeepAlivePayload(sequence)
+        var lockContentionCount = 0
+        var ackTimeoutCount = 0
         while (attempt < KEEP_ALIVE_MAX_ATTEMPTS && scope.isActive) {
             val attemptIndex = attempt + 1
             val attemptStart = System.currentTimeMillis()
@@ -633,6 +689,7 @@ class G1BleClient(
             val lockAcquired = acquireKeepAliveLock(attemptDeadline)
             val waitedForLockMs = System.currentTimeMillis() - attemptStart
             if (!lockAcquired) {
+                lockContentionCount += 1
                 attempt = attemptIndex
                 logger.w(
                     label,
@@ -658,12 +715,19 @@ class G1BleClient(
                 )
                 if (remainingAckBudget > 0) {
                     sentAt = System.currentTimeMillis()
+                    var attemptAckTimeouts = 0
                     acked = sendCommandLocked(
                         payload = payload,
                         ackTimeoutMs = remainingAckBudget,
                         retries = 1,
                         retryDelayMs = KEEP_ALIVE_RETRY_BACKOFF_MS,
+                        onAttemptResult = { telemetry ->
+                            if (telemetry.ackTimedOut) {
+                                attemptAckTimeouts += 1
+                            }
+                        },
                     )
+                    ackTimeoutCount += attemptAckTimeouts
                 } else {
                     logger.w(
                         label,
@@ -697,6 +761,8 @@ class G1BleClient(
             attemptCount = attempt,
             sequence = sequence,
             rttMs = rttMs,
+            lockContentionCount = lockContentionCount,
+            ackTimeoutCount = ackTimeoutCount,
         )
         if (success) {
             logger.i(

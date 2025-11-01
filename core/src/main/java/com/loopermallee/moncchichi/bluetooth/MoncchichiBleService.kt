@@ -46,6 +46,8 @@ class MoncchichiBleService(
         val lastKeepAliveAt: Long? = null,
         val keepAliveRttMs: Long? = null,
         val consecutiveKeepAliveFailures: Int = 0,
+        val keepAliveLockSkips: Int = 0,
+        val keepAliveAckTimeouts: Int = 0,
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
@@ -331,6 +333,8 @@ class MoncchichiBleService(
                 keepAliveRttMs = result.rttMs ?: status.keepAliveRttMs,
                 consecutiveKeepAliveFailures = nextFailures,
                 degraded = degraded,
+                keepAliveLockSkips = status.keepAliveLockSkips + result.lockContentionCount,
+                keepAliveAckTimeouts = status.keepAliveAckTimeouts + result.ackTimeoutCount,
             )
         }
     }
@@ -341,7 +345,11 @@ class MoncchichiBleService(
         val rttLabel = result.rttMs?.let { "${it}ms" } ?: "n/a"
         val attemptsLabel = result.attemptCount
         val promptLatency = result.completedTimestampMs - result.promptTimestampMs
-        val message = "[KEEPALIVE][$lensLabel] seq=$seqLabel rtt=$rttLabel attempts=$attemptsLabel latency=${promptLatency}ms"
+        val lockSkipsLabel = result.lockContentionCount
+        val timeoutLabel = result.ackTimeoutCount
+        val message =
+            "[KEEPALIVE][$lensLabel] seq=$seqLabel rtt=$rttLabel attempts=$attemptsLabel " +
+                "latency=${promptLatency}ms lockSkips=$lockSkipsLabel ackTimeouts=$timeoutLabel"
         if (result.success) {
             log(message)
         } else {
