@@ -219,7 +219,16 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
             val withoutPrompt = candidate
                 .trimStart { it == '>' }
                 .trim { char -> char.code <= 0x20 }
-            if (withoutPrompt.equals("OK", ignoreCase = true)) {
+            if (withoutPrompt.isEmpty()) {
+                return@forEach
+            }
+            val uppercase = withoutPrompt.uppercase()
+            if (
+                withoutPrompt.equals("OK", ignoreCase = true) ||
+                uppercase.startsWith("READY") ||
+                uppercase.startsWith("HELLO") ||
+                uppercase.startsWith("WELCOME")
+            ) {
                 return AckOutcome.Success(opcode = null, status = null, warmupPrompt = true)
             }
         }
@@ -303,7 +312,7 @@ class G1BleClient(
         private const val KEEP_ALIVE_INITIAL_SEQUENCE = 0x01
         internal const val KEEP_ALIVE_MAX_ATTEMPTS = G1Protocols.MAX_RETRIES
         internal const val KEEP_ALIVE_OPCODE = G1Protocols.CMD_KEEPALIVE
-        private const val INVALID_KEY_HELLO_TIMEOUT_MS = 5_000L
+        private const val INVALID_KEY_HELLO_TIMEOUT_MS = 12_000L
         private val INVALID_KEY_STATUS_CODES = setOf(0x85, 0x13)
     }
 
@@ -357,6 +366,7 @@ class G1BleClient(
         val opcode: Int?,
         val status: Int?,
         val success: Boolean,
+        val warmup: Boolean,
     )
     private val _ackEvents = MutableSharedFlow<AckEvent>(extraBufferCapacity = 8)
     val ackEvents: SharedFlow<AckEvent> = _ackEvents.asSharedFlow()
@@ -508,7 +518,8 @@ class G1BleClient(
                 when (event.newState) {
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         _state.value = _state.value.copy(lastDisconnectStatus = event.status)
-                        cancelInvalidKeyWatchdog()
+                        val statusLabel = String.format("0x%02X", event.status and 0xFF)
+                        cancelInvalidKeyWatchdog("disconnect $statusLabel")
                         handleGattDisconnect(event.status)
                     }
                     BluetoothProfile.STATE_CONNECTED -> {
@@ -543,6 +554,7 @@ class G1BleClient(
                     val now = System.currentTimeMillis()
                     var deliverAck = true
                     var keepAlivePrompt: KeepAlivePrompt? = null
+                    val warmupAck = ack is AckOutcome.Success && ack.satisfiesWarmupAck()
                     if (ack is AckOutcome.Success) {
                         lastAckTimestamp.set(now)
                         if (warmupExpected && ack.satisfiesWarmupAck()) {
@@ -557,6 +569,14 @@ class G1BleClient(
                                 attMtu = attMtuCandidate,
                                 warmupOk = true,
                             )
+                        }
+                        if (warmupAck) {
+                            val source = when {
+                                ack.opcode == G1Protocols.CMD_HELLO -> "opcode"
+                                ack.opcode == null && ack.warmupPrompt -> "text"
+                                else -> "signal"
+                            }
+                            logger.i(label, "${tt()} [BLE][HELLO] Warm-up acknowledged via $source")
                         }
                         when {
                             ack.keepAlivePrompt -> {
@@ -583,14 +603,12 @@ class G1BleClient(
                         opcode = ack.opcode,
                         status = ack.status,
                         success = ack is AckOutcome.Success,
+                        warmup = warmupAck,
                     )
                     _ackEvents.tryEmit(event)
                     keepAlivePrompt?.let { prompt -> _keepAlivePrompts.tryEmit(prompt) }
                     if (deliverAck) {
                         ackSignals.trySend(ack)
-                    }
-                    if (ack is AckOutcome.Success && ack.opcode == G1Protocols.CMD_HELLO) {
-                        cancelInvalidKeyWatchdog()
                     }
                 }
                 val copy = payload.copyOf()
@@ -706,13 +724,13 @@ class G1BleClient(
     }
 
     suspend fun awaitHelloAck(timeoutMs: Long): Boolean {
-        if (state.value.attMtu != null) {
+        if (state.value.attMtu != null || state.value.warmupOk) {
             return true
         }
         return withTimeoutOrNull(timeoutMs) {
             ackEvents
                 .filter { event ->
-                    event.success && event.opcode == G1Protocols.CMD_HELLO
+                    event.success && (event.opcode == G1Protocols.CMD_HELLO || event.warmup)
                 }
                 .first()
         } != null
@@ -1053,9 +1071,13 @@ class G1BleClient(
         )
     }
 
-    private fun cancelInvalidKeyWatchdog() {
-        invalidBondWatchJob?.cancel()
+    private fun cancelInvalidKeyWatchdog(reason: String? = null) {
+        val job = invalidBondWatchJob ?: return
+        job.cancel()
         invalidBondWatchJob = null
+        reason?.let {
+            logger.i(label, "${tt()} [PAIRING] HELLO watchdog cancelled ($it)")
+        }
     }
 
     private fun startInvalidKeyWatchdog() {
@@ -1064,12 +1086,27 @@ class G1BleClient(
         if (!currentState.bonded || currentState.isReady()) {
             return
         }
-        invalidBondWatchJob = scope.launch {
+        val job = scope.launch {
+            logger.i(
+                label,
+                "${tt()} [PAIRING] HELLO watchdog armed (timeout=${INVALID_KEY_HELLO_TIMEOUT_MS}ms)",
+            )
             val acked = awaitHelloAck(INVALID_KEY_HELLO_TIMEOUT_MS)
-            if (!acked && state.value.bonded) {
+            if (acked) {
+                logger.i(label, "${tt()} [PAIRING] HELLO watchdog satisfied (ack)")
+                return@launch
+            }
+            if (state.value.bonded) {
+                logger.w(label, "${tt()} [PAIRING] HELLO watchdog expired; scheduling bond reset")
                 resetBondForInvalidKey("HELLO timeout")
             }
         }
+        job.invokeOnCompletion {
+            if (invalidBondWatchJob === job) {
+                invalidBondWatchJob = null
+            }
+        }
+        invalidBondWatchJob = job
     }
 
     private fun handleGattDisconnect(status: Int) {

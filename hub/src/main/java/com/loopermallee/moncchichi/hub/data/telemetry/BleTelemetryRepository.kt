@@ -262,8 +262,13 @@ class BleTelemetryRepository(
         val opcode = event.opcode?.let { String.format("0x%02X", it) } ?: "n/a"
         val status = event.status?.let { String.format("0x%02X", it) } ?: "n/a"
         val outcome = if (event.success) "OK" else "FAIL"
-        val message = "[ACK][$lensTag] opcode=$opcode status=$status → $outcome"
-        logger("[BLE][ACK][$lensTag] opcode=$opcode status=$status success=${event.success}")
+        val qualifiers = buildString {
+            if (event.warmup) {
+                append(" warmup")
+            }
+        }
+        val message = "[ACK][$lensTag] opcode=$opcode status=$status → $outcome$qualifiers"
+        logger("[BLE][ACK][$lensTag] opcode=$opcode status=$status success=${event.success} warmup=${event.warmup}")
         _uartText.tryEmit(UartLine(event.lens, message))
     }
 

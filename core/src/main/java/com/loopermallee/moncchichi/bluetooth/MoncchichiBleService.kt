@@ -108,6 +108,7 @@ class MoncchichiBleService(
         val status: Int?,
         val success: Boolean,
         val timestampMs: Long,
+        val warmup: Boolean,
     )
 
     sealed interface MoncchichiEvent {
@@ -523,6 +524,7 @@ class MoncchichiBleService(
                         status = event.status,
                         success = event.success,
                         timestampMs = event.timestampMs,
+                        warmup = event.warmup,
                     )
                 )
             }
