@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.hub.data.telemetry
 
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.hub.data.db.AssistantEntry
 import com.loopermallee.moncchichi.hub.data.db.ConsoleLine
@@ -73,6 +74,71 @@ class BleTelemetryRepositoryUtf8Test {
             vitalsEvents,
         )
         assertEquals(vitalsEvents, logs)
+    }
+
+    @Test
+    fun `glasses state binary frame updates snapshot`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0x2B, 0xC9.toByte(), 0x07))
+
+        val snapshot = repository.snapshot.value
+        assertEquals(true, snapshot.left.silentMode)
+        assertEquals(true, snapshot.left.wearing)
+        assertEquals(true, snapshot.left.inCase)
+    }
+
+    @Test
+    fun `battery payload parsed from ack encoded frame`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0x2C, 0xC9.toByte(), 0x01, 0x64, 0x32))
+
+        val snapshot = repository.snapshot.value
+        assertEquals(100, snapshot.left.batteryPercent)
+        assertEquals(50, snapshot.left.caseBatteryPercent)
+    }
+
+    @Test
+    fun `ack events update counters`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+
+        repository.onAck(
+            MoncchichiBleService.AckEvent(
+                lens = Lens.LEFT,
+                opcode = 0x25,
+                status = 0xC9,
+                success = true,
+                timestampMs = 10L,
+                warmup = false,
+            )
+        )
+        repository.onAck(
+            MoncchichiBleService.AckEvent(
+                lens = Lens.LEFT,
+                opcode = 0x25,
+                status = 0xCA,
+                success = false,
+                timestampMs = 20L,
+                warmup = false,
+            )
+        )
+        repository.onAck(
+            MoncchichiBleService.AckEvent(
+                lens = Lens.LEFT,
+                opcode = null,
+                status = 0xC9,
+                success = true,
+                timestampMs = 30L,
+                warmup = true,
+            )
+        )
+
+        val snapshot = repository.snapshot.value.left
+        assertEquals(30L, snapshot.lastAckAt)
+        assertEquals(2, snapshot.ackSuccessCount)
+        assertEquals(1, snapshot.ackFailureCount)
+        assertEquals(1, snapshot.ackWarmupCount)
     }
 }
 

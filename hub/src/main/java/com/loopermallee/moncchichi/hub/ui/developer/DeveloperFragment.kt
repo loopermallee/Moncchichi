@@ -90,22 +90,32 @@ class DeveloperFragment : Fragment() {
 
         val leftBattery = view.findViewById<TextView>(R.id.text_left_battery)
         val leftCase = view.findViewById<TextView>(R.id.text_left_case)
+        val leftPresence = view.findViewById<TextView>(R.id.text_left_presence)
+        val leftCaseState = view.findViewById<TextView>(R.id.text_left_case_state)
+        val leftSilent = view.findViewById<TextView>(R.id.text_left_silent)
         val leftRssi = view.findViewById<TextView>(R.id.text_left_rssi)
         val leftFirmware = view.findViewById<TextView>(R.id.text_left_firmware)
         val leftBond = view.findViewById<TextView>(R.id.text_left_bond)
         val leftBondStats = view.findViewById<TextView>(R.id.text_left_bond_stats)
         val leftReconnect = view.findViewById<TextView>(R.id.text_left_reconnect)
         val leftSmp = view.findViewById<TextView>(R.id.text_left_smp)
+        val leftLastAck = view.findViewById<TextView>(R.id.text_left_last_ack)
+        val leftAckCounts = view.findViewById<TextView>(R.id.text_left_ack_counts)
         val leftUpdated = view.findViewById<TextView>(R.id.text_left_updated)
 
         val rightBattery = view.findViewById<TextView>(R.id.text_right_battery)
         val rightCase = view.findViewById<TextView>(R.id.text_right_case)
+        val rightPresence = view.findViewById<TextView>(R.id.text_right_presence)
+        val rightCaseState = view.findViewById<TextView>(R.id.text_right_case_state)
+        val rightSilent = view.findViewById<TextView>(R.id.text_right_silent)
         val rightRssi = view.findViewById<TextView>(R.id.text_right_rssi)
         val rightFirmware = view.findViewById<TextView>(R.id.text_right_firmware)
         val rightBond = view.findViewById<TextView>(R.id.text_right_bond)
         val rightBondStats = view.findViewById<TextView>(R.id.text_right_bond_stats)
         val rightReconnect = view.findViewById<TextView>(R.id.text_right_reconnect)
         val rightSmp = view.findViewById<TextView>(R.id.text_right_smp)
+        val rightLastAck = view.findViewById<TextView>(R.id.text_right_last_ack)
+        val rightAckCounts = view.findViewById<TextView>(R.id.text_right_ack_counts)
         val rightUpdated = view.findViewById<TextView>(R.id.text_right_updated)
 
         toggleGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
@@ -176,6 +186,9 @@ class DeveloperFragment : Fragment() {
                     snapshot.left.apply {
                         leftBattery.text = getString(R.string.developer_label_battery, formatPercent(batteryPercent))
                         leftCase.text = getString(R.string.developer_label_case_battery, formatPercent(caseBatteryPercent))
+                        leftPresence.text = getString(R.string.developer_label_wearing, formatWearing(wearing))
+                        leftCaseState.text = getString(R.string.developer_label_case_state, formatCaseState(inCase))
+                        leftSilent.text = getString(R.string.developer_label_silent_mode, formatSilent(silentMode))
                         leftRssi.text = getString(R.string.developer_label_rssi, formatRssi(rssi))
                         val firmware = firmwareVersion ?: getString(R.string.developer_value_missing)
                         leftFirmware.text = getString(R.string.developer_label_firmware, firmware)
@@ -200,6 +213,16 @@ class DeveloperFragment : Fragment() {
                             smpFrames,
                             lastSmpOpcode?.toString() ?: getString(R.string.developer_value_missing),
                         )
+                        leftLastAck.text = getString(
+                            R.string.developer_label_last_ack,
+                            formatAckTimestamp(lastAckAt),
+                        )
+                        leftAckCounts.text = getString(
+                            R.string.developer_label_ack_counts,
+                            ackSuccessCount,
+                            ackFailureCount,
+                            ackWarmupCount,
+                        )
                         val updated = lastUpdated?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_missing)
                         leftUpdated.text = getString(R.string.developer_label_updated, updated)
                     }
@@ -207,6 +230,9 @@ class DeveloperFragment : Fragment() {
                     snapshot.right.apply {
                         rightBattery.text = getString(R.string.developer_label_battery, formatPercent(batteryPercent))
                         rightCase.text = getString(R.string.developer_label_case_battery, formatPercent(caseBatteryPercent))
+                        rightPresence.text = getString(R.string.developer_label_wearing, formatWearing(wearing))
+                        rightCaseState.text = getString(R.string.developer_label_case_state, formatCaseState(inCase))
+                        rightSilent.text = getString(R.string.developer_label_silent_mode, formatSilent(silentMode))
                         rightRssi.text = getString(R.string.developer_label_rssi, formatRssi(rssi))
                         val firmware = firmwareVersion ?: getString(R.string.developer_value_missing)
                         rightFirmware.text = getString(R.string.developer_label_firmware, firmware)
@@ -230,6 +256,16 @@ class DeveloperFragment : Fragment() {
                             R.string.developer_label_smp,
                             smpFrames,
                             lastSmpOpcode?.toString() ?: getString(R.string.developer_value_missing),
+                        )
+                        rightLastAck.text = getString(
+                            R.string.developer_label_last_ack,
+                            formatAckTimestamp(lastAckAt),
+                        )
+                        rightAckCounts.text = getString(
+                            R.string.developer_label_ack_counts,
+                            ackSuccessCount,
+                            ackFailureCount,
+                            ackWarmupCount,
                         )
                         val updated = lastUpdated?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_missing)
                         rightUpdated.text = getString(R.string.developer_label_updated, updated)
@@ -334,12 +370,33 @@ class DeveloperFragment : Fragment() {
         value?.let { getString(R.string.developer_value_rssi, it) }
             ?: getString(R.string.developer_value_missing)
 
+    private fun formatWearing(value: Boolean?): String = when (value) {
+        true -> getString(R.string.developer_value_wearing)
+        false -> getString(R.string.developer_value_not_wearing)
+        null -> getString(R.string.developer_value_missing)
+    }
+
+    private fun formatCaseState(value: Boolean?): String = when (value) {
+        true -> getString(R.string.developer_value_case_in)
+        false -> getString(R.string.developer_value_case_out)
+        null -> getString(R.string.developer_value_missing)
+    }
+
+    private fun formatSilent(value: Boolean?): String = when (value) {
+        true -> getString(R.string.developer_value_silent_on)
+        false -> getString(R.string.developer_value_silent_off)
+        null -> getString(R.string.developer_value_missing)
+    }
+
     private fun formatDuration(seconds: Long): String {
         val hours = seconds / 3600
         val minutes = (seconds % 3600) / 60
         val remaining = seconds % 60
         return getString(R.string.developer_value_duration, hours, minutes, remaining)
     }
+
+    private fun formatAckTimestamp(value: Long?): String =
+        value?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_missing)
 
     private fun formatTimestamp(millis: Long): String =
         android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", millis).toString()

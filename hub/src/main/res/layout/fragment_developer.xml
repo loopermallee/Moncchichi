@@ -179,6 +179,30 @@
                         android:text="@string/developer_label_case_battery_placeholder" />
 
                     <TextView
+                        android:id="@+id/text_left_presence"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_wearing_placeholder" />
+
+                    <TextView
+                        android:id="@+id/text_left_case_state"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_case_state_placeholder" />
+
+                    <TextView
+                        android:id="@+id/text_left_silent"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_silent_mode_placeholder" />
+
+                    <TextView
                         android:id="@+id/text_left_rssi"
                         style="@style/TextAppearance.Material3.BodyMedium"
                         android:layout_width="wrap_content"
@@ -227,6 +251,22 @@
                         android:text="@string/developer_label_smp_placeholder" />
 
                     <TextView
+                        android:id="@+id/text_left_last_ack"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_last_ack_placeholder" />
+
+                    <TextView
+                        android:id="@+id/text_left_ack_counts"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_ack_counts_placeholder" />
+
+                    <TextView
                         android:id="@+id/text_left_updated"
                         style="@style/TextAppearance.Material3.BodyMedium"
                         android:layout_width="wrap_content"
@@ -269,6 +309,30 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:text="@string/developer_label_case_battery_placeholder" />
+
+                    <TextView
+                        android:id="@+id/text_right_presence"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_wearing_placeholder" />
+
+                    <TextView
+                        android:id="@+id/text_right_case_state"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_case_state_placeholder" />
+
+                    <TextView
+                        android:id="@+id/text_right_silent"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_silent_mode_placeholder" />
 
                     <TextView
                         android:id="@+id/text_right_rssi"
@@ -317,6 +381,22 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:text="@string/developer_label_smp_placeholder" />
+
+                    <TextView
+                        android:id="@+id/text_right_last_ack"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_last_ack_placeholder" />
+
+                    <TextView
+                        android:id="@+id/text_right_ack_counts"
+                        style="@style/TextAppearance.Material3.BodyMedium"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/developer_label_ack_counts_placeholder" />
 
                     <TextView
                         android:id="@+id/text_right_updated"

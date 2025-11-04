@@ -171,6 +171,9 @@ class DeveloperViewModel(
         appendLine("  Battery: ${lens.batteryPercent?.let { "$it%" } ?: "–"}")
         appendLine("  Case battery: ${lens.caseBatteryPercent?.let { "$it%" } ?: "–"}")
         appendLine("  Charging: ${lens.charging?.let { if (it) "yes" else "no" } ?: "–"}")
+        appendLine("  Wearing: ${formatPresence(lens.wearing)}")
+        appendLine("  Case state: ${formatCaseState(lens.inCase)}")
+        appendLine("  Silent mode: ${formatSilent(lens.silentMode)}")
         appendLine("  RSSI: ${lens.rssi?.let { "${it} dBm" } ?: "–"}")
         appendLine("  Firmware: ${lens.firmwareVersion ?: "–"}")
         appendLine("  Bonded: ${if (lens.bonded) "yes" else "no"}")
@@ -189,6 +192,10 @@ class DeveloperViewModel(
         appendLine("  Refresh count: ${lens.refreshCount}")
         appendLine("  Pairing dialogs: ${lens.pairingDialogsShown}")
         appendLine("  Reconnecting now: ${if (lens.reconnecting) "yes" else "no"}")
+        appendLine("  Last ACK: ${formatAckTimestamp(lens.lastAckAt)}")
+        appendLine(
+            "  ACK counts: ok=${lens.ackSuccessCount} fail=${lens.ackFailureCount} warmup=${lens.ackWarmupCount}"
+        )
         if (!lens.notes.isNullOrBlank()) {
             appendLine("  Notes: ${lens.notes}")
         }
@@ -218,6 +225,28 @@ class DeveloperViewModel(
         10 -> "BOND_FAILURE_UNKNOWN"
         else -> reason.toString()
     }
+
+    private fun formatPresence(value: Boolean?): String = when (value) {
+        true -> "yes"
+        false -> "no"
+        null -> "–"
+    }
+
+    private fun formatCaseState(value: Boolean?): String = when (value) {
+        true -> "in case"
+        false -> "out of case"
+        null -> "–"
+    }
+
+    private fun formatSilent(value: Boolean?): String = when (value) {
+        true -> "on"
+        false -> "off"
+        null -> "–"
+    }
+
+    private fun formatAckTimestamp(value: Long?): String = value?.let {
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(it))
+    } ?: "–"
 
     private fun formatBondTimestamp(timestamp: Long?): String {
         if (timestamp == null) return "–"
