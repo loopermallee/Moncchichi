@@ -174,16 +174,19 @@ class BleTelemetryRepository(
 
     fun onFrame(lens: Lens, frame: ByteArray) {
         if (frame.isEmpty()) return
+        val opcode = frame.first().toInt() and 0xFF
         when (val parsed = G1ReplyParser.parseNotify(frame)) {
             is G1ReplyParser.Parsed.Vitals -> {
                 handleParsedVitals(lens, parsed.vitals, frame)
-                return
+                if (opcode != BATTERY_OPCODE && opcode != STATUS_OPCODE) {
+                    return
+                }
             }
             is G1ReplyParser.Parsed.Ack -> return
             else -> Unit
         }
-        when (frame.first().toInt() and 0xFF) {
-            BATTERY_OPCODE -> handleBattery(lens, frame)
+        when (opcode) {
+            BATTERY_OPCODE, STATUS_OPCODE -> handleBattery(lens, frame)
             UPTIME_OPCODE -> handleUptime(lens, frame)
             FIRMWARE_OPCODE -> handleFirmware(lens, frame)
             else -> {
@@ -244,17 +247,16 @@ class BleTelemetryRepository(
         }
 
         val lensLabel = lens.name.lowercase(Locale.US)
-        battery?.let { percent ->
-            _events.tryEmit("[DIAG] ${lensLabel} battery=${percent}%")
-        }
-        charging?.let { value ->
-            val status = if (value) "charging" else "not charging"
-            _events.tryEmit("[DIAG] ${lensLabel} power=$status")
+        val parts = mutableListOf<String>()
+        battery?.let { parts += "battery=${it}%" }
+        charging?.let { parts += if (it) "charging" else "not charging" }
+        firmwareBanner?.let { parts += "FW ${it}" }
+        if (parts.isNotEmpty()) {
+            _events.tryEmit("[BLE][VITALS][${lensLabel}] ${parts.joinToString(separator = ", ")}")
         }
 
         firmwareBanner?.let { line ->
             parseTextMetadata(lens, line)
-            _events.tryEmit("[DIAG] ${lensLabel} firmware=$line")
             _uartText.tryEmit(UartLine(lens, line))
         }
     }
@@ -637,7 +639,7 @@ class BleTelemetryRepository(
 
     private fun maybeEmitUtf8(lens: Lens, frame: ByteArray): Boolean {
         val first = frame.first().toInt() and 0xFF
-        if (first == BATTERY_OPCODE || first == UPTIME_OPCODE || first == FIRMWARE_OPCODE) return false
+        if (first == BATTERY_OPCODE || first == STATUS_OPCODE || first == UPTIME_OPCODE || first == FIRMWARE_OPCODE) return false
         if (frame.size > 64) return false
         val printable = frame.all { byte -> byte.toInt().isAsciiOrCrlf() }
         if (!printable) return false
@@ -775,6 +777,7 @@ class BleTelemetryRepository(
 
     companion object {
         private const val BATTERY_OPCODE = 0x2C
+        private const val STATUS_OPCODE = 0x06
         private const val UPTIME_OPCODE = 0x37
         private const val FIRMWARE_OPCODE = 0x11
     }
