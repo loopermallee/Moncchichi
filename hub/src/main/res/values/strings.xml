@@ -74,11 +74,22 @@
     <string name="developer_label_reconnect_stats">Reconnect attempts: %1$d • successes: %2$d • reconnecting: %3$s</string>
     <string name="developer_label_smp">SMP frames: %1$d • last opcode: %2$s</string>
     <string name="developer_label_updated">Last update: %1$s</string>
+    <string name="developer_label_wearing">Wearing: %1$s</string>
+    <string name="developer_label_case_state">Case: %1$s</string>
+    <string name="developer_label_silent_mode">Silent mode: %1$s</string>
+    <string name="developer_label_last_ack">Last ACK: %1$s</string>
+    <string name="developer_label_ack_counts">ACKs: %1$d ok • %2$d fail • warmup %3$d</string>
     <string name="developer_value_missing">—</string>
     <string name="developer_value_yes">yes</string>
     <string name="developer_value_no">no</string>
     <string name="developer_value_rssi">%1$d dBm</string>
     <string name="developer_value_duration">%1$02d:%2$02d:%3$02d</string>
+    <string name="developer_value_wearing">wearing</string>
+    <string name="developer_value_not_wearing">not wearing</string>
+    <string name="developer_value_case_in">in case</string>
+    <string name="developer_value_case_out">out of case</string>
+    <string name="developer_value_silent_on">on</string>
+    <string name="developer_value_silent_off">off</string>
     <string name="developer_action_copy">Copy</string>
     <string name="developer_action_clear">Clear</string>
     <string name="developer_action_export">Export</string>
@@ -108,5 +119,10 @@
     <string name="developer_label_reconnect_stats_placeholder">Reconnect attempts: 0 • successes: 0 • reconnecting: no</string>
     <string name="developer_label_smp_placeholder">SMP frames: 0 • last opcode: —</string>
     <string name="developer_label_updated_placeholder">Last update: —</string>
+    <string name="developer_label_wearing_placeholder">Wearing: —</string>
+    <string name="developer_label_case_state_placeholder">Case: —</string>
+    <string name="developer_label_silent_mode_placeholder">Silent mode: —</string>
+    <string name="developer_label_last_ack_placeholder">Last ACK: —</string>
+    <string name="developer_label_ack_counts_placeholder">ACKs: 0 ok • 0 fail • warmup 0</string>
     <string name="settings_title">Settings</string>
 </resources>

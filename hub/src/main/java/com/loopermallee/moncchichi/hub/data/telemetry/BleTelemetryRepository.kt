@@ -23,6 +23,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.regex.Pattern
+import kotlin.collections.buildList
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.text.Charsets
@@ -44,6 +45,9 @@ class BleTelemetryRepository(
         val firmwareVersion: String? = null,
         val notes: String? = null,
         val charging: Boolean? = null,
+        val wearing: Boolean? = null,
+        val inCase: Boolean? = null,
+        val silentMode: Boolean? = null,
         val bonded: Boolean = false,
         val disconnectReason: Int? = null,
         val bondTransitions: Int = 0,
@@ -61,6 +65,10 @@ class BleTelemetryRepository(
         val lastBondState: Int? = null,
         val lastBondReason: Int? = null,
         val lastBondEventAt: Long? = null,
+        val lastAckAt: Long? = null,
+        val ackSuccessCount: Int = 0,
+        val ackFailureCount: Int = 0,
+        val ackWarmupCount: Int = 0,
     )
 
     data class Snapshot(
@@ -190,6 +198,9 @@ class BleTelemetryRepository(
             UPTIME_OPCODE -> handleUptime(lens, frame)
             FIRMWARE_OPCODE -> handleFirmware(lens, frame)
             else -> {
+                if (decodeBinary(lens, frame)) {
+                    return
+                }
                 val emittedDirect = maybeEmitUtf8(lens, frame)
                 if (!emittedDirect) {
                     val emittedBuffered = maybeAssembleUtf8Buffered(lens, frame)
@@ -242,6 +253,22 @@ class BleTelemetryRepository(
                 lastUpdated = timestamp
             }
 
+            vitals.wearing?.let { wearing ->
+                if (existing.wearing != wearing) {
+                    changed = true
+                }
+                updated = updated.copy(wearing = wearing)
+                lastUpdated = timestamp
+            }
+
+            vitals.inCradle?.let { inCase ->
+                if (existing.inCase != inCase) {
+                    changed = true
+                }
+                updated = updated.copy(inCase = inCase)
+                lastUpdated = timestamp
+            }
+
             if (changed || lastUpdated != existing.lastUpdated) {
                 updated = updated.copy(lastUpdated = lastUpdated)
             }
@@ -271,9 +298,13 @@ class BleTelemetryRepository(
     }
 
     private fun handleBattery(lens: Lens, frame: ByteArray) {
-        val primary = frame.getOrNull(2)?.toInt()?.takeIf { it in 0..100 }
-        val case = frame.getOrNull(3)?.toInt()?.takeIf { it in 0..100 }
-        if (primary == null && case == null) {
+        val payload = frame.extractPayload()
+        val (primary, case) = parseBatteryPayload(payload)
+        val primaryCandidate = primary ?: frame.getOrNull(2)?.toInt()?.takeIf { it in 0..100 }
+        val caseCandidate = case ?: frame.getOrNull(3)?.toInt()?.takeIf { it in 0..100 }
+        val lensBattery = primaryCandidate
+        val caseBattery = caseCandidate
+        if (lensBattery == null && caseBattery == null) {
             logRaw(lens, frame)
             return
         }
@@ -282,20 +313,24 @@ class BleTelemetryRepository(
         updateSnapshot(eventTimestamp = timestamp) { current ->
             val existing = current.lens(lens)
             val updatedLens = existing.copy(
-                batteryPercent = primary ?: existing.batteryPercent,
-                caseBatteryPercent = case ?: existing.caseBatteryPercent,
+                batteryPercent = lensBattery ?: existing.batteryPercent,
+                caseBatteryPercent = caseBattery ?: existing.caseBatteryPercent,
                 lastUpdated = timestamp,
             )
             val next = if (updatedLens == existing) current else current.updateLens(lens, updatedLens)
             next.withFrame(lens, hex)
         }
-        val mainLabel = primary?.let { "$it%" } ?: "?"
-        val caseLabel = case?.let { "$it%" } ?: "?"
+        val mainLabel = lensBattery?.let { "$it%" } ?: "?"
+        val caseLabel = caseBattery?.let { "$it%" } ?: "?"
         _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} battery=$mainLabel case=$caseLabel")
     }
 
     private fun handleUptime(lens: Lens, frame: ByteArray) {
-        val uptime = parseLittleEndianUInt(frame, start = 2, length = min(4, frame.size - 2))
+        val payload = frame.extractPayload()
+        val uptime = when {
+            payload != null -> parseLittleEndianUInt(payload, start = 0, length = min(4, payload.size))
+            else -> parseLittleEndianUInt(frame, start = 2, length = min(4, frame.size - 2))
+        }
         if (uptime == null) {
             logRaw(lens, frame)
             return
@@ -352,6 +387,101 @@ class BleTelemetryRepository(
         val message = "[ACK][$lensTag] opcode=$opcode status=$status → $outcome$qualifiers"
         logger("[BLE][ACK][$lensTag] opcode=$opcode status=$status success=${event.success} warmup=${event.warmup}")
         _uartText.tryEmit(UartLine(event.lens, message))
+        updateSnapshot(eventTimestamp = event.timestampMs, persist = false) { current ->
+            val existing = current.lens(event.lens)
+            val updated = existing.copy(
+                lastAckAt = event.timestampMs,
+                ackSuccessCount = existing.ackSuccessCount + if (event.success) 1 else 0,
+                ackFailureCount = existing.ackFailureCount + if (event.success) 0 else 1,
+                ackWarmupCount = existing.ackWarmupCount + if (event.warmup && event.success) 1 else 0,
+            )
+            current.updateLens(event.lens, updated)
+        }
+    }
+
+    private fun decodeBinary(lens: Lens, frame: ByteArray): Boolean {
+        return when (frame.first().toInt() and 0xFF) {
+            GLASSES_STATE_OPCODE -> {
+                handleGlassesState(lens, frame)
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun handleGlassesState(lens: Lens, frame: ByteArray) {
+        val payload = frame.extractPayload()
+        if (payload == null || payload.isEmpty()) {
+            logRaw(lens, frame)
+            return
+        }
+        val timestamp = System.currentTimeMillis()
+        val flags = payload.first().toInt() and 0xFF
+        val wearing = when {
+            flags and 0x02 != 0 -> true
+            flags and 0x08 != 0 -> false
+            else -> null
+        }
+        val inCase = when {
+            flags and 0x04 != 0 -> true
+            flags and 0x10 != 0 -> false
+            else -> null
+        }
+        val silentMode = when {
+            flags and 0x01 != 0 -> true
+            flags and 0x20 != 0 -> false
+            else -> null
+        }
+        val hex = frame.toHex()
+        updateSnapshot(eventTimestamp = timestamp) { current ->
+            val existing = current.lens(lens)
+            var updated = existing
+            var changed = false
+            wearing?.let { value ->
+                if (existing.wearing != value) {
+                    changed = true
+                }
+                updated = updated.copy(wearing = value)
+            }
+            inCase?.let { value ->
+                if (existing.inCase != value) {
+                    changed = true
+                }
+                updated = updated.copy(inCase = value)
+            }
+            silentMode?.let { value ->
+                if (existing.silentMode != value) {
+                    changed = true
+                }
+                updated = updated.copy(silentMode = value)
+            }
+            if (changed) {
+                updated = updated.copy(lastUpdated = timestamp)
+            }
+            val next = if (updated == existing) current else current.updateLens(lens, updated)
+            next.withFrame(lens, hex)
+        }
+        val states = buildList {
+            wearing?.let { add(if (it) "wearing" else "not wearing") }
+            inCase?.let { add(if (it) "in case" else "out of case") }
+            silentMode?.let { add(if (it) "silent" else "audible") }
+        }
+        if (states.isNotEmpty()) {
+            val lensLabel = if (lens == Lens.LEFT) "L" else "R"
+            _events.tryEmit("[BLE][STATE][$lensLabel] ${states.joinToString(", ")}")
+        }
+    }
+
+    private fun parseBatteryPayload(payload: ByteArray?): Pair<Int?, Int?> {
+        if (payload == null || payload.isEmpty()) return null to null
+        val bytes = payload
+        val startIndex = when (bytes.first().toInt() and 0xFF) {
+            0x01, 0x02 -> 1
+            else -> 0
+        }
+        val primary = bytes.getOrNull(startIndex)?.toInt()?.takeIf { it in 0..100 }
+        val case = bytes.getOrNull(startIndex + 1)?.toInt()?.takeIf { it in 0..100 }
+        return primary to case
     }
 
     private fun mergeKeepAlive(lens: Lens, status: MoncchichiBleService.LensStatus) {
@@ -760,6 +890,27 @@ class BleTelemetryRepository(
         ((byte.toInt() and 0xFF).toString(16)).padStart(2, '0')
     }
 
+    private fun ByteArray.extractPayload(): ByteArray? {
+        if (size < 2) return null
+        val status = this[1]
+        val remaining = size - 2
+        if (status == 0xC9.toByte() || status == 0xCA.toByte() || status.toUnsignedInt() > remaining) {
+            return if (remaining > 0) copyOfRange(2, size) else ByteArray(0)
+        }
+        val length = status.toUnsignedInt()
+        var payloadStart = 2
+        var payloadLength = length
+        if (length >= 2 && size >= 4) {
+            payloadStart = 4
+            payloadLength = (length - 2).coerceAtLeast(0)
+        }
+        val available = (size - payloadStart).coerceAtLeast(0)
+        val actual = min(payloadLength, available)
+        return if (actual <= 0) ByteArray(0) else copyOfRange(payloadStart, payloadStart + actual)
+    }
+
+    private fun Byte.toUnsignedInt(): Int = this.toUByte().toInt()
+
     private fun updateSnapshot(
         eventTimestamp: Long? = null,
         persist: Boolean = true,
@@ -800,5 +951,6 @@ class BleTelemetryRepository(
         private const val STATUS_OPCODE = 0x06
         private const val UPTIME_OPCODE = 0x37
         private const val FIRMWARE_OPCODE = 0x11
+        private const val GLASSES_STATE_OPCODE = 0x2B
     }
 }
