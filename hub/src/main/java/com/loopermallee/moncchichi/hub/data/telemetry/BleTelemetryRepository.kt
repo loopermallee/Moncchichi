@@ -411,7 +411,7 @@ class BleTelemetryRepository(
 
     private fun handleGlassesState(lens: Lens, frame: ByteArray) {
         val payload = frame.extractPayload()
-        if (payload.isNullOrEmpty()) {
+        if (payload == null || payload.isEmpty()) {
             logRaw(lens, frame)
             return
         }
@@ -473,13 +473,14 @@ class BleTelemetryRepository(
     }
 
     private fun parseBatteryPayload(payload: ByteArray?): Pair<Int?, Int?> {
-        if (payload.isNullOrEmpty()) return null to null
-        val startIndex = when (payload.first().toInt() and 0xFF) {
+        if (payload == null || payload.isEmpty()) return null to null
+        val bytes = payload
+        val startIndex = when (bytes.first().toInt() and 0xFF) {
             0x01, 0x02 -> 1
             else -> 0
         }
-        val primary = payload.getOrNull(startIndex)?.toInt()?.takeIf { it in 0..100 }
-        val case = payload.getOrNull(startIndex + 1)?.toInt()?.takeIf { it in 0..100 }
+        val primary = bytes.getOrNull(startIndex)?.toInt()?.takeIf { it in 0..100 }
+        val case = bytes.getOrNull(startIndex + 1)?.toInt()?.takeIf { it in 0..100 }
         return primary to case
     }
 
