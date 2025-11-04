@@ -1,12 +1,14 @@
 package com.loopermallee.moncchichi.bluetooth
 
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
 import io.mockk.CapturingSlot
+import io.mockk.clearMocks
 import io.mockk.every
 import io.mockk.coEvery
 import io.mockk.match
@@ -18,6 +20,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.FlowCollector
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.ExperimentalCoroutinesApi
@@ -86,6 +89,8 @@ class G1BleClientTest {
 
             stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
             runCurrent()
+            stateFlow.value = stateFlow.value.copy(bonded = true)
+            runCurrent()
 
             stateFlow.value = stateFlow.value.copy(attMtu = 256)
             runCurrent()
@@ -135,7 +140,30 @@ class G1BleClientTest {
     }
 
     @Test
-    fun awaitReadyDoesNotCompleteWithoutWarmupOk() = runTest {
+    fun awaitReadyCompletesWhenMtuKnownEvenWithoutWarmupOk() = runTest {
+        val client = buildClient(this)
+        try {
+            val stateFlow = client.state as MutableStateFlow<G1BleClient.State>
+            val deferred = async { client.awaitReady(timeoutMs = 1_000) }
+
+            runCurrent()
+
+            stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
+            runCurrent()
+            stateFlow.value = stateFlow.value.copy(bonded = true)
+            runCurrent()
+
+            stateFlow.value = stateFlow.value.copy(attMtu = 256)
+            runCurrent()
+
+            assertEquals(G1BleClient.AwaitReadyResult.Ready, deferred.await())
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun awaitReadyRequiresBondedState() = runTest {
         val client = buildClient(this)
         try {
             val stateFlow = client.state as MutableStateFlow<G1BleClient.State>
@@ -146,7 +174,7 @@ class G1BleClientTest {
             stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
             runCurrent()
 
-            stateFlow.value = stateFlow.value.copy(attMtu = 256)
+            stateFlow.value = stateFlow.value.copy(attMtu = 256, warmupOk = true)
             runCurrent()
 
             advanceTimeBy(1_000)
@@ -460,6 +488,143 @@ class G1BleClientTest {
     }
 
     @Test
+    fun manualConnectResetsReconnectCounter() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            harness.client.connect()
+            runCurrent()
+
+            harness.connectionEventsFlow.tryEmit(G1BleUartClient.ConnectionEvent(0, BluetoothProfile.STATE_CONNECTED))
+            runCurrent()
+
+            harness.connectionEventsFlow.tryEmit(G1BleUartClient.ConnectionEvent(0, BluetoothProfile.STATE_DISCONNECTED))
+            runCurrent()
+
+            harness.client.connect()
+            runCurrent()
+
+            clearMocks(harness.logger, answers = false)
+
+            harness.connectionEventsFlow.tryEmit(G1BleUartClient.ConnectionEvent(0, BluetoothProfile.STATE_DISCONNECTED))
+            runCurrent()
+
+            verify {
+                harness.logger.i(any(), match { message ->
+                    message.contains("[GATT] Reconnecting after") && message.contains("attempt=1")
+                })
+            }
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
+    fun authFailureDisconnectSkipsReconnect() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+
+            harness.client.connect()
+            runCurrent()
+
+            harness.connectionEventsFlow.tryEmit(G1BleUartClient.ConnectionEvent(0, BluetoothProfile.STATE_CONNECTED))
+            runCurrent()
+
+            clearMocks(harness.logger, answers = false)
+
+            harness.connectionEventsFlow.tryEmit(G1BleUartClient.ConnectionEvent(0x85, BluetoothProfile.STATE_DISCONNECTED))
+            runCurrent()
+
+            verify {
+                harness.logger.w(any(), match { message ->
+                    message.contains("auth failure")
+                })
+            }
+            verify(exactly = 0) {
+                harness.logger.i(any(), match { message ->
+                    message.contains("[GATT] Reconnecting after")
+                })
+            }
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
+    fun helloWatchdogRetriesBeforeReconnect() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+            every { harness.uartClient.write(any()) } returns true
+
+            harness.client.connect()
+            runCurrent()
+
+            harness.connectionEventsFlow.tryEmit(G1BleUartClient.ConnectionEvent(0, BluetoothProfile.STATE_CONNECTED))
+            runCurrent()
+
+            harness.notificationsArmedFlow.value = true
+            harness.mtuFlow.value = 498
+            runCurrent()
+
+            clearMocks(harness.uartClient, harness.logger, answers = false)
+
+            advanceTimeBy(12_000L)
+            runCurrent()
+
+            advanceTimeBy(G1Protocols.MTU_WARMUP_GRACE_MS)
+            runCurrent()
+
+            advanceTimeBy(750L)
+            runCurrent()
+
+            verify(atLeast = 1) { harness.uartClient.requestWarmupOnNextNotify() }
+            verify {
+                harness.logger.i(any(), match { it.contains("HELLO recovery retrying HELLO") })
+            }
+            verify {
+                harness.logger.i(any(), match { message ->
+                    message.contains("[GATT] Reconnecting after HELLO timeout")
+                })
+            }
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
+    fun bondBroadcastClearsBondedState() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            val receiverSlot: CapturingSlot<BroadcastReceiver> = slot()
+            every { harness.context.registerReceiver(capture(receiverSlot), any()) } returns mockk()
+
+            harness.client.connect()
+            runCurrent()
+
+            assertTrue(harness.client.state.value.bonded)
+
+            val intent = mockk<Intent> {
+                every { action } returns BluetoothDevice.ACTION_BOND_STATE_CHANGED
+                every { getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE) } returns harness.device
+                every { getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, any()) } returns BluetoothDevice.BOND_NONE
+                every { getIntExtra("android.bluetooth.device.extra.REASON", any()) } returns UNBOND_REASON_REMOVED
+            }
+
+            receiverSlot.captured.onReceive(harness.context, intent)
+            runCurrent()
+
+            assertFalse(harness.client.state.value.bonded)
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun sendCommandIgnoresMismatchedAckUntilMatchingOpcodeArrives() = runTest {
         val harness = buildClientHarness(this)
         try {
@@ -580,6 +745,7 @@ class G1BleClientTest {
         val device: BluetoothDevice,
         val uartClient: G1BleUartClient,
         val connectionStateFlow: MutableStateFlow<G1BleUartClient.ConnectionState>,
+        val connectionEventsFlow: MutableSharedFlow<G1BleUartClient.ConnectionEvent>,
         val mtuFlow: MutableStateFlow<Int>,
         val notificationsArmedFlow: MutableStateFlow<Boolean>,
         val notificationCollectorSlot: CapturingSlot<FlowCollector<ByteArray>>,
@@ -597,12 +763,14 @@ class G1BleClientTest {
         val rssi = MutableStateFlow<Int?>(null)
         val mtu = MutableStateFlow(23)
         val notificationsArmed = MutableStateFlow(false)
+        val connectionEvents = MutableSharedFlow<G1BleUartClient.ConnectionEvent>(extraBufferCapacity = 8)
         val notificationCollectorSlot = slot<FlowCollector<ByteArray>>()
         val uartClient = mockk<G1BleUartClient>(relaxed = true) {
             every { connectionState } returns connectionState
             every { rssi } returns rssi
             every { mtu } returns mtu
             every { notificationsArmed } returns notificationsArmed
+            every { connectionEvents } returns connectionEvents
             every { write(any()) } returns true
         }
         coEvery { uartClient.observeNotifications(capture(notificationCollectorSlot)) } coAnswers { }
@@ -619,6 +787,7 @@ class G1BleClientTest {
             device = device,
             uartClient = uartClient,
             connectionStateFlow = connectionState,
+            connectionEventsFlow = connectionEvents,
             mtuFlow = mtu,
             notificationsArmedFlow = notificationsArmed,
             notificationCollectorSlot = notificationCollectorSlot,
