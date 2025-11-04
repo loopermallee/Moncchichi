@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Widget.Moncchichi">
+        <item name="android:textColor">@color/er_text_primary</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
     <style name="Widget.Moncchichi.BottomNavIndicator">
         <item name="android:color">@color/er_text_primary</item>
         <item name="android:alpha">0.16</item>
