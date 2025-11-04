@@ -307,7 +307,15 @@ class MoncchichiBleService(
     private suspend fun maybeClearStaleBond(device: BluetoothDevice, lens: Lens) {
         val status = clientState(lens)
         val currentBondState = device.bondState
-        val staleBond = currentBondState == BluetoothDevice.BOND_BONDED && !status.bonded
+        val hasBondHistory =
+            status.lastBondState != null ||
+                status.lastBondEventAt != null ||
+                status.bondTransitions > 0 ||
+                status.bondAttempts > 0
+        val staleBond =
+            currentBondState == BluetoothDevice.BOND_BONDED &&
+                !status.bonded &&
+                hasBondHistory
         val removalDetected = status.lastBondReason == UNBOND_REASON_REMOVED
         if (!staleBond && !removalDetected) {
             return
@@ -496,6 +504,17 @@ class MoncchichiBleService(
             client.incoming.collect { payload ->
                 _incoming.tryEmit(IncomingFrame(lens, payload))
                 when (val parsed = G1ReplyParser.parseNotify(payload)) {
+                    is G1ReplyParser.Parsed.Vitals -> {
+                        val vitals = parsed.vitals
+                        val parts = buildList {
+                            vitals.batteryPercent?.let { add("battery=${it}%") }
+                            vitals.charging?.let { add(if (it) "charging" else "not charging") }
+                            vitals.firmwareVersion?.takeIf { it.isNotBlank() }?.let { add(it) }
+                        }
+                        if (parts.isNotEmpty()) {
+                            log("[BLE][VITALS][$lens] ${parts.joinToString(separator = ", ")}")
+                        }
+                    }
                     is G1ReplyParser.Parsed.EvenAi -> {
                         val event = EvenAiEvent(lens, parsed.event)
                         _evenAiEvents.tryEmit(event)

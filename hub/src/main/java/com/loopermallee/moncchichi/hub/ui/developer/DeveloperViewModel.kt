@@ -170,6 +170,7 @@ class DeveloperViewModel(
         appendLine("$label lens:")
         appendLine("  Battery: ${lens.batteryPercent?.let { "$it%" } ?: "–"}")
         appendLine("  Case battery: ${lens.caseBatteryPercent?.let { "$it%" } ?: "–"}")
+        appendLine("  Charging: ${lens.charging?.let { if (it) "yes" else "no" } ?: "–"}")
         appendLine("  RSSI: ${lens.rssi?.let { "${it} dBm" } ?: "–"}")
         appendLine("  Firmware: ${lens.firmwareVersion ?: "–"}")
         appendLine("  Bonded: ${if (lens.bonded) "yes" else "no"}")
