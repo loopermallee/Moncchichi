@@ -10,9 +10,9 @@ import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import com.loopermallee.moncchichi.hub.ui.theme.G1HubTheme
 import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.ui.screens.G1DataConsoleScreen
 import com.loopermallee.moncchichi.ui.shared.LocalServiceConnection
@@ -49,7 +49,7 @@ class G1DataConsoleActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            G1HubTheme {
                 CompositionLocalProvider(LocalServiceConnection provides binder?.getService()) {
                     G1DataConsoleScreen(
                         binderProvider = { binder?.takeIf { it.readiness.value } },

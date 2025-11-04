@@ -8,23 +8,24 @@
 
     <!-- Even Realities Monochrome Palette -->
     <color name="black">#000000</color>
-    <color name="gray_dark">#1A1A1A</color>
-    <color name="gray_medium">#2A2A2A</color>
-    <color name="gray_light">#CCCCCC</color>
-    <color name="gray_disabled">#777777</color>
+    <color name="gray_dark">#121212</color>
+    <color name="gray_medium">#1F1F1F</color>
+    <color name="gray_light">#808080</color>
+    <color name="gray_disabled">#404040</color>
     <color name="white">#FFFFFF</color>
     <!-- Accent reserved for console/log UI -->
     <color name="er_accent_purple">#A691F2</color>
 
     <!-- Even Realities monochrome palette aliases -->
     <color name="er_background">#FF000000</color>
-    <color name="er_surface">#FF1A1A1A</color>
-    <color name="er_surface_alt">#FF121212</color>
-    <color name="er_border">#FF2A2A2A</color>
+    <color name="er_surface">@color/gray_dark</color>
+    <color name="er_surface_alt">@color/gray_medium</color>
+    <color name="er_border">@color/gray_light</color>
     <color name="er_text_primary">#FFFFFFFF</color>
-    <color name="er_text_secondary">#FFCCCCCC</color>
-    <color name="er_text_disabled">#FF777777</color>
+    <color name="er_text_secondary">#FFFFFFFF</color>
+    <color name="er_text_disabled">@color/gray_disabled</color>
+    <color name="er_icon_inactive">#FF808080</color>
     <color name="er_console_accent">#FFA691F2</color>
-    <color name="developer_console_background">#12131A</color>
-    <color name="developer_diagnostics_background">#F4F6FA</color>
+    <color name="developer_console_background">#121212</color>
+    <color name="developer_diagnostics_background">#1F1F1F</color>
 </resources>

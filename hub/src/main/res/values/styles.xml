@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Widget.Moncchichi.BottomNavIndicator" parent="@style/Widget.Material3.NavigationBar.ActiveIndicator">
+        <item name="android:color">@color/er_text_primary</item>
+        <item name="android:alpha">0.16</item>
+    </style>
+</resources>

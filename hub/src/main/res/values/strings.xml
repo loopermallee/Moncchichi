@@ -15,7 +15,7 @@
     <string name="notification_channel_description">Keeps the G1 display connection active</string>
     <string name="hub_inflation_error">Moncchichi Hub failed to load UI. Please reinstall or update.</string>
     <string name="hub_title">Moncchichi Hub</string>
-    <string name="hud_title">HUD</string>
+    <string name="telemetry_title">Telemetry</string>
     <string name="assistant_title">Assistant</string>
     <string name="status_connected_green">Connected 🟢</string>
     <string name="status_reconnecting_yellow">Reconnecting 🟡</string>
@@ -109,4 +109,13 @@
     <string name="developer_label_smp_placeholder">SMP frames: 0 • last opcode: —</string>
     <string name="developer_label_updated_placeholder">Last update: —</string>
     <string name="settings_title">Settings</string>
+    <string name="menu_about_placeholder">About screen coming soon.</string>
+    <string name="menu_help_placeholder">Help center coming soon.</string>
+    <string name="menu_overflow_about">About</string>
+    <string name="menu_overflow_help">Help</string>
+    <string name="menu_overflow_developer">Developer Options</string>
+    <string name="nav_dashboard_label">Dashboard</string>
+    <string name="nav_telemetry_label">Telemetry</string>
+    <string name="nav_assistant_label">Assistant</string>
+    <string name="nav_settings_label">Settings</string>
 </resources>

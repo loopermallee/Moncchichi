@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:id="@+id/tab_hub"
-        android:title="Hub"
-        android:icon="@android:drawable/ic_menu_manage"/>
+        android:id="@+id/tab_dashboard"
+        android:title="@string/nav_dashboard_label"
+        android:icon="@drawable/ic_nav_dashboard" />
     <item
-        android:id="@+id/tab_hud"
-        android:title="HUD"
-        android:icon="@android:drawable/ic_menu_myplaces"/>
+        android:id="@+id/tab_telemetry"
+        android:title="@string/nav_telemetry_label"
+        android:icon="@drawable/ic_nav_telemetry" />
     <item
         android:id="@+id/tab_assistant"
-        android:title="Assistant"
-        android:icon="@android:drawable/ic_btn_speak_now"/>
+        android:title="@string/nav_assistant_label"
+        android:icon="@drawable/ic_nav_assistant" />
     <item
-        android:id="@+id/tab_developer"
-        android:title="Developer"
-        android:icon="@drawable/ic_terminal"/>
+        android:id="@+id/tab_settings"
+        android:title="@string/nav_settings_label"
+        android:icon="@drawable/ic_nav_settings" />
 </menu>

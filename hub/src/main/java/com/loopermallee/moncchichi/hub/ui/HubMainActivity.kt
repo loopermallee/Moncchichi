@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.hub.ui
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.annotation.IdRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
@@ -9,21 +10,20 @@ import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.di.AppLocator
+import com.loopermallee.moncchichi.hub.ui.HubFragment
 import com.loopermallee.moncchichi.hub.ui.assistant.AssistantFragment
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperFragment
-import com.loopermallee.moncchichi.hub.ui.hud.HudFragment
-import com.loopermallee.moncchichi.hub.ui.PermissionsFragment
 import com.loopermallee.moncchichi.hub.ui.settings.SettingsFragment
 
 class HubMainActivity : AppCompatActivity() {
     private lateinit var toolbar: MaterialToolbar
     private lateinit var bottomNav: BottomNavigationView
-    private var currentTabId: Int = R.id.tab_hub
+    private var currentTabId: Int = R.id.tab_dashboard
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLocator.init(applicationContext)
-        setContentView(R.layout.activity_hub_main)
+        setContentView(R.layout.app_shell)
 
         toolbar = findViewById(R.id.titleBar)
         bottomNav = findViewById(R.id.bottom_nav)
@@ -34,12 +34,16 @@ class HubMainActivity : AppCompatActivity() {
                 true
             } else {
                 when (item.itemId) {
-                    R.id.menu_permissions -> {
-                        showOverlayFragment(PermissionsFragment(), R.string.permissions_screen_title)
+                    R.id.menu_about -> {
+                        Toast.makeText(this, R.string.menu_about_placeholder, Toast.LENGTH_SHORT).show()
                         true
                     }
-                    R.id.menu_settings -> {
-                        showOverlayFragment(SettingsFragment(), R.string.settings_title)
+                    R.id.menu_help -> {
+                        Toast.makeText(this, R.string.menu_help_placeholder, Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    R.id.menu_developer_options -> {
+                        bottomNav.selectedItemId = R.id.tab_telemetry
                         true
                     }
                     else -> false
@@ -68,7 +72,7 @@ class HubMainActivity : AppCompatActivity() {
             }
         }
 
-        val initialTab = savedInstanceState?.getInt(KEY_SELECTED_TAB, R.id.tab_hub) ?: R.id.tab_hub
+        val initialTab = savedInstanceState?.getInt(KEY_SELECTED_TAB, R.id.tab_dashboard) ?: R.id.tab_dashboard
         if (savedInstanceState == null) {
             navigateTo(fragmentForTab(initialTab) ?: HubFragment(), initialTab)
         } else {
@@ -94,47 +98,37 @@ class HubMainActivity : AppCompatActivity() {
     }
 
     private fun fragmentForTab(@IdRes tabId: Int): Fragment? = when (tabId) {
-        R.id.tab_hub -> HubFragment()
-        R.id.tab_hud -> HudFragment()
+        R.id.tab_dashboard -> HubFragment()
+        R.id.tab_telemetry -> DeveloperFragment()
         R.id.tab_assistant -> AssistantFragment()
-        R.id.tab_developer -> DeveloperFragment()
+        R.id.tab_settings -> SettingsFragment()
         else -> null
     }
 
     private fun updateToolbarForTab(@IdRes tabId: Int) {
         toolbar.menu.clear()
         val activeFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
-        if (tabId == R.id.tab_developer && activeFragment is DeveloperFragment) {
+        if (tabId == R.id.tab_telemetry && activeFragment is DeveloperFragment) {
             toolbar.inflateMenu(R.menu.menu_developer_actions)
         }
         toolbar.inflateMenu(R.menu.menu_overflow)
 
         toolbar.title = when {
             activeFragment is DeveloperFragment -> getString(R.string.developer_console_title)
-            tabId == R.id.tab_hub -> getString(R.string.hub_title)
-            tabId == R.id.tab_hud -> getString(R.string.hud_title)
+            tabId == R.id.tab_dashboard -> getString(R.string.hub_title)
+            tabId == R.id.tab_telemetry -> getString(R.string.telemetry_title)
             tabId == R.id.tab_assistant -> getString(R.string.assistant_title)
+            tabId == R.id.tab_settings -> getString(R.string.settings_title)
             else -> getString(R.string.hub_title)
         }
     }
 
     private fun tabIdForFragment(fragment: Fragment?): Int? = when (fragment) {
-        is HubFragment -> R.id.tab_hub
-        is HudFragment -> R.id.tab_hud
+        is HubFragment -> R.id.tab_dashboard
+        is DeveloperFragment -> R.id.tab_telemetry
         is AssistantFragment -> R.id.tab_assistant
-        is DeveloperFragment -> R.id.tab_developer
+        is SettingsFragment -> R.id.tab_settings
         else -> null
-    }
-
-    private fun showOverlayFragment(fragment: Fragment, titleRes: Int) {
-        supportFragmentManager.beginTransaction()
-            .replace(R.id.fragment_container, fragment)
-            .addToBackStack(null)
-            .commit()
-        supportFragmentManager.executePendingTransactions()
-        toolbar.menu.clear()
-        toolbar.inflateMenu(R.menu.menu_overflow)
-        toolbar.title = getString(titleRes)
     }
 
     companion object {
