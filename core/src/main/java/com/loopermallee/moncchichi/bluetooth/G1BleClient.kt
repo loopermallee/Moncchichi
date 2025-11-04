@@ -1782,6 +1782,18 @@ class G1BleClient(
             logger.i(label, "${tt()} Skipping GATT connect schedule; bond incomplete ($reason)")
             return
         }
+        if (gattReconnectAttempts > 0) {
+            logger.i(
+                label,
+                "${tt()} [GATT] Bond connect resetting reconnect attempts (was=$gattReconnectAttempts)",
+            )
+            gattReconnectAttempts = 0
+        }
+        gattReconnectJob?.let { pending ->
+            logger.i(label, "${tt()} [GATT] Bond connect cancelling pending reconnect job")
+            pending.cancel()
+            gattReconnectJob = null
+        }
         bondConnectJob?.cancel()
         bondConnectJob = scope.launch {
             val startedAt = System.currentTimeMillis()

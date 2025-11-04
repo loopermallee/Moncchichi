@@ -670,10 +670,13 @@ class MoncchichiBleService(
         rightBondRetryJob?.cancel()
         rightBondRetryJob = scope.launch(Dispatchers.IO) {
             delay(delayMs)
-            if (!state.value.left.bonded) {
-                pendingRightBondSequence = false
+            val leftRecord = clientRecords[Lens.LEFT]
+            val leftReady = leftRecord?.client?.state?.value?.isReadyForCompanion() ?: false
+            if (!leftReady) {
+                logWarn("[PAIRING][SEQUENCE] left not ready; deferring right retry attempt=$attemptNumber")
                 return@launch
             }
+            pendingRightBondSequence = false
             connect(device, Lens.RIGHT)
         }.also { job ->
             job.invokeOnCompletion { rightBondRetryJob = null }
