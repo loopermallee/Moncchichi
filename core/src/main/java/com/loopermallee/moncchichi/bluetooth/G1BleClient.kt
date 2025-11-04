@@ -533,7 +533,20 @@ class G1BleClient(
                         if (_state.value.lastDisconnectStatus != null) {
                             _state.value = _state.value.copy(lastDisconnectStatus = null)
                         }
-                        startInvalidKeyWatchdog()
+                        if (gattReconnectAttempts > 0) {
+                            logger.i(
+                                label,
+                                "${tt()} [GATT] Connected; reconnect attempt counter reset (was=$gattReconnectAttempts)",
+                            )
+                            gattReconnectAttempts = 0
+                        }
+                        val pendingReconnect = gattReconnectJob
+                        if (pendingReconnect != null) {
+                            logger.i(label, "${tt()} [GATT] Connected; cancelling pending reconnect job")
+                            pendingReconnect.cancel()
+                            gattReconnectJob = null
+                        }
+                        startHelloWatchdog()
                     }
                 }
             }
@@ -1173,7 +1186,10 @@ class G1BleClient(
             return
         }
         if (delayMs == null && gattReconnectAttempts >= GATT_RECONNECT_BACKOFF_MS.size) {
-            logger.w(label, "${tt()} [GATT] Reconnect attempt limit reached; skipping ($reason)")
+            logger.w(
+                label,
+                "${tt()} [GATT] Reconnect attempt limit reached; skipping ($reason attempts=$gattReconnectAttempts/${GATT_RECONNECT_BACKOFF_MS.size})",
+            )
             return
         }
         val nextAttempt = (gattReconnectAttempts + 1).coerceAtMost(GATT_RECONNECT_BACKOFF_MS.size)
