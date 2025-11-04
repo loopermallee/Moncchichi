@@ -40,6 +40,40 @@ class BleTelemetryRepositoryUtf8Test {
         assertEquals("1.2.3", snapshot.right.firmwareVersion)
         assertEquals("DeviceID 42", snapshot.right.notes)
     }
+
+    @Test
+    fun `f5 vitals update snapshot and emit diagnostics`() = runTest {
+        val logs = mutableListOf<String>()
+        val repository = BleTelemetryRepository(
+            MemoryRepository(FakeMemoryDao()),
+            backgroundScope,
+        ) { message -> logs += message }
+
+        val events = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.events.take(3).toList(mutableListOf())
+        }
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x0A, 0x64))
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x09, 0x00))
+        val firmware = "v1.6.3".encodeToByteArray()
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x11) + firmware)
+
+        val snapshot = repository.snapshot.value
+        assertEquals(100, snapshot.left.batteryPercent)
+        assertEquals(false, snapshot.left.charging)
+        assertEquals("v1.6.3", snapshot.left.firmwareVersion)
+
+        val vitalsEvents = events.await()
+        assertEquals(
+            listOf(
+                "[BLE][VITALS][L] battery=100%",
+                "[BLE][VITALS][L] not charging",
+                "[BLE][VITALS][L] FW v1.6.3",
+            ),
+            vitalsEvents,
+        )
+        assertEquals(vitalsEvents, logs)
+    }
 }
 
 private class FakeMemoryDao : MemoryDao {
