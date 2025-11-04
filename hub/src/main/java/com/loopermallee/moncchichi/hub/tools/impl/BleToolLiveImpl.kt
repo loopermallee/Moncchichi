@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.collections.buildList
 
 private const val TAG = "BleToolLive"
 private const val FALLBACK_CHARS_PER_PAGE = 220
@@ -159,8 +160,9 @@ class BleToolLiveImpl(
         }
         val companionMissing = expectsCompanion && companionRecord == null
         if (companionMissing) {
-            Toast.makeText(appContext, "Waiting for right lens…", Toast.LENGTH_SHORT).show()
-            Log.i(TAG, "[PAIRING] Waiting for right lens to appear")
+            val missingLabel = companionSlot.name.lowercase(Locale.US)
+            Toast.makeText(appContext, "Waiting for $missingLabel lens…", Toast.LENGTH_SHORT).show()
+            Log.i(TAG, "[PAIRING] Waiting for $missingLabel lens to appear")
         }
 
         val leftAddress = when (primarySlot) {
@@ -175,16 +177,30 @@ class BleToolLiveImpl(
         val leftDevice = leftAddress?.let { resolveDevice(it) }
         val rightDevice = rightAddress?.let { resolveDevice(it) }
 
-        val connectionOrder = if (primarySlot == LensSlot.RIGHT) {
-            listOfNotNull(rightDevice?.let { it to LensSlot.RIGHT }, leftDevice?.let { it to LensSlot.LEFT })
-        } else {
-            listOfNotNull(leftDevice?.let { it to LensSlot.LEFT }, rightDevice?.let { it to LensSlot.RIGHT })
+        if (rightDevice != null && leftDevice == null) {
+            Toast.makeText(appContext, "Left lens must connect before right.", Toast.LENGTH_SHORT).show()
+            Log.w(TAG, "[PAIRING] Aborting — right lens requested without available left companion")
+            return false
+        }
+
+        val connectionOrder = buildList {
+            leftDevice?.let { add(it to LensSlot.LEFT) }
+            rightDevice?.let { add(it to LensSlot.RIGHT) }
         }
 
         val outcomes = mutableMapOf<LensSlot, Boolean>()
         connectionOrder.forEach { (targetDevice, slot) ->
+            if (slot == LensSlot.RIGHT && outcomes[LensSlot.LEFT] != true) {
+                Log.w(TAG, "[PAIRING] Skipping right lens connect — left lens not ready")
+                outcomes[slot] = false
+                return@forEach
+            }
             val ok = connectLens(targetDevice, slot)
             outcomes[slot] = ok
+            if (slot == LensSlot.LEFT && !ok) {
+                Log.w(TAG, "[PAIRING] Left lens failed to connect; aborting right lens bring-up")
+                return@forEach
+            }
         }
 
         val leftConnected = outcomes[LensSlot.LEFT] == true

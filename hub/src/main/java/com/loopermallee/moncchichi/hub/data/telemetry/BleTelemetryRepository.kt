@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothDevice
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -42,6 +43,7 @@ class BleTelemetryRepository(
         val rssi: Int? = null,
         val firmwareVersion: String? = null,
         val notes: String? = null,
+        val charging: Boolean? = null,
         val bonded: Boolean = false,
         val disconnectReason: Int? = null,
         val bondTransitions: Int = 0,
@@ -172,6 +174,14 @@ class BleTelemetryRepository(
 
     fun onFrame(lens: Lens, frame: ByteArray) {
         if (frame.isEmpty()) return
+        when (val parsed = G1ReplyParser.parseNotify(frame)) {
+            is G1ReplyParser.Parsed.Vitals -> {
+                handleParsedVitals(lens, parsed.vitals, frame)
+                return
+            }
+            is G1ReplyParser.Parsed.Ack -> return
+            else -> Unit
+        }
         when (frame.first().toInt() and 0xFF) {
             BATTERY_OPCODE -> handleBattery(lens, frame)
             UPTIME_OPCODE -> handleUptime(lens, frame)
@@ -185,6 +195,67 @@ class BleTelemetryRepository(
                     }
                 }
             }
+        }
+    }
+
+    private fun handleParsedVitals(
+        lens: Lens,
+        vitals: G1ReplyParser.DeviceVitals,
+        frame: ByteArray,
+    ) {
+        val timestamp = System.currentTimeMillis()
+        val hex = frame.toHex()
+        val battery = vitals.batteryPercent?.takeIf { it in 0..100 }
+        val charging = vitals.charging
+        val firmwareBanner = vitals.firmwareVersion?.takeIf { it.isNotBlank() }
+
+        updateSnapshot(eventTimestamp = timestamp) { current ->
+            val existing = current.lens(lens)
+            var updated = existing
+            var changed = false
+            var lastUpdated = existing.lastUpdated
+
+            battery?.let { percent ->
+                if (existing.batteryPercent != percent) {
+                    changed = true
+                }
+                updated = updated.copy(batteryPercent = percent)
+                lastUpdated = timestamp
+            }
+
+            charging?.let { value ->
+                if (existing.charging != value) {
+                    changed = true
+                }
+                updated = updated.copy(charging = value)
+                lastUpdated = timestamp
+            }
+
+            if (changed || lastUpdated != existing.lastUpdated) {
+                updated = updated.copy(lastUpdated = lastUpdated)
+            }
+
+            val next = if (updated != existing) {
+                current.updateLens(lens, updated)
+            } else {
+                current
+            }
+            next.withFrame(lens, hex)
+        }
+
+        val lensLabel = lens.name.lowercase(Locale.US)
+        battery?.let { percent ->
+            _events.tryEmit("[DIAG] ${lensLabel} battery=${percent}%")
+        }
+        charging?.let { value ->
+            val status = if (value) "charging" else "not charging"
+            _events.tryEmit("[DIAG] ${lensLabel} power=$status")
+        }
+
+        firmwareBanner?.let { line ->
+            parseTextMetadata(lens, line)
+            _events.tryEmit("[DIAG] ${lensLabel} firmware=$line")
+            _uartText.tryEmit(UartLine(lens, line))
         }
     }
 
