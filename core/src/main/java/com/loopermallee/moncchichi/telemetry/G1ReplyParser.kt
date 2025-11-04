@@ -2,6 +2,7 @@ package com.loopermallee.moncchichi.telemetry
 
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlin.text.Charsets
 
 object G1ReplyParser {
 
@@ -63,18 +64,38 @@ object G1ReplyParser {
             0x4E -> Parsed.Mode("Text")
             0x25 -> Parsed.Mode("Idle")
             0x15, 0x20, 0x16 -> Parsed.Mode("Image")
-            0xF5 -> parseEvenAi(frame)
+            0xF5 -> parseF5(frame)
             else -> Parsed.Unknown(frame.opcode, frame.raw)
         }
     }
 
-    private fun parseEvenAi(frame: Frame): Parsed {
+    private fun parseF5(frame: Frame): Parsed {
         val payload = frame.payload
-        val subcommand = payload.firstOrNull()?.toUnsignedInt()
-            ?: frame.status?.toUnsignedInt()
+        val status = frame.status?.toUnsignedInt()
+
+        parseBatteryFromF5(status, payload)?.let { percent ->
+            val vitals = updateVitals(DeviceVitals(batteryPercent = percent))
+            return Parsed.Vitals(vitals)
+        }
+
+        parseChargingFromF5(status, payload)?.let { charging ->
+            val vitals = updateVitals(DeviceVitals(charging = charging))
+            return Parsed.Vitals(vitals)
+        }
+
+        parseFirmwareBanner(payload)?.let { banner ->
+            val vitals = updateVitals(DeviceVitals(firmwareVersion = banner))
+            return Parsed.Vitals(vitals)
+        }
+
+        val subcommand = status ?: payload.firstOrNull()?.toUnsignedInt()
             ?: return Parsed.Unknown(frame.opcode, frame.raw)
 
-        val event = when (subcommand) {
+        return Parsed.EvenAi(parseEvenAiEvent(subcommand, payload))
+    }
+
+    private fun parseEvenAiEvent(subcommand: Int, payload: ByteArray): EvenAiEvent {
+        return when (subcommand) {
             0x17, 0x23 -> EvenAiEvent.ActivationRequested
             0x24 -> EvenAiEvent.RecordingStopped
             0x00 -> EvenAiEvent.ManualExit()
@@ -82,8 +103,50 @@ object G1ReplyParser {
             0x04, 0x05 -> EvenAiEvent.SilentModeToggle()
             else -> EvenAiEvent.Unknown(subcommand, payload.copyOf())
         }
+    }
 
-        return Parsed.EvenAi(event)
+    private fun parseBatteryFromF5(status: Int?, payload: ByteArray): Int? {
+        val (command, valueIndex) = when {
+            status == 0x0A -> 0x0A to 0
+            payload.firstOrNull()?.toUnsignedInt() == 0x0A -> 0x0A to 1
+            else -> null
+        } ?: return null
+        val percent = payload.getOrNull(valueIndex)?.toUnsignedInt()
+        return percent?.takeIf { command == 0x0A && it in 0..100 }
+    }
+
+    private fun parseChargingFromF5(status: Int?, payload: ByteArray): Boolean? {
+        val valueIndex = when {
+            status == 0x09 -> 0
+            payload.firstOrNull()?.toUnsignedInt() == 0x09 -> 1
+            else -> return null
+        }
+        return payload.getOrNull(valueIndex)?.let { byte ->
+            when (byte.toUnsignedInt()) {
+                0 -> false
+                1 -> true
+                else -> null
+            }
+        }
+    }
+
+    private fun parseFirmwareBanner(payload: ByteArray): String? {
+        if (payload.isEmpty()) return null
+        val bytes = when {
+            payload.first().toUnsignedInt() in 0x09..0x0A -> payload.copyOfRange(1, payload.size)
+            else -> payload.copyOf()
+        }
+        if (bytes.isEmpty()) return null
+        if (!bytes.all { it.toInt().isAsciiOrTerminator() }) {
+            return null
+        }
+        return bytes.toString(Charsets.UTF_8).trim { it <= ' ' }
+            .takeIf { it.isNotEmpty() }
+    }
+
+    private fun Int.isAsciiOrTerminator(): Boolean {
+        val value = this and 0xFF
+        return value == 0x0A || value == 0x0D || value in 0x20..0x7E
     }
 
     private fun parseBatteryOrStatus(frame: Frame): Parsed {
