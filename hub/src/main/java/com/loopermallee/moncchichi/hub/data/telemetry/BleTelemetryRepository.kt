@@ -234,6 +234,14 @@ class BleTelemetryRepository(
                 lastUpdated = timestamp
             }
 
+            firmwareBanner?.let { banner ->
+                if (existing.firmwareVersion != banner) {
+                    changed = true
+                }
+                updated = updated.copy(firmwareVersion = banner)
+                lastUpdated = timestamp
+            }
+
             if (changed || lastUpdated != existing.lastUpdated) {
                 updated = updated.copy(lastUpdated = lastUpdated)
             }
@@ -246,13 +254,14 @@ class BleTelemetryRepository(
             next.withFrame(lens, hex)
         }
 
-        val lensLabel = lens.name.lowercase(Locale.US)
+        val lensLabel = if (lens == Lens.LEFT) "L" else "R"
         val parts = mutableListOf<String>()
         battery?.let { parts += "battery=${it}%" }
         charging?.let { parts += if (it) "charging" else "not charging" }
         firmwareBanner?.let { parts += "FW ${it}" }
         if (parts.isNotEmpty()) {
-            _events.tryEmit("[BLE][VITALS][${lensLabel}] ${parts.joinToString(separator = ", ")}")
+            val message = "[BLE][VITALS][${lensLabel}] ${parts.joinToString(separator = ", ")}".also { logger(it) }
+            _events.tryEmit(message)
         }
 
         firmwareBanner?.let { line ->
@@ -604,7 +613,18 @@ class BleTelemetryRepository(
         }
     }
 
-    private fun formatGattStatus(code: Int): String = "0x%02X".format(code and 0xFF)
+    private fun formatGattStatus(code: Int): String {
+        val normalized = code and 0xFF
+        val description = when (normalized) {
+            0x13 -> "peer terminated"
+            else -> null
+        }
+        return if (description != null) {
+            String.format(Locale.US, "0x%02X (%s)", normalized, description)
+        } else {
+            String.format(Locale.US, "0x%02X", normalized)
+        }
+    }
 
     private fun formatBondState(state: Int): String {
         return when (state) {

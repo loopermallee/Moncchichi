@@ -55,6 +55,7 @@ class MoncchichiBleService(
         val lastAckAt: Long? = null,
         val degraded: Boolean = false,
         val attMtu: Int? = null,
+        val warmupOk: Boolean = false,
         val lastKeepAliveAt: Long? = null,
         val keepAliveRttMs: Long? = null,
         val consecutiveKeepAliveFailures: Int = 0,
@@ -480,6 +481,7 @@ class MoncchichiBleService(
                         state = state.status,
                         rssi = state.rssi,
                         attMtu = state.attMtu,
+                        warmupOk = state.warmupOk,
                         bonded = state.bonded,
                         disconnectStatus = state.lastDisconnectStatus,
                         bondTransitions = state.bondTransitionCount,
@@ -779,7 +781,18 @@ class MoncchichiBleService(
         Lens.RIGHT -> state.value.right
     }
 
-    private fun formatGattStatus(code: Int): String = "0x%02X".format(code and 0xFF)
+    private fun formatGattStatus(code: Int): String {
+        val normalized = code and 0xFF
+        val description = when (normalized) {
+            0x13 -> "peer terminated"
+            else -> null
+        }
+        return if (description != null) {
+            String.format(Locale.US, "0x%02X (%s)", normalized, description)
+        } else {
+            String.format(Locale.US, "0x%02X", normalized)
+        }
+    }
 
     private fun inferLens(device: BluetoothDevice): Lens {
         val name = device.name?.lowercase(Locale.US).orEmpty()
@@ -802,14 +815,35 @@ class MoncchichiBleService(
     }
 
     private suspend fun heartbeatLoop() {
+        val deferralLogged = mutableMapOf<Lens, Boolean>()
         while (coroutineContext.isActive) {
-            val records = ALL_LENSES.mapNotNull { lens ->
-                clientRecords[lens]?.takeIf { it.clientState().isConnected }
+            var anyConnected = false
+            val readyRecords = mutableListOf<ClientRecord>()
+            ALL_LENSES.forEach { lens ->
+                val record = clientRecords[lens]
+                val status = record?.clientState()
+                if (record == null || status == null || !status.isConnected) {
+                    deferralLogged.remove(lens)
+                    return@forEach
+                }
+                anyConnected = true
+                if (status.isReadyForKeepAlive()) {
+                    readyRecords += record
+                    deferralLogged.remove(lens)
+                } else if (deferralLogged[lens] != true) {
+                    val mtuLabel = status.attMtu?.toString() ?: "n/a"
+                    log("[BLE][PING][${lens.shortLabel()}] deferring (bonded=${status.bonded} warmup=${status.warmupOk} mtu=${mtuLabel})")
+                    deferralLogged[lens] = true
+                }
             }
-            if (records.isEmpty()) {
+            if (!anyConnected) {
                 break
             }
-            records.forEachIndexed { index, record ->
+            if (readyRecords.isEmpty()) {
+                delay(G1Protocols.HOST_HEARTBEAT_INTERVAL_MS)
+                continue
+            }
+            readyRecords.forEachIndexed { index, record ->
                 val payload = nextHostHeartbeatPayload(record.lens)
                 val ok = record.client.sendCommand(
                     payload = payload,
@@ -821,7 +855,7 @@ class MoncchichiBleService(
                 if (!ok) {
                     logWarn("${G1Protocols.opcodeName(G1Protocols.CMD_PING)} send failed on ${record.lens}")
                 }
-                if (index < records.lastIndex) {
+                if (index < readyRecords.lastIndex) {
                     delay(CHANNEL_STAGGER_DELAY_MS)
                 }
             }
@@ -838,6 +872,12 @@ class MoncchichiBleService(
             sequence.toByte(),
         )
     }
+
+    private fun LensStatus.isReadyForKeepAlive(): Boolean {
+        return bonded && (attMtu != null || warmupOk)
+    }
+
+    private fun Lens.shortLabel(): String = if (this == Lens.LEFT) "L" else "R"
 
     private fun updateLens(lens: Lens, reducer: (LensStatus) -> LensStatus) {
         val current = _state.value
