@@ -454,7 +454,18 @@ class G1BleClient(
         settingsLaunchedThisSession = false
         dismissPairingNotification()
         cancelHelloWatchdog()
-        gattReconnectJob?.cancel()
+        val previousAttempts = gattReconnectAttempts
+        val pendingReconnect = gattReconnectJob
+        if (previousAttempts > 0) {
+            logger.i(
+                label,
+                "${tt()} [GATT] Manual connect resetting reconnect attempts (was=$previousAttempts)",
+            )
+        }
+        if (pendingReconnect != null) {
+            logger.i(label, "${tt()} [GATT] Manual connect cancelling pending reconnect job")
+            pendingReconnect.cancel()
+        }
         gattReconnectJob = null
         gattReconnectAttempts = 0
         bondEvents.tryEmit(
@@ -571,6 +582,7 @@ class G1BleClient(
         scope.launch {
             uartClient.observeNotifications { payload ->
                 payload.parseAckOutcome()?.let { ack ->
+                    val readyBefore = _state.value.isReady()
                     val now = System.currentTimeMillis()
                     var deliverAck = true
                     var keepAlivePrompt: KeepAlivePrompt? = null
@@ -629,6 +641,15 @@ class G1BleClient(
                     keepAlivePrompt?.let { prompt -> _keepAlivePrompts.tryEmit(prompt) }
                     if (deliverAck) {
                         ackSignals.trySend(ack)
+                    }
+                    val readyAfter = _state.value.isReady()
+                    if (!readyBefore && readyAfter && warmupAck) {
+                        val mtuLabel = _state.value.attMtu ?: lastAckedMtu
+                        val source = if (ack.opcode == G1Protocols.CMD_HELLO) "ack" else "warmup"
+                        logger.i(
+                            label,
+                            "${tt()} [PAIRING] Ready via $source (mtu=${mtuLabel ?: "n/a"})",
+                        )
                     }
                 }
                 val copy = payload.copyOf()
@@ -1119,6 +1140,21 @@ class G1BleClient(
             return
         }
         val job = scope.launch {
+            val notificationsArmed = runCatching { uartClient.notificationsArmed.value }.getOrNull() ?: false
+            if (!notificationsArmed) {
+                logger.i(
+                    label,
+                    "${tt()} [PAIRING] HELLO watchdog deferring until notifications armed",
+                )
+                try {
+                    uartClient.notificationsArmed.first { armed -> armed }
+                } catch (_: Throwable) {
+                    return@launch
+                }
+                if (!_state.value.bonded || _state.value.isReady()) {
+                    return@launch
+                }
+            }
             logger.i(
                 label,
                 "${tt()} [PAIRING] HELLO watchdog armed (timeout=${HELLO_WATCHDOG_TIMEOUT_MS}ms)",
@@ -1149,6 +1185,10 @@ class G1BleClient(
         val bonded = state.value.bonded || device.bondState == BluetoothDevice.BOND_BONDED
         if (!bonded) return
         if (status in AUTH_FAILURE_STATUS_CODES) {
+            logger.w(
+                label,
+                "${tt()} [GATT] Disconnect due to auth failure (${String.format("0x%02X", status and 0xFF)}); scheduling bond removal",
+            )
             scope.launch {
                 removeBondForAuthFailure("GATT status ${String.format("0x%02X", status and 0xFF)}")
             }
@@ -1168,7 +1208,7 @@ class G1BleClient(
             return false
         }
         logger.i(label, "${tt()} [PAIRING] HELLO recovery retrying HELLO mtu=$mtu")
-        warmupExpected = true
+        requestWarmupOnNextNotify()
         sendMtuCommandIfNeeded(mtu)
         val event = awaitHelloAckEvent(G1Protocols.MTU_WARMUP_GRACE_MS)
         if (event != null) {

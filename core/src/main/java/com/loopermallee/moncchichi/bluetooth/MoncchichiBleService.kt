@@ -293,6 +293,7 @@ class MoncchichiBleService(
                 setStage(ConnectionStage.LeftReady)
                 delay(G1Protocols.WARMUP_DELAY_MS)
                 setStage(ConnectionStage.Warmup)
+                maybeStartCompanionSequence()
             }
             if (state.value.left.isConnected && state.value.right.isConnected) {
                 setStage(ConnectionStage.BothReady)
@@ -593,6 +594,9 @@ class MoncchichiBleService(
         if (state.bondResetCount > previous.bondResetCount) {
             updateBondResetTotal()
         }
+        if (lens == Lens.LEFT && state.isReadyForCompanion()) {
+            maybeStartCompanionSequence()
+        }
     }
 
     private fun handleReconnectStateChange(
@@ -630,6 +634,30 @@ class MoncchichiBleService(
         rightBondRetryAttempt = 0
         rightBondRetryJob?.cancel()
         rightBondRetryJob = null
+    }
+
+    private fun maybeStartCompanionSequence() {
+        if (!pendingRightBondSequence) {
+            return
+        }
+        val leftRecord = clientRecords[Lens.LEFT] ?: return
+        val leftReady = leftRecord.client.state.value.isReadyForCompanion()
+        if (!leftReady) {
+            return
+        }
+        val rightDevice = knownDevices[Lens.RIGHT] ?: return
+        val existingRightRecord = clientRecords[Lens.RIGHT]
+        val rightStatus = existingRightRecord?.client?.state?.value?.status ?: state.value.right.state
+        if (rightStatus == G1BleClient.ConnectionState.CONNECTED || rightStatus == G1BleClient.ConnectionState.CONNECTING) {
+            return
+        }
+        pendingRightBondSequence = false
+        log("[PAIRING][SEQUENCE] launching companion connect")
+        rightBondRetryJob?.cancel()
+        rightBondRetryJob = null
+        scope.launch(Dispatchers.IO) {
+            connect(rightDevice, Lens.RIGHT)
+        }
     }
 
     private fun scheduleRightBondRetry(device: BluetoothDevice) {
@@ -904,6 +932,10 @@ class MoncchichiBleService(
 
     private fun logWarn(message: String) {
         logger.w(TAG, "${tt()} $message")
+    }
+
+    private fun G1BleClient.State.isReadyForCompanion(): Boolean {
+        return bonded && (attMtu != null || warmupOk)
     }
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
