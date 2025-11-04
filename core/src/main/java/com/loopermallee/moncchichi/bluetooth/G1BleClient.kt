@@ -231,6 +231,16 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
             ) {
                 return AckOutcome.Success(opcode = null, status = null, warmupPrompt = true)
             }
+            if (uppercase.startsWith("ACK:")) {
+                val keepAlivePrompt = uppercase == "ACK:KEEPALIVE"
+                val warmupPrompt = !keepAlivePrompt
+                return AckOutcome.Success(
+                    opcode = null,
+                    status = null,
+                    warmupPrompt = warmupPrompt,
+                    keepAlivePrompt = keepAlivePrompt,
+                )
+            }
         }
 
     val trimmed = ascii.trim { it.code <= 0x20 }
@@ -240,9 +250,11 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
         // any published protocol specification. Treat them as successful ACKs so the
         // client remains resilient to keepalive and ping responses.
         val keepAlivePrompt = normalized == "ACK:KEEPALIVE"
+        val warmupPrompt = !keepAlivePrompt
         return AckOutcome.Success(
             opcode = null,
             status = null,
+            warmupPrompt = warmupPrompt,
             keepAlivePrompt = keepAlivePrompt,
         )
     }

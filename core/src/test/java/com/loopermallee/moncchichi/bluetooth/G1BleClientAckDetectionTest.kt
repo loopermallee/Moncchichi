@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.bluetooth
 
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -85,7 +86,9 @@ class G1BleClientAckDetectionTest {
 
         val result = payload.parseAckOutcome()
 
-        assertIs<AckOutcome.Success>(result)
+        val success = assertIs<AckOutcome.Success>(result)
+        assertTrue(success.warmupPrompt)
+        assertFalse(success.keepAlivePrompt)
     }
 
     @Test
@@ -94,7 +97,20 @@ class G1BleClientAckDetectionTest {
 
         val result = payload.parseAckOutcome()
 
-        assertIs<AckOutcome.Success>(result)
+        val success = assertIs<AckOutcome.Success>(result)
+        assertTrue(success.keepAlivePrompt)
+        assertFalse(success.warmupPrompt)
+    }
+
+    @Test
+    fun `parseAckOutcome treats ack ready as warm-up`() {
+        val payload = "ACK:READY".encodeToByteArray()
+
+        val result = payload.parseAckOutcome()
+
+        val success = assertIs<AckOutcome.Success>(result)
+        assertTrue(success.warmupPrompt)
+        assertFalse(success.keepAlivePrompt)
     }
 
     @Test
