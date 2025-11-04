@@ -312,8 +312,10 @@ class G1BleClient(
         private const val KEEP_ALIVE_INITIAL_SEQUENCE = 0x01
         internal const val KEEP_ALIVE_MAX_ATTEMPTS = G1Protocols.MAX_RETRIES
         internal const val KEEP_ALIVE_OPCODE = G1Protocols.CMD_KEEPALIVE
-        private const val INVALID_KEY_HELLO_TIMEOUT_MS = 12_000L
-        private val INVALID_KEY_STATUS_CODES = setOf(0x85, 0x13)
+        private const val HELLO_WATCHDOG_TIMEOUT_MS = 12_000L
+        private const val HELLO_RECOVERY_RECONNECT_DELAY_MS = 750L
+        private val AUTH_FAILURE_STATUS_CODES = setOf(0x85, 0x13)
+        private val GATT_RECONNECT_BACKOFF_MS = longArrayOf(500L, 1_000L, 2_000L)
     }
 
     enum class ConnectionState {
@@ -439,8 +441,10 @@ class G1BleClient(
     @Volatile private var warmupExpected: Boolean = false
     private val keepAliveSequence = AtomicInteger(KEEP_ALIVE_INITIAL_SEQUENCE)
     private val keepAliveInFlight = AtomicInteger(0)
-    private var invalidBondWatchJob: Job? = null
-    @Volatile private var invalidKeyResetInFlight: Boolean = false
+    private var helloWatchdogJob: Job? = null
+    private var gattReconnectJob: Job? = null
+    private var gattReconnectAttempts = 0
+    @Volatile private var bondRemovalInFlight: Boolean = false
 
     fun connect() {
         lastAckedMtu = null
@@ -449,7 +453,10 @@ class G1BleClient(
         keepAliveInFlight.set(0)
         settingsLaunchedThisSession = false
         dismissPairingNotification()
-        cancelInvalidKeyWatchdog()
+        cancelHelloWatchdog()
+        gattReconnectJob?.cancel()
+        gattReconnectJob = null
+        gattReconnectAttempts = 0
         bondEvents.tryEmit(
             BondEvent(
                 state = device.bondState,
@@ -519,7 +526,7 @@ class G1BleClient(
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         _state.value = _state.value.copy(lastDisconnectStatus = event.status)
                         val statusLabel = String.format("0x%02X", event.status and 0xFF)
-                        cancelInvalidKeyWatchdog("disconnect $statusLabel")
+                        cancelHelloWatchdog("disconnect $statusLabel")
                         handleGattDisconnect(event.status)
                     }
                     BluetoothProfile.STATE_CONNECTED -> {
@@ -650,7 +657,10 @@ class G1BleClient(
         smpJob = null
         unregisterBondReceiver()
         connectionInitiated = false
-        cancelInvalidKeyWatchdog()
+        cancelHelloWatchdog()
+        gattReconnectJob?.cancel()
+        gattReconnectJob = null
+        gattReconnectAttempts = 0
         bondConnectJob?.cancel()
         bondConnectJob = null
         bondRetryJob?.cancel()
@@ -723,9 +733,18 @@ class G1BleClient(
         return result
     }
 
-    suspend fun awaitHelloAck(timeoutMs: Long): Boolean {
-        if (state.value.attMtu != null || state.value.warmupOk) {
-            return true
+    suspend fun awaitHelloAck(timeoutMs: Long): Boolean = awaitHelloAckEvent(timeoutMs) != null
+
+    private suspend fun awaitHelloAckEvent(timeoutMs: Long): AckEvent? {
+        val current = state.value
+        if (current.attMtu != null || current.warmupOk) {
+            return AckEvent(
+                timestampMs = System.currentTimeMillis(),
+                opcode = current.attMtu?.let { G1Protocols.CMD_HELLO },
+                status = null,
+                success = true,
+                warmup = current.warmupOk || current.attMtu != null,
+            )
         }
         return withTimeoutOrNull(timeoutMs) {
             ackEvents
@@ -733,7 +752,7 @@ class G1BleClient(
                     event.success && (event.opcode == G1Protocols.CMD_HELLO || event.warmup)
                 }
                 .first()
-        } != null
+        }
     }
 
     suspend fun awaitReady(timeoutMs: Long): AwaitReadyResult {
@@ -1071,17 +1090,17 @@ class G1BleClient(
         )
     }
 
-    private fun cancelInvalidKeyWatchdog(reason: String? = null) {
-        val job = invalidBondWatchJob ?: return
+    private fun cancelHelloWatchdog(reason: String? = null) {
+        val job = helloWatchdogJob ?: return
         job.cancel()
-        invalidBondWatchJob = null
+        helloWatchdogJob = null
         reason?.let {
             logger.i(label, "${tt()} [PAIRING] HELLO watchdog cancelled ($it)")
         }
     }
 
-    private fun startInvalidKeyWatchdog() {
-        cancelInvalidKeyWatchdog()
+    private fun startHelloWatchdog() {
+        cancelHelloWatchdog()
         val currentState = _state.value
         if (!currentState.bonded || currentState.isReady()) {
             return
@@ -1089,52 +1108,167 @@ class G1BleClient(
         val job = scope.launch {
             logger.i(
                 label,
-                "${tt()} [PAIRING] HELLO watchdog armed (timeout=${INVALID_KEY_HELLO_TIMEOUT_MS}ms)",
+                "${tt()} [PAIRING] HELLO watchdog armed (timeout=${HELLO_WATCHDOG_TIMEOUT_MS}ms)",
             )
-            val acked = awaitHelloAck(INVALID_KEY_HELLO_TIMEOUT_MS)
-            if (acked) {
-                logger.i(label, "${tt()} [PAIRING] HELLO watchdog satisfied (ack)")
+            val event = awaitHelloAckEvent(HELLO_WATCHDOG_TIMEOUT_MS)
+            if (event != null) {
+                val source = describeHelloAck(event)
+                logger.i(label, "${tt()} [PAIRING] HELLO watchdog satisfied ($source)")
                 return@launch
             }
             if (state.value.bonded) {
-                logger.w(label, "${tt()} [PAIRING] HELLO watchdog expired; scheduling bond reset")
-                resetBondForInvalidKey("HELLO timeout")
+                logger.w(label, "${tt()} [PAIRING] HELLO watchdog expired; reconnecting GATT")
+                val recovered = attemptHelloRecovery()
+                if (!recovered) {
+                    scheduleGattReconnect("HELLO timeout", HELLO_RECOVERY_RECONNECT_DELAY_MS)
+                }
             }
         }
         job.invokeOnCompletion {
-            if (invalidBondWatchJob === job) {
-                invalidBondWatchJob = null
+            if (helloWatchdogJob === job) {
+                helloWatchdogJob = null
             }
         }
-        invalidBondWatchJob = job
+        helloWatchdogJob = job
     }
 
     private fun handleGattDisconnect(status: Int) {
         val bonded = state.value.bonded || device.bondState == BluetoothDevice.BOND_BONDED
         if (!bonded) return
-        if (status in INVALID_KEY_STATUS_CODES) {
-            scope.launch { resetBondForInvalidKey("GATT status ${String.format("0x%02X", status and 0xFF)}") }
+        if (status in AUTH_FAILURE_STATUS_CODES) {
+            scope.launch {
+                removeBondForAuthFailure("GATT status ${String.format("0x%02X", status and 0xFF)}")
+            }
+            return
+        }
+        scheduleGattReconnect("disconnect status=${String.format("0x%02X", status and 0xFF)}")
+    }
+
+    private suspend fun attemptHelloRecovery(): Boolean {
+        val notificationsArmed = runCatching { uartClient.notificationsArmed.value }.getOrNull() ?: false
+        val mtu = runCatching { uartClient.mtu.value }.getOrNull()
+        if (!notificationsArmed || mtu == null) {
+            logger.w(
+                label,
+                "${tt()} [PAIRING] HELLO recovery skipped (notificationsArmed=$notificationsArmed mtu=${mtu ?: "n/a"})",
+            )
+            return false
+        }
+        logger.i(label, "${tt()} [PAIRING] HELLO recovery retrying HELLO mtu=$mtu")
+        warmupExpected = true
+        sendMtuCommandIfNeeded(mtu)
+        val event = awaitHelloAckEvent(G1Protocols.MTU_WARMUP_GRACE_MS)
+        if (event != null) {
+            val source = describeHelloAck(event)
+            logger.i(label, "${tt()} [PAIRING] HELLO recovery succeeded ($source)")
+            return true
+        }
+        logger.w(label, "${tt()} [PAIRING] HELLO recovery retry timed out")
+        return false
+    }
+
+    private fun scheduleGattReconnect(reason: String, delayMs: Long? = null) {
+        if (!_state.value.bonded) {
+            logger.i(label, "${tt()} [GATT] Reconnect skipped; bond missing ($reason)")
+            return
+        }
+        if (delayMs == null && gattReconnectAttempts >= GATT_RECONNECT_BACKOFF_MS.size) {
+            logger.w(label, "${tt()} [GATT] Reconnect attempt limit reached; skipping ($reason)")
+            return
+        }
+        val nextAttempt = (gattReconnectAttempts + 1).coerceAtMost(GATT_RECONNECT_BACKOFF_MS.size)
+        val reconnectDelay = delayMs ?: GATT_RECONNECT_BACKOFF_MS[nextAttempt - 1]
+        gattReconnectAttempts = nextAttempt
+        gattReconnectJob?.cancel()
+        val job = scope.launch {
+            disconnectGattForRecovery(reason)
+            delay(reconnectDelay)
+            if (_state.value.bonded) {
+                logger.i(
+                    label,
+                    "${tt()} [GATT] Reconnecting after $reason (attempt=$nextAttempt delay=${reconnectDelay}ms)",
+                )
+                connectionInitiated = false
+                maybeStartGattConnection()
+            } else {
+                logger.w(label, "${tt()} [GATT] Bond lost before reconnect could start ($reason)")
+            }
+        }
+        job.invokeOnCompletion {
+            if (gattReconnectJob === job) {
+                gattReconnectJob = null
+            }
+        }
+        gattReconnectJob = job
+    }
+
+    private suspend fun disconnectGattForRecovery(reason: String) {
+        val existing = uartClient.currentGatt()
+        if (existing == null) {
+            logger.i(label, "${tt()} [GATT] No active connection to disconnect ($reason)")
+            return
+        }
+        logger.w(label, "${tt()} [GATT] Disconnecting for recovery ($reason)")
+        runCatching { existing.disconnect() }
+            .onFailure { logger.w(label, "${tt()} GATT disconnect failed: ${it.message}") }
+    }
+
+    suspend fun removeBondForAuthFailure(reason: String) {
+        performBondRemoval(reason = reason, source = "AUTH_FAILED", rebondDelayMs = BOND_RETRY_DELAY_MS)
+    }
+
+    fun removeBondManual(reason: String = "manual") {
+        scope.launch {
+            performBondRemoval(reason = reason, source = "MANUAL", rebondDelayMs = BOND_RETRY_DELAY_MS * 2)
         }
     }
 
-    private suspend fun resetBondForInvalidKey(reason: String) {
+    private suspend fun performBondRemoval(reason: String, source: String, rebondDelayMs: Long) {
+        val timestamp = System.currentTimeMillis()
         bondMutex.withLock {
-            if (invalidKeyResetInFlight) {
+            if (bondRemovalInFlight) {
+                logger.i(label, "${tt()} [PAIRING] Bond removal already in flight; skipping ($source)")
                 return
             }
             val currentlyBonded = state.value.bonded || device.bondState == BluetoothDevice.BOND_BONDED
-            if (!currentlyBonded) return
-            invalidKeyResetInFlight = true
+            if (!currentlyBonded) {
+                logger.i(label, "${tt()} [PAIRING] Bond removal skipped; already cleared ($source)")
+                return
+            }
+            bondRemovalInFlight = true
             try {
-                logger.w(label, "${tt()} [PAIRING] Bond reset due to invalid key ($reason)")
+                logger.w(
+                    label,
+                    "${tt()} [PAIRING] Removing bond ($source reason=$reason at=${timestamp})",
+                )
+                uartClient.currentGatt()?.let { existing ->
+                    runCatching { existing.disconnect() }
+                        .onFailure {
+                            logger.w(label, "${tt()} GATT disconnect before bond removal failed: ${it.message}")
+                        }
+                }
                 val removed = device.removeBondCompat()
+                logger.i(label, "${tt()} [PAIRING] removeBondCompat() -> $removed ($source)")
                 if (removed) {
                     recordBondReset()
                 }
-                requestBond("invalid key fallback")
             } finally {
-                invalidKeyResetInFlight = false
+                bondRemovalInFlight = false
             }
+        }
+        if (rebondDelayMs >= 0) {
+            scope.launch {
+                delay(rebondDelayMs)
+                requestBond("rebond after $source ($reason)")
+            }
+        }
+    }
+
+    private fun describeHelloAck(event: AckEvent): String {
+        return when {
+            event.opcode == G1Protocols.CMD_HELLO -> "ack"
+            event.warmup -> "warmup"
+            else -> "signal"
         }
     }
 
@@ -1218,7 +1352,7 @@ class G1BleClient(
     }
 
     private fun State.isReady(): Boolean =
-        status == ConnectionState.CONNECTED && attMtu != null && warmupOk
+        bonded && (attMtu != null || warmupOk)
 
     private fun tt(): String = "[${Thread.currentThread().name}]"
 

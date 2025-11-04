@@ -86,6 +86,8 @@ class G1BleClientTest {
 
             stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
             runCurrent()
+            stateFlow.value = stateFlow.value.copy(bonded = true)
+            runCurrent()
 
             stateFlow.value = stateFlow.value.copy(attMtu = 256)
             runCurrent()
@@ -135,7 +137,30 @@ class G1BleClientTest {
     }
 
     @Test
-    fun awaitReadyDoesNotCompleteWithoutWarmupOk() = runTest {
+    fun awaitReadyCompletesWhenMtuKnownEvenWithoutWarmupOk() = runTest {
+        val client = buildClient(this)
+        try {
+            val stateFlow = client.state as MutableStateFlow<G1BleClient.State>
+            val deferred = async { client.awaitReady(timeoutMs = 1_000) }
+
+            runCurrent()
+
+            stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
+            runCurrent()
+            stateFlow.value = stateFlow.value.copy(bonded = true)
+            runCurrent()
+
+            stateFlow.value = stateFlow.value.copy(attMtu = 256)
+            runCurrent()
+
+            assertEquals(G1BleClient.AwaitReadyResult.Ready, deferred.await())
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun awaitReadyRequiresBondedState() = runTest {
         val client = buildClient(this)
         try {
             val stateFlow = client.state as MutableStateFlow<G1BleClient.State>
@@ -146,7 +171,7 @@ class G1BleClientTest {
             stateFlow.value = stateFlow.value.copy(status = G1BleClient.ConnectionState.CONNECTED)
             runCurrent()
 
-            stateFlow.value = stateFlow.value.copy(attMtu = 256)
+            stateFlow.value = stateFlow.value.copy(attMtu = 256, warmupOk = true)
             runCurrent()
 
             advanceTimeBy(1_000)
