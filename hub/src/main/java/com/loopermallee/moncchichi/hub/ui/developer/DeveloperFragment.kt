@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.core.widget.NestedScrollView
@@ -21,8 +22,10 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.loopermallee.moncchichi.hub.R
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.handlers.SystemEventHandler
 import com.loopermallee.moncchichi.hub.util.LogFormatter
@@ -80,6 +83,7 @@ class DeveloperFragment : Fragment() {
         val consoleScroll = view.findViewById<NestedScrollView>(R.id.console_scroll)
         val diagnosticsScroll = view.findViewById<ScrollView>(R.id.diagnostics_scroll)
         val logsView = view.findViewById<TextView>(R.id.text_console_logs)
+        val jumpLatest = view.findViewById<MaterialButton>(R.id.button_jump_latest)
         val uptimeView = view.findViewById<TextView>(R.id.text_overview_uptime)
         val lensLastView = view.findViewById<TextView>(R.id.text_overview_last_lens)
         val sequenceView = view.findViewById<TextView>(R.id.text_overview_sequence)
@@ -87,36 +91,43 @@ class DeveloperFragment : Fragment() {
         val autoReconnectView = view.findViewById<TextView>(R.id.text_overview_reconnect)
         val pairingView = view.findViewById<TextView>(R.id.text_overview_pairing)
         val resetView = view.findViewById<TextView>(R.id.text_overview_resets)
+        val leftSummary = view.findViewById<TextView>(R.id.text_glasses_left_summary)
+        val leftSources = view.findViewById<TextView>(R.id.text_glasses_left_sources)
+        val rightSummary = view.findViewById<TextView>(R.id.text_glasses_right_summary)
+        val rightSources = view.findViewById<TextView>(R.id.text_glasses_right_sources)
+        val leftPowerButton = view.findViewById<MaterialButton>(R.id.button_left_power_history)
+        val rightPowerButton = view.findViewById<MaterialButton>(R.id.button_right_power_history)
 
-        val leftBattery = view.findViewById<TextView>(R.id.text_left_battery)
-        val leftCase = view.findViewById<TextView>(R.id.text_left_case)
-        val leftPresence = view.findViewById<TextView>(R.id.text_left_presence)
-        val leftCaseState = view.findViewById<TextView>(R.id.text_left_case_state)
-        val leftSilent = view.findViewById<TextView>(R.id.text_left_silent)
-        val leftRssi = view.findViewById<TextView>(R.id.text_left_rssi)
-        val leftFirmware = view.findViewById<TextView>(R.id.text_left_firmware)
-        val leftBond = view.findViewById<TextView>(R.id.text_left_bond)
-        val leftBondStats = view.findViewById<TextView>(R.id.text_left_bond_stats)
-        val leftReconnect = view.findViewById<TextView>(R.id.text_left_reconnect)
-        val leftSmp = view.findViewById<TextView>(R.id.text_left_smp)
-        val leftLastAck = view.findViewById<TextView>(R.id.text_left_last_ack)
-        val leftAckCounts = view.findViewById<TextView>(R.id.text_left_ack_counts)
-        val leftUpdated = view.findViewById<TextView>(R.id.text_left_updated)
+        var autoScrollEnabled = true
+        var latestSnapshot: BleTelemetryRepository.Snapshot? = null
 
-        val rightBattery = view.findViewById<TextView>(R.id.text_right_battery)
-        val rightCase = view.findViewById<TextView>(R.id.text_right_case)
-        val rightPresence = view.findViewById<TextView>(R.id.text_right_presence)
-        val rightCaseState = view.findViewById<TextView>(R.id.text_right_case_state)
-        val rightSilent = view.findViewById<TextView>(R.id.text_right_silent)
-        val rightRssi = view.findViewById<TextView>(R.id.text_right_rssi)
-        val rightFirmware = view.findViewById<TextView>(R.id.text_right_firmware)
-        val rightBond = view.findViewById<TextView>(R.id.text_right_bond)
-        val rightBondStats = view.findViewById<TextView>(R.id.text_right_bond_stats)
-        val rightReconnect = view.findViewById<TextView>(R.id.text_right_reconnect)
-        val rightSmp = view.findViewById<TextView>(R.id.text_right_smp)
-        val rightLastAck = view.findViewById<TextView>(R.id.text_right_last_ack)
-        val rightAckCounts = view.findViewById<TextView>(R.id.text_right_ack_counts)
-        val rightUpdated = view.findViewById<TextView>(R.id.text_right_updated)
+        consoleScroll.setOnScrollChangeListener { _, _, _, _, _ ->
+            val atBottom = !consoleScroll.canScrollVertically(1)
+            if (atBottom) {
+                if (!autoScrollEnabled) {
+                    autoScrollEnabled = true
+                    jumpLatest.isVisible = false
+                }
+            } else if (autoScrollEnabled) {
+                autoScrollEnabled = false
+                jumpLatest.isVisible = true
+            }
+        }
+
+        jumpLatest.setOnClickListener {
+            autoScrollEnabled = true
+            jumpLatest.isVisible = false
+            consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
+        }
+
+        leftPowerButton.setOnClickListener {
+            val snapshot = latestSnapshot ?: return@setOnClickListener
+            showPowerHistoryDialog(getString(R.string.developer_section_left), snapshot.left.powerHistory)
+        }
+        rightPowerButton.setOnClickListener {
+            val snapshot = latestSnapshot ?: return@setOnClickListener
+            showPowerHistoryDialog(getString(R.string.developer_section_right), snapshot.right.powerHistory)
+        }
 
         toggleGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
@@ -136,7 +147,7 @@ class DeveloperFragment : Fragment() {
                         DeveloperMode.CONSOLE -> toggleGroup.check(consoleButtonId)
                         DeveloperMode.DIAGNOSTICS -> toggleGroup.check(diagnosticsButtonId)
                     }
-                    applyMode(root, consoleScroll, diagnosticsScroll, mode)
+                    applyMode(root, consoleScroll, diagnosticsScroll, jumpLatest, mode)
                 }
             }
         }
@@ -152,7 +163,11 @@ class DeveloperFragment : Fragment() {
                             if (index < formatted.lastIndex) append('\n')
                         }
                     }
-                    consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
+                    if (autoScrollEnabled) {
+                        consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
+                    } else {
+                        jumpLatest.isVisible = true
+                    }
                 }
             }
         }
@@ -160,6 +175,7 @@ class DeveloperFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.snapshot.collectLatest { snapshot ->
+                    latestSnapshot = snapshot
                     val uptime = snapshot.uptimeSeconds?.let { formatDuration(it) }
                         ?: getString(R.string.developer_value_missing)
                     val lastLens = snapshot.lastLens?.name ?: getString(R.string.developer_value_missing)
@@ -183,93 +199,10 @@ class DeveloperFragment : Fragment() {
                         snapshot.bondResetEvents,
                     )
 
-                    snapshot.left.apply {
-                        leftBattery.text = getString(R.string.developer_label_battery, formatPercent(batteryPercent))
-                        leftCase.text = getString(R.string.developer_label_case_battery, formatPercent(caseBatteryPercent))
-                        leftPresence.text = getString(R.string.developer_label_wearing, formatWearing(wearing))
-                        leftCaseState.text = getString(R.string.developer_label_case_state, formatCaseState(inCase))
-                        leftSilent.text = getString(R.string.developer_label_silent_mode, formatSilent(silentMode))
-                        leftRssi.text = getString(R.string.developer_label_rssi, formatRssi(rssi))
-                        val firmware = firmwareVersion ?: getString(R.string.developer_value_missing)
-                        leftFirmware.text = getString(R.string.developer_label_firmware, firmware)
-                        val bondedValue = getString(
-                            if (bonded) R.string.developer_value_yes else R.string.developer_value_no,
-                        )
-                        leftBond.text = getString(R.string.developer_label_bonded, bondedValue)
-                        leftBondStats.text = getString(
-                            R.string.developer_label_bond_stats,
-                            bondAttempts,
-                            bondTransitions,
-                            bondTimeouts,
-                        )
-                        leftReconnect.text = getString(
-                            R.string.developer_label_reconnect_stats,
-                            reconnectAttempts,
-                            reconnectSuccesses,
-                            if (reconnecting) getString(R.string.developer_value_yes) else getString(R.string.developer_value_no),
-                        )
-                        leftSmp.text = getString(
-                            R.string.developer_label_smp,
-                            smpFrames,
-                            lastSmpOpcode?.toString() ?: getString(R.string.developer_value_missing),
-                        )
-                        leftLastAck.text = getString(
-                            R.string.developer_label_last_ack,
-                            formatAckTimestamp(lastAckAt),
-                        )
-                        leftAckCounts.text = getString(
-                            R.string.developer_label_ack_counts,
-                            ackSuccessCount,
-                            ackFailureCount,
-                            ackWarmupCount,
-                        )
-                        val updated = lastUpdated?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_missing)
-                        leftUpdated.text = getString(R.string.developer_label_updated, updated)
-                    }
-
-                    snapshot.right.apply {
-                        rightBattery.text = getString(R.string.developer_label_battery, formatPercent(batteryPercent))
-                        rightCase.text = getString(R.string.developer_label_case_battery, formatPercent(caseBatteryPercent))
-                        rightPresence.text = getString(R.string.developer_label_wearing, formatWearing(wearing))
-                        rightCaseState.text = getString(R.string.developer_label_case_state, formatCaseState(inCase))
-                        rightSilent.text = getString(R.string.developer_label_silent_mode, formatSilent(silentMode))
-                        rightRssi.text = getString(R.string.developer_label_rssi, formatRssi(rssi))
-                        val firmware = firmwareVersion ?: getString(R.string.developer_value_missing)
-                        rightFirmware.text = getString(R.string.developer_label_firmware, firmware)
-                        val bondedValue = getString(
-                            if (bonded) R.string.developer_value_yes else R.string.developer_value_no,
-                        )
-                        rightBond.text = getString(R.string.developer_label_bonded, bondedValue)
-                        rightBondStats.text = getString(
-                            R.string.developer_label_bond_stats,
-                            bondAttempts,
-                            bondTransitions,
-                            bondTimeouts,
-                        )
-                        rightReconnect.text = getString(
-                            R.string.developer_label_reconnect_stats,
-                            reconnectAttempts,
-                            reconnectSuccesses,
-                            if (reconnecting) getString(R.string.developer_value_yes) else getString(R.string.developer_value_no),
-                        )
-                        rightSmp.text = getString(
-                            R.string.developer_label_smp,
-                            smpFrames,
-                            lastSmpOpcode?.toString() ?: getString(R.string.developer_value_missing),
-                        )
-                        rightLastAck.text = getString(
-                            R.string.developer_label_last_ack,
-                            formatAckTimestamp(lastAckAt),
-                        )
-                        rightAckCounts.text = getString(
-                            R.string.developer_label_ack_counts,
-                            ackSuccessCount,
-                            ackFailureCount,
-                            ackWarmupCount,
-                        )
-                        val updated = lastUpdated?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_missing)
-                        rightUpdated.text = getString(R.string.developer_label_updated, updated)
-                    }
+                    leftSummary.text = buildLensSummary(snapshot.left)
+                    leftSources.text = buildLensSources(snapshot.left)
+                    rightSummary.text = buildLensSummary(snapshot.right)
+                    rightSources.text = buildLensSources(snapshot.right)
                 }
             }
         }
@@ -345,6 +278,7 @@ class DeveloperFragment : Fragment() {
         root: View,
         consoleScroll: NestedScrollView,
         diagnosticsScroll: ScrollView,
+        jumpLatest: MaterialButton,
         mode: DeveloperMode,
     ) {
         val context = requireContext()
@@ -355,13 +289,103 @@ class DeveloperFragment : Fragment() {
                 root.setBackgroundColor(consoleColor)
                 consoleScroll.isVisible = true
                 diagnosticsScroll.isVisible = false
+                jumpLatest.isVisible = false
             }
             DeveloperMode.DIAGNOSTICS -> {
                 root.setBackgroundColor(diagnosticsColor)
                 consoleScroll.isVisible = false
                 diagnosticsScroll.isVisible = true
+                jumpLatest.isVisible = false
             }
         }
+    }
+
+    private fun buildLensSummary(lens: BleTelemetryRepository.LensTelemetry): String {
+        val battery = formatPercent(lens.batteryPercent)
+        val case = formatPercent(lens.caseBatteryPercent)
+        val charging = formatCharging(lens.charging)
+        val rssi = formatRssi(lens.rssi)
+        val firmware = lens.firmwareVersion ?: getString(R.string.developer_value_missing)
+        val bonded = if (lens.bonded) getString(R.string.developer_value_yes) else getString(R.string.developer_value_no)
+        val reconnect = getString(
+            R.string.developer_label_reconnect_stats,
+            lens.reconnectAttempts,
+            lens.reconnectSuccesses,
+            if (lens.reconnecting) getString(R.string.developer_value_yes) else getString(R.string.developer_value_no),
+        )
+        val ackCounts = getString(
+            R.string.developer_label_ack_counts,
+            lens.ackSuccessCount,
+            lens.ackFailureCount,
+            lens.ackWarmupCount,
+        )
+        val lastAck = formatAckTimestamp(lens.lastAckAt)
+        val latency = formatLatency(lens.lastAckLatencyMs)
+        val updated = lens.lastUpdated?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_missing)
+        return buildString {
+            append("Battery $battery / Case $case • Charging $charging")
+            append('\n')
+            append("RSSI $rssi • Firmware $firmware")
+            append('\n')
+            append("Bonded $bonded")
+            append(" • ")
+            append(reconnect)
+            append('\n')
+            append(ackCounts)
+            append(" • Latency $latency • Last $lastAck")
+            append('\n')
+            append("Updated $updated")
+        }
+    }
+
+    private fun buildLensSources(lens: BleTelemetryRepository.LensTelemetry): String {
+        val batterySource = describeSource(lens.batterySourceOpcode, lens.batteryUpdatedAt)
+        val chargingSource = describeSource(lens.chargingSourceOpcode, lens.chargingUpdatedAt)
+        val firmwareSource = describeSource(lens.firmwareSourceOpcode, lens.firmwareUpdatedAt)
+        val header = "Battery $batterySource • Charging $chargingSource • Firmware $firmwareSource"
+        val history = lens.powerHistory.takeLast(POWER_HISTORY_PREVIEW).asReversed()
+        if (history.isEmpty()) {
+            return header
+        }
+        val frames = history.joinToString(separator = "\n") { frame ->
+            val opcode = formatOpcode(frame.opcode)
+            val timestamp = formatTimeOfDay(frame.timestampMs)
+            "$opcode @ $timestamp  ${formatPowerHex(frame.hex)}"
+        }
+        return buildString {
+            append(header)
+            append('\n')
+            append(frames)
+        }
+    }
+
+    private fun describeSource(opcode: Int?, timestamp: Long?): String {
+        if (opcode == null || timestamp == null) {
+            return getString(R.string.developer_value_missing)
+        }
+        val code = formatOpcode(opcode)
+        val time = formatTimeOfDay(timestamp)
+        return "$code @ $time"
+    }
+
+    private fun showPowerHistoryDialog(
+        lensLabel: String,
+        frames: List<BleTelemetryRepository.PowerFrame>,
+    ) {
+        if (frames.isEmpty()) {
+            Toast.makeText(requireContext(), R.string.developer_no_power_frames, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val message = frames.takeLast(POWER_HISTORY_PREVIEW).asReversed().joinToString(separator = "\n\n") { frame ->
+            val opcode = formatOpcode(frame.opcode)
+            val time = formatTimeOfDay(frame.timestampMs)
+            "$opcode @ $time\n${formatPowerHex(frame.hex)}"
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle(getString(R.string.developer_power_history_title, lensLabel))
+            .setMessage(message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun formatPercent(value: Int?): String = value?.let { "$it%" } ?: getString(R.string.developer_value_missing)
@@ -369,6 +393,12 @@ class DeveloperFragment : Fragment() {
     private fun formatRssi(value: Int?): String =
         value?.let { getString(R.string.developer_value_rssi, it) }
             ?: getString(R.string.developer_value_missing)
+
+    private fun formatCharging(value: Boolean?): String = when (value) {
+        true -> getString(R.string.developer_value_yes)
+        false -> getString(R.string.developer_value_no)
+        null -> getString(R.string.developer_value_missing)
+    }
 
     private fun formatWearing(value: Boolean?): String = when (value) {
         true -> getString(R.string.developer_value_wearing)
@@ -398,6 +428,21 @@ class DeveloperFragment : Fragment() {
     private fun formatAckTimestamp(value: Long?): String =
         value?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_missing)
 
+    private fun formatLatency(value: Long?): String = value?.let { "$it ms" }
+        ?: getString(R.string.developer_value_missing)
+
+    private fun formatOpcode(opcode: Int?): String = opcode?.let { String.format("0x%02X", it and 0xFF) }
+        ?: getString(R.string.developer_value_missing)
+
+    private fun formatPowerHex(hex: String): String = hex.chunked(2).joinToString(separator = " ") { it.uppercase() }
+
     private fun formatTimestamp(millis: Long): String =
         android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", millis).toString()
+
+    private fun formatTimeOfDay(millis: Long): String =
+        android.text.format.DateFormat.format("HH:mm:ss", millis).toString()
+
+    companion object {
+        private const val POWER_HISTORY_PREVIEW = 10
+    }
 }

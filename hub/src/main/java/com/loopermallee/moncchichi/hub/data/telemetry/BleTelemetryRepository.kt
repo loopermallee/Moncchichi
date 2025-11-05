@@ -8,6 +8,7 @@ import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -39,12 +40,18 @@ class BleTelemetryRepository(
 
     data class LensTelemetry(
         val batteryPercent: Int? = null,
+        val batterySourceOpcode: Int? = null,
+        val batteryUpdatedAt: Long? = null,
         val caseBatteryPercent: Int? = null,
         val lastUpdated: Long? = null,
         val rssi: Int? = null,
         val firmwareVersion: String? = null,
+        val firmwareSourceOpcode: Int? = null,
+        val firmwareUpdatedAt: Long? = null,
         val notes: String? = null,
         val charging: Boolean? = null,
+        val chargingSourceOpcode: Int? = null,
+        val chargingUpdatedAt: Long? = null,
         val wearing: Boolean? = null,
         val inCase: Boolean? = null,
         val silentMode: Boolean? = null,
@@ -66,9 +73,19 @@ class BleTelemetryRepository(
         val lastBondReason: Int? = null,
         val lastBondEventAt: Long? = null,
         val lastAckAt: Long? = null,
+        val lastAckOpcode: Int? = null,
+        val lastAckLatencyMs: Long? = null,
         val ackSuccessCount: Int = 0,
         val ackFailureCount: Int = 0,
         val ackWarmupCount: Int = 0,
+        val ackDropCount: Int = 0,
+        val powerHistory: List<PowerFrame> = emptyList(),
+    )
+
+    data class PowerFrame(
+        val opcode: Int,
+        val hex: String,
+        val timestampMs: Long,
     )
 
     data class Snapshot(
@@ -93,13 +110,59 @@ class BleTelemetryRepository(
     private val _snapshot = MutableStateFlow(Snapshot())
     val snapshot: StateFlow<Snapshot> = _snapshot.asStateFlow()
 
-    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 32)
+    private val _events = MutableSharedFlow<String>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     val events: SharedFlow<String> = _events.asSharedFlow()
 
-    private val _uartText = MutableSharedFlow<UartLine>(extraBufferCapacity = 64)
+    private val _uartText = MutableSharedFlow<UartLine>(
+        replay = 0,
+        extraBufferCapacity = 128,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     val uartText: SharedFlow<UartLine> = _uartText.asSharedFlow()
 
     data class UartLine(val lens: Lens, val text: String)
+
+    private fun batteryPriority(opcode: Int): Int = when (opcode) {
+        BATTERY_OPCODE -> 3
+        STATUS_OPCODE -> 2
+        ASCII_NOTIFY_OPCODE -> 1
+        else -> 0
+    }
+
+    private fun chargingPriority(opcode: Int): Int = when (opcode) {
+        STATUS_OPCODE -> 2
+        ASCII_NOTIFY_OPCODE -> 1
+        else -> 0
+    }
+
+    private fun firmwarePriority(opcode: Int): Int = when (opcode) {
+        BATTERY_OPCODE -> 3
+        ASCII_NOTIFY_OPCODE -> 1
+        FIRMWARE_OPCODE -> 2
+        else -> 0
+    }
+
+    private fun shouldAdopt(
+        existingSource: Int?,
+        existingTimestamp: Long?,
+        newSource: Int,
+        newTimestamp: Long,
+        priority: (Int) -> Int,
+    ): Boolean {
+        val currentPriority = existingSource?.let(priority) ?: Int.MIN_VALUE
+        val incomingPriority = priority(newSource)
+        if (incomingPriority > currentPriority) {
+            return true
+        }
+        if (incomingPriority < currentPriority) {
+            return existingTimestamp?.let { newTimestamp - it > SOURCE_DISAGREE_WINDOW_MS } ?: true
+        }
+        return existingTimestamp?.let { newTimestamp >= it } ?: true
+    }
 
     private val versionRegex = Pattern.compile(
         "ver\\s+([0-9]+\\.[0-9]+\\.[0-9]+).*?(DeviceID|DeviceId|DevId)\\s+(\\d+)",
@@ -128,7 +191,7 @@ class BleTelemetryRepository(
 
     fun reset() {
         _snapshot.value = Snapshot()
-        _events.tryEmit("[BLE][DIAG] telemetry reset")
+        _events.tryEmit("[DIAG] telemetry reset")
         clearBuffers()
         keepAliveSnapshots.clear()
     }
@@ -219,81 +282,127 @@ class BleTelemetryRepository(
     ) {
         val timestamp = System.currentTimeMillis()
         val hex = frame.toHex()
-        val battery = vitals.batteryPercent?.takeIf { it in 0..100 }
+        val opcode = frame.firstOrNull()?.toInt()?.and(0xFF) ?: 0
+        val trustedBattery = when (opcode) {
+            ASCII_NOTIFY_OPCODE -> vitals.batteryPercent?.takeIf { it in 0..100 }
+            STATUS_OPCODE -> null
+            else -> vitals.batteryPercent?.takeIf { it in 0..100 }
+        }
         val charging = vitals.charging
         val firmwareBanner = vitals.firmwareVersion?.takeIf { it.isNotBlank() }
+
+        var batteryChanged = false
+        var chargingChanged = false
+        var firmwareChanged = false
 
         updateSnapshot(eventTimestamp = timestamp) { current ->
             val existing = current.lens(lens)
             var updated = existing
-            var changed = false
             var lastUpdated = existing.lastUpdated
+            var powerHistory = existing.powerHistory
 
-            battery?.let { percent ->
-                if (existing.batteryPercent != percent) {
-                    changed = true
+            trustedBattery?.let { percent ->
+                if (shouldAdopt(existing.batterySourceOpcode, existing.batteryUpdatedAt, opcode, timestamp, ::batteryPriority)) {
+                    if (existing.batteryPercent != percent || existing.batterySourceOpcode != opcode) {
+                        batteryChanged = true
+                    }
+                    updated = updated.copy(
+                        batteryPercent = percent,
+                        batterySourceOpcode = opcode,
+                        batteryUpdatedAt = timestamp,
+                        lastUpdated = timestamp,
+                    )
+                    lastUpdated = timestamp
                 }
-                updated = updated.copy(batteryPercent = percent)
-                lastUpdated = timestamp
             }
 
             charging?.let { value ->
-                if (existing.charging != value) {
-                    changed = true
+                if (shouldAdopt(existing.chargingSourceOpcode, existing.chargingUpdatedAt, opcode, timestamp, ::chargingPriority)) {
+                    if (existing.charging != value || existing.chargingSourceOpcode != opcode) {
+                        chargingChanged = true
+                    }
+                    updated = updated.copy(
+                        charging = value,
+                        chargingSourceOpcode = opcode,
+                        chargingUpdatedAt = timestamp,
+                        lastUpdated = timestamp,
+                    )
+                    lastUpdated = timestamp
                 }
-                updated = updated.copy(charging = value)
-                lastUpdated = timestamp
             }
 
             firmwareBanner?.let { banner ->
-                if (existing.firmwareVersion != banner) {
-                    changed = true
+                if (shouldAdopt(existing.firmwareSourceOpcode, existing.firmwareUpdatedAt, opcode, timestamp, ::firmwarePriority)) {
+                    if (existing.firmwareVersion != banner || existing.firmwareSourceOpcode != opcode) {
+                        firmwareChanged = true
+                    }
+                    updated = updated.copy(
+                        firmwareVersion = banner,
+                        firmwareSourceOpcode = opcode,
+                        firmwareUpdatedAt = timestamp,
+                        lastUpdated = timestamp,
+                    )
+                    lastUpdated = timestamp
                 }
-                updated = updated.copy(firmwareVersion = banner)
-                lastUpdated = timestamp
+            }
+
+            if (opcode == ASCII_NOTIFY_OPCODE && (trustedBattery != null || charging != null)) {
+                powerHistory = (powerHistory + PowerFrame(opcode, hex, timestamp)).takeLast(POWER_HISTORY_SIZE)
             }
 
             vitals.wearing?.let { wearing ->
                 if (existing.wearing != wearing) {
-                    changed = true
+                    updated = updated.copy(wearing = wearing, lastUpdated = timestamp)
+                    lastUpdated = timestamp
                 }
-                updated = updated.copy(wearing = wearing)
-                lastUpdated = timestamp
             }
 
             vitals.inCradle?.let { inCase ->
                 if (existing.inCase != inCase) {
-                    changed = true
+                    updated = updated.copy(inCase = inCase, lastUpdated = timestamp)
+                    lastUpdated = timestamp
                 }
-                updated = updated.copy(inCase = inCase)
-                lastUpdated = timestamp
             }
 
-            if (changed || lastUpdated != existing.lastUpdated) {
+            if (powerHistory !== updated.powerHistory) {
+                updated = updated.copy(powerHistory = powerHistory)
+            }
+
+            if (updated != existing) {
                 updated = updated.copy(lastUpdated = lastUpdated)
-            }
-
-            val next = if (updated != existing) {
-                current.updateLens(lens, updated)
+                current.updateLens(lens, updated).withFrame(lens, hex)
             } else {
-                current
+                current.withFrame(lens, hex)
             }
-            next.withFrame(lens, hex)
         }
 
         val lensLabel = if (lens == Lens.LEFT) "L" else "R"
         val parts = mutableListOf<String>()
-        battery?.let { parts += "battery=${it}%" }
-        charging?.let { parts += if (it) "charging" else "not charging" }
-        firmwareBanner?.let { parts += "FW ${it}" }
+        if (batteryChanged) {
+            trustedBattery?.let { percent ->
+                parts += "battery=${percent}%@${opcode.toHexLabel()}"
+            }
+        }
+        if (chargingChanged) {
+            charging?.let { value ->
+                parts += if (value) "charging@${opcode.toHexLabel()}" else "not charging@${opcode.toHexLabel()}"
+            }
+        }
+        if (firmwareChanged) {
+            firmwareBanner?.let { banner ->
+                parts += "fw=${banner} (${opcode.toHexLabel()})"
+            }
+        }
         if (parts.isNotEmpty()) {
-            val message = "[BLE][VITALS][${lensLabel}] ${parts.joinToString(separator = ", ")}".also { logger(it) }
+            val message = "[VITALS][$lensLabel] ${parts.joinToString(separator = ", " )}".also { logger(it) }
             _events.tryEmit(message)
         }
 
-        firmwareBanner?.let { line ->
-            parseTextMetadata(lens, line)
-            _uartText.tryEmit(UartLine(lens, line))
+        if (firmwareChanged) {
+            firmwareBanner?.let { line ->
+                parseTextMetadata(lens, line)
+                _uartText.tryEmit(UartLine(lens, line))
+            }
         }
     }
 
@@ -310,19 +419,54 @@ class BleTelemetryRepository(
         }
         val timestamp = System.currentTimeMillis()
         val hex = frame.toHex()
+        val opcode = frame.firstOrNull()?.toInt()?.and(0xFF) ?: BATTERY_OPCODE
+        var batteryChanged = false
+        var caseChanged = false
         updateSnapshot(eventTimestamp = timestamp) { current ->
             val existing = current.lens(lens)
-            val updatedLens = existing.copy(
-                batteryPercent = lensBattery ?: existing.batteryPercent,
-                caseBatteryPercent = caseBattery ?: existing.caseBatteryPercent,
-                lastUpdated = timestamp,
-            )
-            val next = if (updatedLens == existing) current else current.updateLens(lens, updatedLens)
-            next.withFrame(lens, hex)
+            var updated = existing
+            lensBattery?.let { percent ->
+                if (shouldAdopt(existing.batterySourceOpcode, existing.batteryUpdatedAt, opcode, timestamp, ::batteryPriority)) {
+                    if (existing.batteryPercent != percent || existing.batterySourceOpcode != opcode) {
+                        batteryChanged = true
+                    }
+                    updated = updated.copy(
+                        batteryPercent = percent,
+                        batterySourceOpcode = opcode,
+                        batteryUpdatedAt = timestamp,
+                        lastUpdated = timestamp,
+                    )
+                }
+            }
+            caseBattery?.let { value ->
+                if (existing.caseBatteryPercent != value) {
+                    caseChanged = true
+                    updated = updated.copy(caseBatteryPercent = value, lastUpdated = timestamp)
+                }
+            }
+            if (lensBattery != null || caseBattery != null) {
+                val history = (updated.powerHistory + PowerFrame(opcode, hex, timestamp)).takeLast(POWER_HISTORY_SIZE)
+                if (history != updated.powerHistory) {
+                    updated = updated.copy(powerHistory = history)
+                }
+            }
+            if (updated != existing) {
+                current.updateLens(lens, updated).withFrame(lens, hex)
+            } else {
+                current.withFrame(lens, hex)
+            }
         }
-        val mainLabel = lensBattery?.let { "$it%" } ?: "?"
-        val caseLabel = caseBattery?.let { "$it%" } ?: "?"
-        _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} battery=$mainLabel case=$caseLabel")
+        val lensLabel = if (lens == Lens.LEFT) "L" else "R"
+        val parts = mutableListOf<String>()
+        if (batteryChanged) {
+            lensBattery?.let { percent -> parts += "battery=${percent}%@${opcode.toHexLabel()}" }
+        }
+        if (caseChanged) {
+            caseBattery?.let { percent -> parts += "case=${percent}%" }
+        }
+        if (parts.isNotEmpty()) {
+            _events.tryEmit("[VITALS][$lensLabel] ${parts.joinToString(", ")}")
+        }
     }
 
     private fun handleUptime(lens: Lens, frame: ByteArray) {
@@ -357,20 +501,34 @@ class BleTelemetryRepository(
         val version = if (decoded.isBlank()) raw.toHex() else decoded
         val hex = frame.toHex()
         val eventTimestamp = System.currentTimeMillis()
+        var firmwareChanged = false
         updateSnapshot(eventTimestamp = eventTimestamp) { current ->
             val existing = current.lens(lens)
-            if (existing.firmwareVersion == version && current.lastLens == lens && current.lastFrameHex == hex) {
-                current
+            if (shouldAdopt(existing.firmwareSourceOpcode, existing.firmwareUpdatedAt, FIRMWARE_OPCODE, eventTimestamp, ::firmwarePriority)) {
+                if (existing.firmwareVersion != version || existing.firmwareSourceOpcode != FIRMWARE_OPCODE) {
+                    firmwareChanged = true
+                }
+                val updated = existing.copy(
+                    firmwareVersion = version,
+                    firmwareSourceOpcode = FIRMWARE_OPCODE,
+                    firmwareUpdatedAt = eventTimestamp,
+                    lastUpdated = eventTimestamp,
+                )
+                current.updateLens(lens, updated).withFrame(lens, hex)
             } else {
-                current.updateLens(lens, existing.copy(firmwareVersion = version)).withFrame(lens, hex)
+                current.withFrame(lens, hex)
             }
         }
-        _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} firmware=$version")
+        if (firmwareChanged) {
+            val lensLabel = if (lens == Lens.LEFT) "L" else "R"
+            _events.tryEmit("[VITALS][$lensLabel] fw=${version} (${FIRMWARE_OPCODE.toHexLabel()})")
+        }
     }
 
     private fun logRaw(lens: Lens, frame: ByteArray) {
         val hex = frame.toHex()
-        logger("[BLE][RAW] ${lens.name}: $hex")
+        val lensLabel = if (lens == Lens.LEFT) "L" else "R"
+        logger("[UART][$lensLabel] $hex")
         updateSnapshot(persist = false) { current -> current.withFrame(lens, hex) }
     }
 
@@ -385,15 +543,19 @@ class BleTelemetryRepository(
             }
         }
         val message = "[ACK][$lensTag] opcode=$opcode status=$status → $outcome$qualifiers"
-        logger("[BLE][ACK][$lensTag] opcode=$opcode status=$status success=${event.success} warmup=${event.warmup}")
+        logger(message)
         _uartText.tryEmit(UartLine(event.lens, message))
         updateSnapshot(eventTimestamp = event.timestampMs, persist = false) { current ->
             val existing = current.lens(event.lens)
+            val latency = existing.lastAckAt?.let { previous -> (event.timestampMs - previous).takeIf { it >= 0 } }
             val updated = existing.copy(
                 lastAckAt = event.timestampMs,
+                lastAckOpcode = event.opcode,
+                lastAckLatencyMs = latency,
                 ackSuccessCount = existing.ackSuccessCount + if (event.success) 1 else 0,
                 ackFailureCount = existing.ackFailureCount + if (event.success) 0 else 1,
                 ackWarmupCount = existing.ackWarmupCount + if (event.warmup && event.success) 1 else 0,
+                ackDropCount = existing.ackDropCount + if (event.success) 0 else 1,
             )
             current.updateLens(event.lens, updated)
         }
@@ -468,7 +630,7 @@ class BleTelemetryRepository(
         }
         if (states.isNotEmpty()) {
             val lensLabel = if (lens == Lens.LEFT) "L" else "R"
-            _events.tryEmit("[BLE][STATE][$lensLabel] ${states.joinToString(", ")}")
+            _events.tryEmit("[STATE][$lensLabel] ${states.joinToString(", ")}")
         }
     }
 
@@ -508,7 +670,7 @@ class BleTelemetryRepository(
         val ackTimeouts = status.keepAliveAckTimeouts
         val line =
             "keepalive last=$agoLabel rtt=$rttLabel failures=$failures lockSkips=$lockSkips ackTimeouts=$ackTimeouts"
-        _events.tryEmit("[BLE][DIAG] ${lens.name.lowercase(Locale.US)} $line")
+        _events.tryEmit("[DIAG] ${lens.name.lowercase(Locale.US)} $line")
         if (status.lastKeepAliveAt != null || failures > 0) {
             _uartText.tryEmit(UartLine(lens, line))
         }
@@ -535,9 +697,9 @@ class BleTelemetryRepository(
             val next = current.updateLens(lens, updated)
             val lensLabel = lens.name.lowercase(Locale.US)
             if (!bonded) {
-                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond missing ⚠️")
+                _events.tryEmit("[PAIRING] ${lensLabel} bond missing ⚠️")
             } else if (next.left.bonded && next.right.bonded) {
-                _events.tryEmit("[BLE][PAIR] bonded ✅ (both lenses)")
+                _events.tryEmit("[PAIRING] bonded ✅ (both lenses)")
             }
             next
         }
@@ -554,7 +716,7 @@ class BleTelemetryRepository(
             reason?.let {
                 val lensLabel = lens.name.lowercase(Locale.US)
                 val label = formatGattStatus(it)
-                _events.tryEmit("[BLE][LINK] ${lensLabel} disconnect status=$label")
+                _events.tryEmit("[STATE] ${lensLabel} disconnect status=$label")
             }
             next
         }
@@ -569,41 +731,41 @@ class BleTelemetryRepository(
 
             if (existing.bondTransitions != status.bondTransitions) {
                 updated = updated.copy(bondTransitions = status.bondTransitions)
-                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond transitions=${status.bondTransitions}")
+                _events.tryEmit("[PAIRING] ${lensLabel} bond transitions=${status.bondTransitions}")
                 changed = true
             }
             if (existing.bondTimeouts != status.bondTimeouts) {
                 updated = updated.copy(bondTimeouts = status.bondTimeouts)
-                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond timeouts=${status.bondTimeouts}")
+                _events.tryEmit("[PAIRING] ${lensLabel} bond timeouts=${status.bondTimeouts}")
                 changed = true
             }
             if (existing.bondAttempts != status.bondAttempts) {
                 updated = updated.copy(bondAttempts = status.bondAttempts)
-                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond attempts=${status.bondAttempts}")
+                _events.tryEmit("[PAIRING] ${lensLabel} bond attempts=${status.bondAttempts}")
                 changed = true
             }
             val bondResultLabel = status.lastBondResult.name
             if (existing.lastBondResult != bondResultLabel) {
                 updated = updated.copy(lastBondResult = bondResultLabel)
                 if (status.lastBondResult != BondResult.Unknown) {
-                    _events.tryEmit("[BLE][PAIR] ${lensLabel} last bond=${bondResultLabel}")
+                    _events.tryEmit("[PAIRING] ${lensLabel} last bond=${bondResultLabel}")
                 }
                 changed = true
             }
             if (existing.pairingDialogsShown != status.pairingDialogsShown) {
                 updated = updated.copy(pairingDialogsShown = status.pairingDialogsShown)
-                _events.tryEmit("[BLE][PAIR] ${lensLabel} pairing dialogs=${status.pairingDialogsShown}")
+                _events.tryEmit("[PAIRING] ${lensLabel} pairing dialogs=${status.pairingDialogsShown}")
                 changed = true
             }
             if (existing.refreshCount != status.refreshCount) {
                 updated = updated.copy(refreshCount = status.refreshCount)
-                _events.tryEmit("[BLE][PAIR] ${lensLabel} refresh invoked=${status.refreshCount}")
+                _events.tryEmit("[PAIRING] ${lensLabel} refresh invoked=${status.refreshCount}")
                 changed = true
             }
             if (existing.lastBondState != status.lastBondState) {
                 updated = updated.copy(lastBondState = status.lastBondState)
                 status.lastBondState?.let { bondState ->
-                    _events.tryEmit("[BLE][PAIR] ${lensLabel} bond state=${formatBondState(bondState)}")
+                    _events.tryEmit("[PAIRING] ${lensLabel} bond state=${formatBondState(bondState)}")
                 }
                 changed = true
             }
@@ -620,7 +782,7 @@ class BleTelemetryRepository(
                     val timestampLabel = status.lastBondEventAt?.let { at ->
                         formatBondTimestamp(at)?.let { formatted -> " at $formatted" }
                     } ?: ""
-                    _events.tryEmit("[BLE][PAIR] ${lensLabel} bond reason=$reasonLabel$timestampLabel")
+                    _events.tryEmit("[PAIRING] ${lensLabel} bond reason=$reasonLabel$timestampLabel")
                 }
                 changed = true
             }
@@ -633,7 +795,7 @@ class BleTelemetryRepository(
                     lastSmpOpcode = status.lastSmpOpcode,
                 )
                 val opcodeLabel = formatOpcode(status.lastSmpOpcode)
-                _events.tryEmit("[BLE][SMP] ${lensLabel} frames=${status.smpFrameCount} last=$opcodeLabel")
+                _events.tryEmit("[DIAG] ${lensLabel} SMP frames=${status.smpFrameCount} last=$opcodeLabel")
                 changed = true
             }
 
@@ -654,12 +816,12 @@ class BleTelemetryRepository(
 
             if (existing.reconnectAttempts != status.reconnectAttempts) {
                 updated = updated.copy(reconnectAttempts = status.reconnectAttempts)
-                _events.tryEmit("[BLE][LINK] ${lensLabel} auto-reconnect attempt ${status.reconnectAttempts}")
+                _events.tryEmit("[STATE] ${lensLabel} auto-reconnect attempt ${status.reconnectAttempts}")
                 changed = true
             }
             if (existing.reconnectSuccesses != status.reconnectSuccesses) {
                 updated = updated.copy(reconnectSuccesses = status.reconnectSuccesses)
-                _events.tryEmit("[BLE][LINK] ${lensLabel} auto-reconnect success")
+                _events.tryEmit("[STATE] ${lensLabel} auto-reconnect success")
                 changed = true
             }
             if (existing.reconnecting != status.reconnecting) {
@@ -668,7 +830,7 @@ class BleTelemetryRepository(
             }
             if (existing.bondResets != status.bondResetCount) {
                 updated = updated.copy(bondResets = status.bondResetCount)
-                _events.tryEmit("[BLE][PAIR] ${lensLabel} bond reset events=${status.bondResetCount}")
+                _events.tryEmit("[PAIRING] ${lensLabel} bond reset events=${status.bondResetCount}")
                 changed = true
             }
 
@@ -699,7 +861,7 @@ class BleTelemetryRepository(
         }
         updateSnapshot(persist = false) { current -> current.copy(connectionSequence = label) }
         label?.let {
-            _events.tryEmit("[BLE][PAIR] connect sequence $it")
+            _events.tryEmit("[PAIRING] connect sequence $it")
         }
     }
 
@@ -890,6 +1052,8 @@ class BleTelemetryRepository(
         ((byte.toInt() and 0xFF).toString(16)).padStart(2, '0')
     }
 
+    private fun Int.toHexLabel(): String = String.format("0x%02X", this and 0xFF)
+
     private fun ByteArray.extractPayload(): ByteArray? {
         if (size < 2) return null
         val status = this[1]
@@ -952,5 +1116,8 @@ class BleTelemetryRepository(
         private const val UPTIME_OPCODE = 0x37
         private const val FIRMWARE_OPCODE = 0x11
         private const val GLASSES_STATE_OPCODE = 0x2B
+        private const val ASCII_NOTIFY_OPCODE = 0xF5
+        private const val SOURCE_DISAGREE_WINDOW_MS = 3_000L
+        private const val POWER_HISTORY_SIZE = 10
     }
 }
