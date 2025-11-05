@@ -56,6 +56,7 @@
     <string name="developer_mode_console">Console</string>
     <string name="developer_mode_diagnostics">Diagnostics</string>
     <string name="developer_section_overview">System overview</string>
+    <string name="developer_section_glasses">Glasses telemetry</string>
     <string name="developer_section_left">Left lens</string>
     <string name="developer_section_right">Right lens</string>
     <string name="developer_label_uptime">Uptime: %1$s</string>
@@ -103,6 +104,12 @@
     <string name="developer_export_subject">Moncchichi developer export</string>
     <string name="developer_share_title">Share logs</string>
     <string name="developer_toast_share_failed">No app available to share logs</string>
+    <string name="developer_jump_latest">Jump to latest</string>
+    <string name="developer_show_power_history">Show power frames</string>
+    <string name="developer_glasses_summary_placeholder">No telemetry captured yet.</string>
+    <string name="developer_glasses_sources_placeholder">Sources: pending</string>
+    <string name="developer_no_power_frames">No power telemetry frames yet.</string>
+    <string name="developer_power_history_title">Power frames — %1$s lens</string>
     <string name="developer_label_uptime_placeholder">Uptime: —</string>
     <string name="developer_label_last_lens_placeholder">Last lens: —</string>
     <string name="developer_label_sequence_placeholder">Connection sequence: —</string>

@@ -14,7 +14,7 @@
 
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/titleBar"
-            style="@style/Widget.Material3.Toolbar.Surface"
+            style="@style/Widget.Moncchichi.Toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
             android:background="?attr/colorSurface"

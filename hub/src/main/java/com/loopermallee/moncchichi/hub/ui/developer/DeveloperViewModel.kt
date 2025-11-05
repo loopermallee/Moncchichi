@@ -194,13 +194,23 @@ class DeveloperViewModel(
         appendLine("  Reconnecting now: ${if (lens.reconnecting) "yes" else "no"}")
         appendLine("  Last ACK: ${formatAckTimestamp(lens.lastAckAt)}")
         appendLine(
-            "  ACK counts: ok=${lens.ackSuccessCount} fail=${lens.ackFailureCount} warmup=${lens.ackWarmupCount}"
+            "  ACK counts: ok=${lens.ackSuccessCount} fail=${lens.ackFailureCount} warmup=${lens.ackWarmupCount} drop=${lens.ackDropCount}"
         )
+        appendLine("  ACK opcode: ${formatOpcode(lens.lastAckOpcode)} latency=${formatLatency(lens.lastAckLatencyMs)}")
         if (!lens.notes.isNullOrBlank()) {
             appendLine("  Notes: ${lens.notes}")
         }
+        appendLine("  Battery source: ${formatSource(lens.batterySourceOpcode, lens.batteryUpdatedAt)}")
+        appendLine("  Charging source: ${formatSource(lens.chargingSourceOpcode, lens.chargingUpdatedAt)}")
+        appendLine("  Firmware source: ${formatSource(lens.firmwareSourceOpcode, lens.firmwareUpdatedAt)}")
         val lastUpdated = lens.lastUpdated?.let { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(it)) }
         appendLine("  Last update: ${lastUpdated ?: "–"}")
+        if (lens.powerHistory.isNotEmpty()) {
+            appendLine("  Power frames:")
+            lens.powerHistory.takeLast(10).asReversed().forEach { frame ->
+                appendLine("    ${formatOpcode(frame.opcode)} @ ${formatTimeOfDay(frame.timestampMs)} ${formatPowerHex(frame.hex)}")
+            }
+        }
     }
 
     private fun formatBondState(state: Int?): String = when (state) {
@@ -247,6 +257,20 @@ class DeveloperViewModel(
     private fun formatAckTimestamp(value: Long?): String = value?.let {
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(it))
     } ?: "–"
+
+    private fun formatLatency(value: Long?): String = value?.let { "${it}ms" } ?: "–"
+
+    private fun formatSource(opcode: Int?, timestamp: Long?): String {
+        if (opcode == null || timestamp == null) return "–"
+        return "${formatOpcode(opcode)} @ ${formatTimeOfDay(timestamp)}"
+    }
+
+    private fun formatOpcode(opcode: Int?): String = opcode?.let { String.format(Locale.US, "0x%02X", it and 0xFF) } ?: "–"
+
+    private fun formatTimeOfDay(millis: Long): String =
+        SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(millis))
+
+    private fun formatPowerHex(hex: String): String = hex.chunked(2).joinToString(separator = " ") { it.uppercase(Locale.US) }
 
     private fun formatBondTimestamp(timestamp: Long?): String {
         if (timestamp == null) return "–"

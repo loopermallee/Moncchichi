@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Consolidated widget styles so AAPT can resolve references consistently. -->
+    <style name="Widget.Moncchichi.BottomNavigation" parent="@style/Widget.MaterialComponents.BottomNavigationView.Colored" />
+
+    <style name="Widget.Moncchichi.Toolbar" parent="@style/Widget.MaterialComponents.Toolbar">
+        <item name="android:background">?attr/colorSurface</item>
+        <item name="titleTextColor">?attr/colorOnSurface</item>
+        <item name="subtitleTextColor">?attr/colorOnSurfaceVariant</item>
+    </style>
+</resources>

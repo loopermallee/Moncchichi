@@ -31,25 +31,40 @@
             android:text="@string/developer_mode_diagnostics" />
     </com.google.android.material.button.MaterialButtonToggleGroup>
 
-    <androidx.core.widget.NestedScrollView
-        android:id="@+id/console_scroll"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:fadeScrollbars="false"
-        android:fillViewport="true">
+        android:layout_weight="1">
 
-        <TextView
-            android:id="@+id/text_console_logs"
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/console_scroll"
             android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fadeScrollbars="false"
+            android:fillViewport="true">
+
+            <TextView
+                android:id="@+id/text_console_logs"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:lineSpacingExtra="4dp"
+                android:paddingBottom="32dp"
+                android:textColor="@color/er_text_secondary"
+                android:textIsSelectable="true"
+                android:typeface="monospace"
+                android:textSize="14sp" />
+        </androidx.core.widget.NestedScrollView>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/button_jump_latest"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:lineSpacingExtra="4dp"
-            android:paddingBottom="32dp"
-            android:textColor="@color/er_text_secondary"
-            android:textIsSelectable="true"
-            android:typeface="monospace"
-            android:textSize="14sp" />
-    </androidx.core.widget.NestedScrollView>
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp"
+            android:text="@string/developer_jump_latest"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <ScrollView
         android:id="@+id/diagnostics_scroll"
@@ -160,251 +175,95 @@
                         style="@style/TextAppearance.Material3.TitleMedium"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/developer_section_left" />
+                        android:text="@string/developer_section_glasses" />
 
-                    <TextView
-                        android:id="@+id/text_left_battery"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
-                        android:text="@string/developer_label_battery_placeholder" />
+                        android:orientation="vertical">
 
-                    <TextView
-                        android:id="@+id/text_left_case"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_case_battery_placeholder" />
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingBottom="12dp">
 
-                    <TextView
-                        android:id="@+id/text_left_presence"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_wearing_placeholder" />
+                            <TextView
+                                android:id="@+id/text_glasses_left_label"
+                                style="@style/TextAppearance.Material3.TitleSmall"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/developer_section_left" />
 
-                    <TextView
-                        android:id="@+id/text_left_case_state"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_case_state_placeholder" />
+                            <TextView
+                                android:id="@+id/text_glasses_left_summary"
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="@string/developer_glasses_summary_placeholder" />
 
-                    <TextView
-                        android:id="@+id/text_left_silent"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_silent_mode_placeholder" />
+                            <TextView
+                                android:id="@+id/text_glasses_left_sources"
+                                style="@style/TextAppearance.Material3.BodySmall"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="@string/developer_glasses_sources_placeholder" />
 
-                    <TextView
-                        android:id="@+id/text_left_rssi"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_rssi_placeholder" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/button_left_power_history"
+                                style="?attr/materialButtonOutlinedStyle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/developer_show_power_history" />
+                        </LinearLayout>
 
-                    <TextView
-                        android:id="@+id/text_left_firmware"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_firmware_placeholder" />
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:background="@color/er_border" />
 
-                    <TextView
-                        android:id="@+id/text_left_bond"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_bonded_placeholder" />
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingTop="12dp">
 
-                    <TextView
-                        android:id="@+id/text_left_bond_stats"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_bond_stats_placeholder" />
+                            <TextView
+                                android:id="@+id/text_glasses_right_label"
+                                style="@style/TextAppearance.Material3.TitleSmall"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/developer_section_right" />
 
-                    <TextView
-                        android:id="@+id/text_left_reconnect"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_reconnect_stats_placeholder" />
+                            <TextView
+                                android:id="@+id/text_glasses_right_summary"
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="@string/developer_glasses_summary_placeholder" />
 
-                    <TextView
-                        android:id="@+id/text_left_smp"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_smp_placeholder" />
+                            <TextView
+                                android:id="@+id/text_glasses_right_sources"
+                                style="@style/TextAppearance.Material3.BodySmall"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="@string/developer_glasses_sources_placeholder" />
 
-                    <TextView
-                        android:id="@+id/text_left_last_ack"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_last_ack_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_left_ack_counts"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_ack_counts_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_left_updated"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_updated_placeholder" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
-            <com.google.android.material.card.MaterialCardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                app:cardElevation="2dp"
-                app:strokeColor="@color/er_border">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="20dp">
-
-                    <TextView
-                        style="@style/TextAppearance.Material3.TitleMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/developer_section_right" />
-
-                    <TextView
-                        android:id="@+id/text_right_battery"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:text="@string/developer_label_battery_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_case"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_case_battery_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_presence"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_wearing_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_case_state"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_case_state_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_silent"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_silent_mode_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_rssi"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_rssi_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_firmware"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_firmware_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_bond"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_bonded_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_bond_stats"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_bond_stats_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_reconnect"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_reconnect_stats_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_smp"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_smp_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_last_ack"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_last_ack_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_ack_counts"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_ack_counts_placeholder" />
-
-                    <TextView
-                        android:id="@+id/text_right_updated"
-                        style="@style/TextAppearance.Material3.BodyMedium"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/developer_label_updated_placeholder" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/button_right_power_history"
+                                style="?attr/materialButtonOutlinedStyle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/developer_show_power_history" />
+                        </LinearLayout>
+                    </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
