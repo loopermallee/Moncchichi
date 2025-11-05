@@ -848,6 +848,148 @@ mode.
 - data (Data): 
    - Description: The actual data being transmitted in this package.
 
+⸻
+
+🔬 Section 13 – Evolution of the Even Realities G1 Protocol and Firmware Ecosystem
+
+13.1 Overview
+
+Through comparison of multiple firmware revisions (v1.4.5 → v1.6.3), live nRF Connect traces, and disassembly of the Even Glassbox Upgrade Tool package, a coherent view of the G1 system has emerged.
+The G1 platform is not a static BLE accessory — it is a two-part ecosystem:
+	1.	a dual-lens BLE telemetry network operating on a mixed binary + UART protocol, and
+	2.	a firmware distribution & upgrade framework using USB serial and pre-production cloud endpoints.
+
+Each phase of the patches contributed new clarity about how these two layers interact and evolve.
+
+⸻
+
+13.2 Evolution of the BLE Protocol
+
+Firmware	Characteristics	Implications
+v1.4.5	UART-style text exchanges; ACK as literal “OK”.	The device behaved like a transparent serial bridge. No encryption, no binary framing; 8-bit ASCII only.
+v1.5.0	Hybrid stage — both text and binary ACKs (0xC9); added uptime telemetry (0x37).	Marked transition to a packetized design; firmware began using a unified command header but still accepted plain strings for backward compatibility.
+v1.5.6	Dual-lens architecture introduced; each lens identified separately; firmware info exposed via 0x2C 02.	The app must now manage two concurrent GATT sessions that behave like synchronized halves of a single device.
+v1.6.3	Fully binary command structure; additional telemetry opcodes (0x39 system status, 0x32 activation angle); strict ACK timing; dropped text responses.	Established the modern “production” protocol. All commands expect binary ACK within 250 ms. Text parsing exists only for legacy support.
+
+From these, we learn that text responses are a legacy compatibility feature, not an alternate mode — any delay or “HELLO timeout” during the handshake often results from firmware sending a plain “OK” while the app waits for a binary ACK.
+
+⸻
+
+13.3 Dual-Lens Connection Model
+
+Diagnostics confirm that the left lens acts as the master in both Bluetooth and operational sequencing.
+The right lens never begins bonding or telemetry until the left lens completes its warm-up handshake.
+This sequencing ensures consistent MTU negotiation and ACK synchronization.
+When bonding fails or the HELLO watchdog resets prematurely, the right side never starts — producing the recurring “left-only connect sequence” loops observed in logs.
+
+The architectural takeaway: dual-lens unification already works; remaining instability stems from runtime ACK interpretation, not connection logic.
+
+⸻
+
+13.4 The Bonding & Watchdog Paradox
+
+The Moncchichi app’s invalid-key fallback logic triggers bond removal whenever the expected CMD_HELLO ACK isn’t seen within 5 s.
+Because v1.6.x firmware often replies with a textual “OK” warm-up rather than a structured ACK packet, this watchdog interprets success as failure and re-initiates bonding.
+Hence, the recurrent pattern:
+
+BOND_BONDED → "OK" → watchdog timeout → removeBond() → reconnect loop
+
+Key insight: the system’s “bond disappearing” symptom originates entirely from an internal timeout, not Android or firmware faults.
+
+⸻
+
+13.5 Telemetry Decoding Behavior
+
+Newly parsed frames (0x2B, 0x2C, 0x37, 0x39) revealed that:
+	•	Battery, wearing, case-open, and charging states are consolidated under a unified 0x2B/0x2C telemetry group.
+	•	The binary format is consistent across firmware lines, confirming long-term stability of opcode mapping.
+	•	Textual UART lines appearing in some logs (“OK”, firmware banners, diagnostic strings) are voluntary debug prints, not required protocol responses.
+
+Thus, BLE telemetry can now be treated as structured binary messages, with UTF-8 parsing reserved only for human-readable banners.
+
+⸻
+
+13.6 Firmware Upgrade Architecture (USB/Serial Layer)
+
+Reverse-engineering of the official Even Glassbox Upgrade Tool uncovered the vendor’s firmware maintenance workflow:
+	1.	The desktop app is a Qt 6 front-end wrapping a proprietary EvenRealities.dll.
+	2.	The DLL handles port detection, bootloader entry, image streaming, and CRC verification.
+	3.	Firmware packages are named Even_G1_Case_*.bin, later split into app_update.bin and net_core_app_update.bin.
+	4.	The tool communicates with the staging endpoint webapi-pre.evenreal.co, implying a production counterpart.
+	5.	The API model uses progress callbacks: detect → download → transmit → verify → result.
+
+These findings show that the Even ecosystem already exposes a layered DFU pipeline, and the Moncchichi Hub can interoperate by mirroring this callback structure.
+
+⸻
+
+13.7 Structural Insights
+
+Domain	Discovery	Significance
+BLE layer	Binary and text coexist; 0xC9 ACKs drive timing.	Parser must tolerate both without rebonding.
+Dual-lens coordination	Left initiates, right waits.	Keep sequencing logic; focus fixes on ACK validation.
+Bond handling	App removes bond on false timeout.	Core cause of recurring disconnects.
+Telemetry	Stable binary format since v1.5.6.	Long-term compatibility likely.
+Firmware updates	Vendor DLL confirms two-image DFU structure.	Android can replicate later using BLE or USB.
+Server model	webapi-pre.evenreal.co provides manifests & bundles.	Enables in-app version checking without flashing.
+
+
+⸻
+
+13.8 Conceptual Architecture of the Full G1 Ecosystem
+
+┌────────────────────────────┐
+│     Even Realities Cloud   │
+│  (webapi-pre / production) │
+│   └── Manifest + .bin files│
+└────────────┬───────────────┘
+             │
+             ▼
+┌────────────────────────────┐
+│   Desktop Upgrade Tool     │
+│   (Qt6 GUI + EvenRealities │
+│    DLL over USB Serial)    │
+└────────────┬───────────────┘
+             │
+             ▼
+┌────────────────────────────┐
+│   G1 Case / MCU Bootloader │
+│  (app_core + net_core)     │
+└────────────┬───────────────┘
+             │
+             ▼
+┌────────────────────────────┐
+│   Moncchichi Hub (Android) │
+│   Dual-lens BLE telemetry  │
+│   + version discovery      │
+└────────────────────────────┘
+
+This layered structure clarifies that BLE telemetry and firmware DFU are parallel, not overlapping communication paths — BLE handles runtime operations, while USB/DFU handles lifecycle upgrades.
+
+⸻
+
+13.9 Practical Understanding Gained
+	1.	The protocol is now mature and stable. Opcode and packet layout consistency since v1.5.6 suggest backward-safe evolution.
+	2.	App instability originates from logic assumptions, not hardware faults. False “invalid key” resets and UI desynchronization stem from watchdog design.
+	3.	Firmware distribution uses a standard manifest + dual-binary layout. This makes future OTA or in-app DFU practical with minimal risk.
+	4.	Left-lens priority remains critical. It is part of the hardware design, not an app quirk.
+	5.	Vendor DLL mirrors a clean callback model. This can inform future Android DFU or telemetry pipeline designs.
+
+⸻
+
+13.10 Summary
+
+All recent patches, traces, and extracted vendor tools converge on one truth:
+
+The G1 system is already architecturally complete — what remains is aligning the Moncchichi Hub’s interpretation with that reality.
+
+	•	The BLE layer is well-defined; adjustments lie in timing and acknowledgment handling.
+	•	The firmware layer is a distinct, service-based upgrade pipeline; safe to integrate later.
+	•	The dual-lens model and binary telemetry schema are consistent across firmware lines, ensuring long-term compatibility.
+
+This consolidated understanding forms the foundation for any future code work, DFU integration, or protocol-driven diagnostics inside the Moncchichi Hub.
+
+⸻
+
 
 
 
