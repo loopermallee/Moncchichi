@@ -136,4 +136,21 @@
     <string name="developer_label_last_ack_placeholder">Last ACK: —</string>
     <string name="developer_label_ack_counts_placeholder">ACKs: 0 ok • 0 fail • warmup 0</string>
     <string name="settings_title">Settings</string>
+    <string name="teleprompter_title">Teleprompter</string>
+    <string name="teleprompter_script_hint">Script</string>
+    <string name="teleprompter_preview_label">Preview</string>
+    <string name="teleprompter_start">Start</string>
+    <string name="teleprompter_resume">Resume</string>
+    <string name="teleprompter_running">Running</string>
+    <string name="teleprompter_speed_value">Speed • %1$d px/s</string>
+    <string name="teleprompter_speed_placeholder">Speed • — px/s</string>
+    <string name="teleprompter_mirror_label">Mirror preview</string>
+    <string name="teleprompter_hud_sync_label">HUD Sync</string>
+    <string name="teleprompter_hud_status">%1$s • %2$s</string>
+    <string name="teleprompter_hud_idle">HUD sync idle</string>
+    <string name="menu_teleprompter">Teleprompter</string>
+    <plurals name="teleprompter_lens_count">
+        <item quantity="one">%d lens</item>
+        <item quantity="other">%d lenses</item>
+    </plurals>
 </resources>

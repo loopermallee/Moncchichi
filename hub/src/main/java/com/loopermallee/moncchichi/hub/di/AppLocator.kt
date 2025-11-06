@@ -24,6 +24,7 @@ import com.loopermallee.moncchichi.hub.tools.impl.LlmToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.PermissionToolImpl
 import com.loopermallee.moncchichi.hub.tools.impl.TtsToolImpl
 import com.loopermallee.moncchichi.hub.model.Repository
+import com.loopermallee.moncchichi.hub.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,6 +57,8 @@ object AppLocator {
         private set
     lateinit var httpClient: OkHttpClient
         private set
+    lateinit var settings: SettingsRepository
+        private set
 
     private var initialized = false
     private const val useLiveBle: Boolean = true
@@ -69,6 +72,7 @@ object AppLocator {
         val appCtx = ctx.applicationContext
         appContext = appCtx
         prefs = PreferenceManager.getDefaultSharedPreferences(appCtx)
+        settings = SettingsRepository(prefs)
 
         val db = Room.databaseBuilder(appCtx, MemoryDb::class.java, "moncchichi.db")
             .fallbackToDestructiveMigration()
