@@ -146,6 +146,7 @@ class MoncchichiBleService(
     val events: SharedFlow<MoncchichiEvent> = _events.asSharedFlow()
 
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
+    private val keepAliveWriteTimestamps = mutableMapOf<Lens, Long>()
     private val connectionOrder = mutableListOf<Lens>()
     private val hostHeartbeatSequence = IntArray(Lens.values().size)
     private val knownDevices = mutableMapOf<Lens, BluetoothDevice>()
@@ -348,6 +349,7 @@ class MoncchichiBleService(
             record.client.refreshDeviceCache()
             record.dispose()
         }
+        keepAliveWriteTimestamps.remove(lens)
         hostHeartbeatSequence[lens.ordinal] = 0
         knownDevices.remove(lens)
         bondFailureStreak.remove(lens)
@@ -455,6 +457,7 @@ class MoncchichiBleService(
         heartbeatJob = null
         clientRecords.values.forEach { it.dispose() }
         clientRecords.clear()
+        keepAliveWriteTimestamps.clear()
         hostHeartbeatSequence.fill(0)
         ALL_LENSES.forEach { updateLens(it) { LensStatus() } }
         if (connectionOrder.isNotEmpty()) {
@@ -558,7 +561,14 @@ class MoncchichiBleService(
         }
         jobs += scope.launch {
             client.keepAlivePrompts.collect { prompt ->
+                val now = System.currentTimeMillis()
+                val lastWrite = keepAliveWriteTimestamps[lens]
+                val elapsed = lastWrite?.let { now - it } ?: Long.MAX_VALUE
+                if (elapsed < KEEP_ALIVE_MIN_INTERVAL_MS) {
+                    delay(KEEP_ALIVE_MIN_INTERVAL_MS - elapsed)
+                }
                 val result = client.respondToKeepAlivePrompt(prompt)
+                keepAliveWriteTimestamps[lens] = System.currentTimeMillis()
                 handleKeepAliveResult(lens, result)
             }
         }
@@ -919,6 +929,7 @@ class MoncchichiBleService(
         record.client.refreshDeviceCache()
         record.dispose()
         clientRecords.remove(lens)
+        keepAliveWriteTimestamps.remove(lens)
         cancelReconnect(lens)
         updateLens(lens) { LensStatus() }
         if (connectionOrder.remove(lens)) {
@@ -1050,6 +1061,7 @@ class MoncchichiBleService(
         private const val RIGHT_BOND_INITIAL_DELAY_MS = 500L
         private const val RIGHT_BOND_RETRY_BASE_DELAY_MS = 10_000L
         private const val STALE_BOND_CLEAR_DELAY_MS = 500L
+        private const val KEEP_ALIVE_MIN_INTERVAL_MS = 1_000L
         private const val BOND_RECOVERY_GUARD_MS = 3_000L
         private const val UNBOND_REASON_REMOVED = 5
     }

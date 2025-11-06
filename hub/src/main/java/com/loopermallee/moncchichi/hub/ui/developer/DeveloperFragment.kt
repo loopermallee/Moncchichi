@@ -301,6 +301,9 @@ class DeveloperFragment : Fragment() {
     }
 
     private fun buildLensSummary(lens: BleTelemetryRepository.LensTelemetry): String {
+        if (lens.lastPowerUpdatedAt == null && lens.batteryPercent == null && lens.caseBatteryPercent == null) {
+            return getString(R.string.developer_value_waiting_battery)
+        }
         val battery = formatPercent(lens.batteryPercent)
         val case = formatPercent(lens.caseBatteryPercent)
         val charging = formatCharging(lens.charging)
@@ -321,9 +324,17 @@ class DeveloperFragment : Fragment() {
         )
         val lastAck = formatAckTimestamp(lens.lastAckAt)
         val latency = formatLatency(lens.lastAckLatencyMs)
-        val updated = lens.lastUpdated?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_missing)
+        val updated = lens.lastUpdatedAt?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_waiting)
+        val powerSource = formatOpcode(lens.lastPowerOpcode)
+        val powerTime = lens.lastPowerUpdatedAt?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_waiting)
+        val stateTime = lens.lastStateUpdatedAt?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_waiting)
         return buildString {
             append("Battery $battery / Case $case • Charging $charging")
+            append('\n')
+            append(
+                "State ${formatCaseState(lens.inCase)} • Door ${formatCaseDoor(lens.caseOpen)} • " +
+                    "Wearing ${formatWearing(lens.wearing)} • Silent ${formatSilent(lens.silentMode)}"
+            )
             append('\n')
             append("RSSI $rssi • Firmware $firmware")
             append('\n')
@@ -334,7 +345,7 @@ class DeveloperFragment : Fragment() {
             append(ackCounts)
             append(" • Latency $latency • Last $lastAck")
             append('\n')
-            append("Updated $updated")
+            append("Updated $updated • Power $powerSource @ $powerTime • State @ $stateTime")
         }
     }
 
@@ -342,7 +353,13 @@ class DeveloperFragment : Fragment() {
         val batterySource = describeSource(lens.batterySourceOpcode, lens.batteryUpdatedAt)
         val chargingSource = describeSource(lens.chargingSourceOpcode, lens.chargingUpdatedAt)
         val firmwareSource = describeSource(lens.firmwareSourceOpcode, lens.firmwareUpdatedAt)
-        val header = "Battery $batterySource • Charging $chargingSource • Firmware $firmwareSource"
+        val powerSource = describeSource(lens.lastPowerOpcode, lens.lastPowerUpdatedAt)
+        val stateSource = lens.lastStateUpdatedAt?.let { formatTimeOfDay(it) } ?: getString(R.string.developer_value_waiting)
+        val header = buildString {
+            append("Battery $batterySource • Charging $chargingSource • Firmware $firmwareSource")
+            append('\n')
+            append("Power $powerSource • State @ $stateSource")
+        }
         val history = lens.powerHistory.takeLast(POWER_HISTORY_PREVIEW).asReversed()
         if (history.isEmpty()) {
             return header
@@ -412,6 +429,12 @@ class DeveloperFragment : Fragment() {
         null -> getString(R.string.developer_value_missing)
     }
 
+    private fun formatCaseDoor(value: Boolean?): String = when (value) {
+        true -> getString(R.string.developer_value_case_open)
+        false -> getString(R.string.developer_value_case_closed)
+        null -> getString(R.string.developer_value_missing)
+    }
+
     private fun formatSilent(value: Boolean?): String = when (value) {
         true -> getString(R.string.developer_value_silent_on)
         false -> getString(R.string.developer_value_silent_off)
@@ -437,7 +460,7 @@ class DeveloperFragment : Fragment() {
     private fun formatPowerHex(hex: String): String = hex.chunked(2).joinToString(separator = " ") { it.uppercase() }
 
     private fun formatTimestamp(millis: Long): String =
-        android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", millis).toString()
+        android.text.format.DateFormat.format("HH:mm:ss", millis).toString()
 
     private fun formatTimeOfDay(millis: Long): String =
         android.text.format.DateFormat.format("HH:mm:ss", millis).toString()

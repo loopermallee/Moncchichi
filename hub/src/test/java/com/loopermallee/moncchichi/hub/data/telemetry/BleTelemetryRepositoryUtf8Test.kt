@@ -9,6 +9,7 @@ import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.db.TelemetrySnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -65,14 +66,10 @@ class BleTelemetryRepositoryUtf8Test {
         assertEquals("v1.6.3", snapshot.left.firmwareVersion)
 
         val vitalsEvents = events.await()
-        assertEquals(
-            listOf(
-                "[BLE][VITALS][L] battery=100%",
-                "[BLE][VITALS][L] not charging",
-                "[BLE][VITALS][L] FW v1.6.3",
-            ),
-            vitalsEvents,
-        )
+        assertEquals(3, vitalsEvents.size)
+        assertTrue(vitalsEvents[0].contains("[VITALS][L] battery=100%"))
+        assertTrue(vitalsEvents[1].contains("[VITALS][L] not charging"))
+        assertTrue(vitalsEvents[2].contains("[VITALS][L] fw=v1.6.3"))
         assertEquals(vitalsEvents, logs)
     }
 
@@ -133,11 +130,21 @@ class BleTelemetryRepositoryUtf8Test {
                 warmup = true,
             )
         )
+        repository.onAck(
+            MoncchichiBleService.AckEvent(
+                lens = Lens.LEFT,
+                opcode = 0x2C,
+                status = 0xC9,
+                success = true,
+                timestampMs = 45L,
+                warmup = false,
+            )
+        )
 
         val snapshot = repository.snapshot.value.left
-        assertEquals(30L, snapshot.lastAckAt)
-        assertEquals(2, snapshot.ackSuccessCount)
-        assertEquals(1, snapshot.ackFailureCount)
+        assertEquals(45L, snapshot.lastAckAt)
+        assertEquals(3, snapshot.ackSuccessCount)
+        assertEquals(0, snapshot.ackFailureCount)
         assertEquals(1, snapshot.ackWarmupCount)
     }
 }

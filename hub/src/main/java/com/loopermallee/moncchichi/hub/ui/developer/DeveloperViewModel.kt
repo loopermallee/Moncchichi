@@ -173,6 +173,7 @@ class DeveloperViewModel(
         appendLine("  Charging: ${lens.charging?.let { if (it) "yes" else "no" } ?: "–"}")
         appendLine("  Wearing: ${formatPresence(lens.wearing)}")
         appendLine("  Case state: ${formatCaseState(lens.inCase)}")
+        appendLine("  Case door: ${formatCaseDoor(lens.caseOpen)}")
         appendLine("  Silent mode: ${formatSilent(lens.silentMode)}")
         appendLine("  RSSI: ${lens.rssi?.let { "${it} dBm" } ?: "–"}")
         appendLine("  Firmware: ${lens.firmwareVersion ?: "–"}")
@@ -203,7 +204,9 @@ class DeveloperViewModel(
         appendLine("  Battery source: ${formatSource(lens.batterySourceOpcode, lens.batteryUpdatedAt)}")
         appendLine("  Charging source: ${formatSource(lens.chargingSourceOpcode, lens.chargingUpdatedAt)}")
         appendLine("  Firmware source: ${formatSource(lens.firmwareSourceOpcode, lens.firmwareUpdatedAt)}")
-        val lastUpdated = lens.lastUpdated?.let { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(it)) }
+        appendLine("  Last power frame: ${formatSource(lens.lastPowerOpcode, lens.lastPowerUpdatedAt)}")
+        appendLine("  Last state frame: ${lens.lastStateUpdatedAt?.let { formatTimeOfDay(it) } ?: "–"}")
+        val lastUpdated = lens.lastUpdatedAt?.let { formatTimeOfDay(it) }
         appendLine("  Last update: ${lastUpdated ?: "–"}")
         if (lens.powerHistory.isNotEmpty()) {
             appendLine("  Power frames:")
@@ -248,15 +251,19 @@ class DeveloperViewModel(
         null -> "–"
     }
 
+    private fun formatCaseDoor(value: Boolean?): String = when (value) {
+        true -> "open"
+        false -> "closed"
+        null -> "–"
+    }
+
     private fun formatSilent(value: Boolean?): String = when (value) {
         true -> "on"
         false -> "off"
         null -> "–"
     }
 
-    private fun formatAckTimestamp(value: Long?): String = value?.let {
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(it))
-    } ?: "–"
+    private fun formatAckTimestamp(value: Long?): String = value?.let { formatTimeOfDay(it) } ?: "–"
 
     private fun formatLatency(value: Long?): String = value?.let { "${it}ms" } ?: "–"
 
@@ -275,7 +282,7 @@ class DeveloperViewModel(
     private fun formatBondTimestamp(timestamp: Long?): String {
         if (timestamp == null) return "–"
         return runCatching {
-            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(timestamp))
+            SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(timestamp))
         }.getOrDefault("–")
     }
 

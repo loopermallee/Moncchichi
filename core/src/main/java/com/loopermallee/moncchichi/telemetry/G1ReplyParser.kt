@@ -18,6 +18,8 @@ object G1ReplyParser {
         val wearing: Boolean? = null,
         val inCradle: Boolean? = null,
         val charging: Boolean? = null,
+        val silentMode: Boolean? = null,
+        val caseOpen: Boolean? = null,
     )
 
     sealed class Parsed {
@@ -154,9 +156,10 @@ object G1ReplyParser {
 
         val flagsByte = frame.payload.getOrNull(0)?.toInt() ?: 0
         val hasStatusFlags = frame.payload.size >= 2
-        val wearing = hasStatusFlags && (flagsByte and 0x01) != 0
-        val inCradle = hasStatusFlags && (flagsByte and 0x02) != 0
-        val charging = hasStatusFlags && (flagsByte and 0x04) != 0
+        val wearing = hasStatusFlags && (flagsByte and 0x02) != 0
+        val inCradle = hasStatusFlags && (flagsByte and 0x01) != 0
+        val silent = hasStatusFlags && (flagsByte and 0x04) != 0
+        val caseOpen = hasStatusFlags && (flagsByte and 0x08) != 0
         val batteryIndex = if (hasStatusFlags) 1 else 0
         val battery = frame.payload.getOrNull(batteryIndex)?.toUnsignedInt()
 
@@ -169,7 +172,9 @@ object G1ReplyParser {
                 batteryPercent = battery,
                 wearing = if (hasStatusFlags) wearing else null,
                 inCradle = if (hasStatusFlags) inCradle else null,
-                charging = if (hasStatusFlags) charging else null,
+                charging = null,
+                silentMode = if (hasStatusFlags) silent else null,
+                caseOpen = if (hasStatusFlags) caseOpen else null,
             )
         )
 
@@ -188,6 +193,8 @@ object G1ReplyParser {
             wearing = partial.wearing ?: current.wearing,
             inCradle = partial.inCradle ?: current.inCradle,
             charging = partial.charging ?: current.charging,
+            silentMode = partial.silentMode ?: current.silentMode,
+            caseOpen = partial.caseOpen ?: current.caseOpen,
         )
         vitalsFlow.value = next
         return next
