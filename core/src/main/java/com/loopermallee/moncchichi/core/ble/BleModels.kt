@@ -10,4 +10,9 @@ data class DeviceVitals(
     val signalRssi: Int? = null,
     val deviceId: String? = null,
     val connectionState: String? = null,
+    val wearing: Boolean? = null,
+    val inCradle: Boolean? = null,
+    val charging: Boolean? = null,
+    val silentMode: Boolean? = null,
+    val caseOpen: Boolean? = null,
 )

@@ -185,6 +185,11 @@ object G1ReplyParser {
             signalRssi = next.signalRssi ?: current.signalRssi,
             deviceId = next.deviceId ?: current.deviceId,
             connectionState = next.connectionState ?: current.connectionState,
+            wearing = next.wearing ?: current.wearing,
+            inCradle = next.inCradle ?: current.inCradle,
+            charging = next.charging ?: current.charging,
+            silentMode = next.silentMode ?: current.silentMode,
+            caseOpen = next.caseOpen ?: current.caseOpen,
         )
     }
 }
