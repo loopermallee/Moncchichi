@@ -4,7 +4,7 @@ import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.loopermallee.moncchichi.client.G1ServiceCommon.GlassesStatus
-import com.loopermallee.moncchichi.hub.data.SettingsRepository
+import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.model.Repository
 import com.loopermallee.moncchichi.hub.ui.glasses.LensSide

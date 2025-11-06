@@ -2,7 +2,7 @@ package com.loopermallee.moncchichi.hub.ui.teleprompter
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import com.loopermallee.moncchichi.hub.data.SettingsRepository
+import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.model.Repository
 
