@@ -9,10 +9,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.loopermallee.moncchichi.hub.R
+import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
+import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperViewModel.DeveloperEvent
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
+import com.loopermallee.moncchichi.telemetry.MicStreamManager
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,6 +55,18 @@ class DeveloperViewModel(
     private val _snapshot = MutableStateFlow(telemetry.snapshot.value)
     val snapshot: StateFlow<BleTelemetryRepository.Snapshot> = _snapshot.asStateFlow()
 
+    private val _micStats = MutableStateFlow(telemetry.micStream.value)
+    val micStats: StateFlow<MicStreamManager.State> = _micStats.asStateFlow()
+
+    private val _dashboardStatus = MutableStateFlow(telemetry.dashboardStatus.value)
+    val dashboardStatus: StateFlow<DashboardDataEncoder.BurstStatus> = _dashboardStatus.asStateFlow()
+
+    private val _micEnabled = MutableStateFlow(SettingsRepository.isMicEnabled())
+    val micEnabled: StateFlow<Boolean> = _micEnabled.asStateFlow()
+
+    private val _voiceOnLift = MutableStateFlow(SettingsRepository.isVoiceWakeOnLiftEnabled())
+    val voiceOnLift: StateFlow<Boolean> = _voiceOnLift.asStateFlow()
+
     private val _events = MutableSharedFlow<DeveloperEvent>(extraBufferCapacity = 1)
     val events: SharedFlow<DeveloperEvent> = _events.asSharedFlow()
 
@@ -64,6 +79,16 @@ class DeveloperViewModel(
         viewModelScope.launch {
             telemetry.snapshot.collect { snap ->
                 _snapshot.value = snap
+            }
+        }
+        viewModelScope.launch {
+            telemetry.micStream.collect { stats ->
+                _micStats.value = stats
+            }
+        }
+        viewModelScope.launch {
+            telemetry.dashboardStatus.collect { status ->
+                _dashboardStatus.value = status
             }
         }
     }
@@ -100,6 +125,25 @@ class DeveloperViewModel(
             }
             _events.emit(DeveloperEvent.Notify(appContext.getString(message)))
         }
+    }
+
+    fun setMicEnabled(enabled: Boolean) {
+        if (_micEnabled.value == enabled) return
+        val previous = _micEnabled.value
+        _micEnabled.value = enabled
+        viewModelScope.launch {
+            val ok = telemetry.sendMicToggle(enabled)
+            if (!ok) {
+                _micEnabled.value = previous
+                _events.emit(DeveloperEvent.Notify(appContext.getString(R.string.developer_mic_toggle_failed)))
+            }
+        }
+    }
+
+    fun setVoiceOnLift(enabled: Boolean) {
+        if (_voiceOnLift.value == enabled) return
+        _voiceOnLift.value = enabled
+        SettingsRepository.setVoiceWakeOnLiftEnabled(enabled)
     }
 
     fun exportAllLogs(context: Context) {

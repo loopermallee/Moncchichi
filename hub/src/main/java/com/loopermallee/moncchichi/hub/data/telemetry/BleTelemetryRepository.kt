@@ -4,9 +4,12 @@ import android.bluetooth.BluetoothDevice
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
+import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
+import com.loopermallee.moncchichi.telemetry.MicStreamManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -131,6 +134,12 @@ class BleTelemetryRepository(
     )
     val uartText: SharedFlow<UartLine> = _uartText.asSharedFlow()
 
+    private val _micStream = MutableStateFlow(MicStreamManager.State())
+    val micStream: StateFlow<MicStreamManager.State> = _micStream.asStateFlow()
+
+    private val _dashboardStatus = MutableStateFlow(DashboardDataEncoder.BurstStatus())
+    val dashboardStatus: StateFlow<DashboardDataEncoder.BurstStatus> = _dashboardStatus.asStateFlow()
+
     data class UartLine(val lens: Lens, val text: String)
 
     data class StateChangedEvent(
@@ -229,6 +238,11 @@ class BleTelemetryRepository(
     private var frameJob: Job? = null
     private var stateJob: Job? = null
     private var ackJob: Job? = null
+    private var micStateJob: Job? = null
+    private var dashboardStatusJob: Job? = null
+    private var micStreamManager: MicStreamManager? = null
+    private var dashboardEncoder: DashboardDataEncoder? = null
+    private var boundService: MoncchichiBleService? = null
     private var lastConnected = false
 
     private val leftBuffer = ByteArrayOutputStream()
@@ -247,11 +261,25 @@ class BleTelemetryRepository(
         emitConsole("DIAG", null, "telemetry reset")
         clearBuffers()
         keepAliveSnapshots.clear()
+        micStreamManager?.reset()
+        _micStream.value = MicStreamManager.State()
+        _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
     }
 
     fun bindToService(service: MoncchichiBleService, scope: CoroutineScope) {
         unbind()
+        boundService = service
         lastConnected = service.state.value.left.isConnected || service.state.value.right.isConnected
+        dashboardEncoder = DashboardDataEncoder(
+            scope = scope,
+            writer = { payload, target -> service.send(payload, target) },
+        ).also { encoder ->
+            dashboardStatusJob = scope.launch {
+                encoder.status.collect { status ->
+                    _dashboardStatus.value = status
+                }
+            }
+        }
         frameJob = scope.launch {
             service.incoming.collect { frame ->
                 onFrame(frame.lens, frame.payload)
@@ -291,9 +319,50 @@ class BleTelemetryRepository(
         frameJob?.cancel(); frameJob = null
         stateJob?.cancel(); stateJob = null
         ackJob?.cancel(); ackJob = null
+        micStateJob?.cancel(); micStateJob = null
+        dashboardStatusJob?.cancel(); dashboardStatusJob = null
+        dashboardEncoder?.dispose(); dashboardEncoder = null
+        boundService = null
+        _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
+        micStreamManager?.reset()
+        _micStream.value = MicStreamManager.State()
         lastConnected = false
         clearBuffers()
         keepAliveSnapshots.clear()
+    }
+
+    suspend fun sendMicToggle(enabled: Boolean, lens: Lens = Lens.RIGHT): Boolean {
+        val service = boundService ?: return false
+        val timestamp = System.currentTimeMillis()
+        val ok = service.setMicEnabled(lens, enabled)
+        if (ok) {
+            SettingsRepository.setMicEnabled(enabled)
+            emitConsole("DIAG", lens, "Mic ${if (enabled) "enabled" else "disabled"}", timestamp)
+        } else {
+            emitConsole("DIAG", lens, "Mic toggle failed (${if (enabled) "enable" else "disable"})", timestamp)
+        }
+        return ok
+    }
+
+    fun enqueueDashboardBurst(
+        subcommand: Int,
+        payload: ByteArray,
+        target: MoncchichiBleService.Target = MoncchichiBleService.Target.Right,
+    ) {
+        val encoder = dashboardEncoder
+        if (encoder == null) {
+            emitConsole("DIAG", target.toLensOrNull(), "Dashboard encoder not ready", System.currentTimeMillis())
+            return
+        }
+        val chunkCount = encoder.estimateChunkCount(payload.size)
+        val timestamp = System.currentTimeMillis()
+        emitConsole(
+            "DIAG",
+            target.toLensOrNull(),
+            "Dashboard burst sub=0x%02X chunks=%d bytes=%d".format(Locale.US, subcommand and 0xFF, chunkCount, payload.size),
+            timestamp,
+        )
+        encoder.enqueue(subcommand, payload, target)
     }
 
     fun onFrame(lens: Lens, frame: ByteArray) {
@@ -363,6 +432,29 @@ class BleTelemetryRepository(
         if (missingOpcodeLog.add(opcode)) {
             emitConsole("DIAG", null, "Legacy fallback for ${opcode.toHexLabel()}", timestamp)
         }
+    }
+
+    private fun ensureMicStreamManager(): MicStreamManager {
+        val existing = micStreamManager
+        if (existing != null) {
+            if (micStateJob == null) {
+                micStateJob = persistenceScope.launch {
+                    existing.state.collect { state ->
+                        _micStream.value = state
+                    }
+                }
+            }
+            return existing
+        }
+        val manager = MicStreamManager()
+        micStreamManager = manager
+        micStateJob?.cancel()
+        micStateJob = persistenceScope.launch {
+            manager.state.collect { state ->
+                _micStream.value = state
+            }
+        }
+        return manager
     }
 
     private fun applyStateFlags(
@@ -507,9 +599,21 @@ class BleTelemetryRepository(
     }
 
     private fun handleAudioPacket(event: BleTelemetryParser.TelemetryEvent.AudioPacketEvent) {
-        val sequence = event.sequence?.toString() ?: "?"
-        val size = event.payload.size
-        emitConsole("DIAG", event.lens, "Audio packet seq=${sequence} size=${size}B", event.timestampMs)
+        val sequence = event.sequence
+        if (sequence == null) {
+            emitConsole("DIAG", event.lens, "Audio packet missing sequence", event.timestampMs)
+            return
+        }
+        val manager = ensureMicStreamManager()
+        val gapsAdded = manager.record(sequence, event.timestampMs)
+        if (gapsAdded > 0) {
+            emitConsole(
+                "DIAG",
+                event.lens,
+                "Audio stream gap +${gapsAdded} (seq=${sequence})",
+                event.timestampMs,
+            )
+        }
     }
 
     private fun handleF5Event(event: BleTelemetryParser.TelemetryEvent.F5Event) {
@@ -1214,6 +1318,12 @@ class BleTelemetryRepository(
             firmwareVersion = firmwareVersion,
             notes = notes,
         )
+
+    private fun MoncchichiBleService.Target.toLensOrNull(): Lens? = when (this) {
+        MoncchichiBleService.Target.Left -> Lens.LEFT
+        MoncchichiBleService.Target.Right -> Lens.RIGHT
+        MoncchichiBleService.Target.Both -> null
+    }
 
     companion object {
         private const val BATTERY_OPCODE = 0x2C
