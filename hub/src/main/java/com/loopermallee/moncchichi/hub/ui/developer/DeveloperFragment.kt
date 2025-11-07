@@ -24,6 +24,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.di.AppLocator
@@ -31,6 +32,8 @@ import com.loopermallee.moncchichi.hub.handlers.SystemEventHandler
 import com.loopermallee.moncchichi.hub.util.LogFormatter
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
 import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
+import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
+import java.util.Locale
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -97,6 +100,15 @@ class DeveloperFragment : Fragment() {
         val rightSources = view.findViewById<TextView>(R.id.text_glasses_right_sources)
         val leftPowerButton = view.findViewById<MaterialButton>(R.id.button_left_power_history)
         val rightPowerButton = view.findViewById<MaterialButton>(R.id.button_right_power_history)
+        val micSwitch = view.findViewById<MaterialSwitch>(R.id.switch_mic_enabled)
+        val voiceLiftSwitch = view.findViewById<MaterialSwitch>(R.id.switch_voice_on_lift)
+        val audioRateView = view.findViewById<TextView>(R.id.text_audio_rx_rate)
+        val audioGapsView = view.findViewById<TextView>(R.id.text_audio_gaps)
+        val audioSeqView = view.findViewById<TextView>(R.id.text_audio_last_seq)
+        val dashboardStatusView = view.findViewById<TextView>(R.id.text_dashboard_status)
+        val firmwareLeftView = view.findViewById<TextView>(R.id.text_firmware_left)
+        val firmwareRightView = view.findViewById<TextView>(R.id.text_firmware_right)
+        val firmwareNotesView = view.findViewById<TextView>(R.id.text_firmware_notes)
 
         var autoScrollEnabled = true
         var latestSnapshot: BleTelemetryRepository.Snapshot? = null
@@ -127,6 +139,17 @@ class DeveloperFragment : Fragment() {
         rightPowerButton.setOnClickListener {
             val snapshot = latestSnapshot ?: return@setOnClickListener
             showPowerHistoryDialog(getString(R.string.developer_section_right), snapshot.right.powerHistory)
+        }
+
+        var suppressMicListener = false
+        micSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (suppressMicListener) return@setOnCheckedChangeListener
+            viewModel.setMicEnabled(isChecked)
+        }
+        var suppressVoiceListener = false
+        voiceLiftSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (suppressVoiceListener) return@setOnCheckedChangeListener
+            viewModel.setVoiceOnLift(isChecked)
         }
 
         toggleGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
@@ -203,6 +226,82 @@ class DeveloperFragment : Fragment() {
                     leftSources.text = buildLensSources(snapshot.left)
                     rightSummary.text = buildLensSummary(snapshot.right)
                     rightSources.text = buildLensSources(snapshot.right)
+
+                    val firmwareLeft = snapshot.left.firmwareVersion ?: getString(R.string.developer_firmware_placeholder)
+                    val firmwareRight = snapshot.right.firmwareVersion ?: getString(R.string.developer_firmware_placeholder)
+                    val firmwareNotes = snapshot.left.notes ?: snapshot.right.notes
+                    firmwareLeftView.text = getString(R.string.developer_firmware_left, firmwareLeft)
+                    firmwareRightView.text = getString(R.string.developer_firmware_right, firmwareRight)
+                    firmwareNotesView.text = getString(
+                        R.string.developer_firmware_notes,
+                        firmwareNotes ?: getString(R.string.developer_firmware_placeholder),
+                    )
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.micEnabled.collectLatest { enabled ->
+                    suppressMicListener = true
+                    micSwitch.isChecked = enabled
+                    suppressMicListener = false
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.voiceOnLift.collectLatest { enabled ->
+                    suppressVoiceListener = true
+                    voiceLiftSwitch.isChecked = enabled
+                    suppressVoiceListener = false
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.micStats.collectLatest { stats ->
+                    if (stats.lastSequence == null) {
+                        audioRateView.text = getString(R.string.developer_audio_rx_placeholder)
+                        audioGapsView.text = getString(R.string.developer_audio_gaps_placeholder)
+                        audioSeqView.text = getString(R.string.developer_audio_last_seq_placeholder)
+                    } else {
+                        val rate = String.format(Locale.US, "%.1f", stats.rxRate)
+                        audioRateView.text = getString(R.string.developer_audio_rx, rate)
+                        audioGapsView.text = getString(R.string.developer_audio_gaps, stats.gaps)
+                        audioSeqView.text = getString(R.string.developer_audio_last_seq, stats.lastSequence)
+                    }
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.dashboardStatus.collectLatest { status ->
+                    val text = when {
+                        status.active -> getString(
+                            R.string.developer_dashboard_status_active,
+                            status.sentChunks,
+                            status.totalChunks,
+                        )
+                        status.result is DashboardDataEncoder.BurstStatus.Result.Success -> {
+                            val sequenceLabel = status.lastSequence?.let { String.format(Locale.US, "0x%02X", it and 0xFF) }
+                                ?: getString(R.string.developer_firmware_placeholder)
+                            getString(
+                                R.string.developer_dashboard_status_success,
+                                status.totalChunks,
+                                sequenceLabel,
+                            )
+                        }
+                        status.result is DashboardDataEncoder.BurstStatus.Result.Failure -> getString(
+                            R.string.developer_dashboard_status_failure,
+                            status.sentChunks,
+                        )
+                        else -> getString(R.string.developer_dashboard_status_idle)
+                    }
+                    dashboardStatusView.text = text
                 }
             }
         }

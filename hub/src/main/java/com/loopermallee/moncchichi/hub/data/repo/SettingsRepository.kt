@@ -9,6 +9,8 @@ private const val PREF_FILE_NAME = "moncchichi_settings"
 private const val KEY_TELEPROMPTER_TEXT = "teleprompter:text"
 private const val KEY_TELEPROMPTER_SPEED = "teleprompter:speed"
 private const val KEY_TELEPROMPTER_MIRROR = "teleprompter:mirror"
+private const val KEY_MIC_ENABLED = "mic_enabled"
+private const val KEY_VOICE_WAKE_ON_LIFT = "voice_wake_on_lift"
 private const val DEFAULT_SPEED = 48
 
 object SettingsRepository {
@@ -36,5 +38,17 @@ object SettingsRepository {
 
     fun setTeleprompterMirror(value: Boolean) {
         prefs.edit().putBoolean(KEY_TELEPROMPTER_MIRROR, value).apply()
+    }
+
+    fun isMicEnabled(): Boolean = prefs.getBoolean(KEY_MIC_ENABLED, false)
+
+    fun setMicEnabled(value: Boolean) {
+        prefs.edit().putBoolean(KEY_MIC_ENABLED, value).apply()
+    }
+
+    fun isVoiceWakeOnLiftEnabled(): Boolean = prefs.getBoolean(KEY_VOICE_WAKE_ON_LIFT, false)
+
+    fun setVoiceWakeOnLiftEnabled(value: Boolean) {
+        prefs.edit().putBoolean(KEY_VOICE_WAKE_ON_LIFT, value).apply()
     }
 }
