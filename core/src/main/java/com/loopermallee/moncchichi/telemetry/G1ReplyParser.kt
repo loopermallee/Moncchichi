@@ -2,6 +2,7 @@ package com.loopermallee.moncchichi.telemetry
 
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlin.experimental.and
 import kotlin.math.min
 import kotlin.text.Charsets
 
@@ -22,6 +23,14 @@ object G1ReplyParser {
         val silentMode: Boolean? = null,
         val caseOpen: Boolean? = null,
     )
+
+    private const val BIN_MAGIC: Byte = 0xF1.toByte()
+    private const val T_BATTERY: Byte = 0x10
+    private const val T_CASE_BATTERY: Byte = 0x12
+    private const val T_FIRMWARE: Byte = 0x11
+    private const val T_SIGNAL: Byte = 0x13
+    private const val T_DEVICE_ID: Byte = 0x14
+    private const val T_CONNECTION_STATE: Byte = 0x15
 
     data class StateFlags(
         val wearing: Boolean,
@@ -78,6 +87,70 @@ object G1ReplyParser {
 
     fun resetVitals() {
         vitalsFlow.value = DeviceVitals()
+    }
+
+    fun parse(bytes: ByteArray): DeviceVitals? {
+        val vitals = extractLegacyVitals(bytes) ?: return null
+        updateVitals(vitals)
+        return vitals
+    }
+
+    fun parse(bytes: ByteArray, logger: (String) -> Unit) {
+        val text = bytes.toString(Charsets.UTF_8)
+            .trim { it <= ' ' || it == '\u0000' }
+
+        when {
+            text.startsWith("+i") -> {
+                logger("[DEVICE] Keep-alive OK")
+            }
+
+            text.startsWith("+b") -> {
+                val level = bytes.getOrNull(2)?.toUnsignedInt()
+                if (level != null && level in 0..100) {
+                    updateVitals(DeviceVitals(batteryPercent = level))
+                    logger("[DEVICE] Battery = $level %")
+                } else {
+                    logger("[DEVICE] Battery packet malformed: $text")
+                }
+            }
+
+            text.startsWith("+c") -> {
+                val level = bytes.getOrNull(2)?.toUnsignedInt()
+                if (level != null && level in 0..100) {
+                    updateVitals(DeviceVitals(caseBatteryPercent = level))
+                    logger("[DEVICE] Case battery = $level %")
+                } else {
+                    logger("[DEVICE] Case packet malformed: $text")
+                }
+            }
+
+            text.startsWith("+v") -> {
+                val fw = text.removePrefix("+v").trim()
+                if (fw.isNotBlank()) {
+                    updateVitals(DeviceVitals(firmwareVersion = fw))
+                }
+                logger("[DEVICE] Firmware = ${fw.ifBlank { "unknown" }}")
+            }
+
+            else -> {
+                val parsed = extractLegacyVitals(bytes)
+                if (parsed != null) {
+                    updateVitals(parsed)
+                    logger(
+                        "[DEVICE] " + buildString {
+                            parsed.batteryPercent?.let { append("Battery $it% ") }
+                            parsed.caseBatteryPercent?.let { append("Case $it% ") }
+                            parsed.firmwareVersion?.let { append("FW $it ") }
+                            parsed.signalRssi?.let { append("RSSI $it ") }
+                            parsed.deviceId?.let { append("ID $it ") }
+                            parsed.connectionState?.let { append("State ${it.uppercase()} ") }
+                        }.trim()
+                    )
+                } else {
+                    logger("[DEVICE] Unknown reply: $text (${bytes.toHexString()})")
+                }
+            }
+        }
     }
 
     fun parseNotify(bytes: ByteArray): Parsed? {
@@ -327,6 +400,191 @@ object G1ReplyParser {
         return primary to case
     }
 
+    private fun extractLegacyVitals(bytes: ByteArray): DeviceVitals? {
+        if (bytes.isEmpty()) return null
+        val text = bytes.toString(Charsets.UTF_8).trim()
+
+        var result: DeviceVitals? = null
+        result = mergeLegacyVitals(result, parseLegacyText(text))
+        result = mergeLegacyVitals(result, parseLegacyJson(text))
+        result = mergeLegacyVitals(result, parseLegacyKeyValue(text))
+        result = mergeLegacyVitals(result, parseLegacyBinary(bytes))
+
+        return result
+    }
+
+    private fun parseLegacyText(text: String): DeviceVitals? {
+        val battery = Regex("""\\b(BAT|Battery)\\s*[:=]\\s*(\\d{1,3})\\b""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(2)?.toIntOrNull()?.coerceIn(0, 100)
+        val case = Regex("""\\b(CASE|Cradle)\\s*[:=]\\s*(\\d{1,3})\\b""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(2)?.toIntOrNull()?.coerceIn(0, 100)
+        val firmware = Regex("""\\b(FW|Firmware)\\s*[:=]\\s*([A-Za-z0-9\\.\-_]+)\\b""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(2)
+        val rssi = Regex("""\\b(RSSI|Signal)\\s*[:=]\\s*(-?\\d{1,3})""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(2)?.toIntOrNull()
+        val id = Regex("""\\b(ID|Device|DEV)\\s*[:=]\\s*([A-Za-z0-9\-_:]+)""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(2)
+        val state = Regex("""\\b(State|Status)\\s*[:=]\\s*([A-Za-z]+)""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(2)
+
+        return if (listOf(battery, case, firmware, rssi, id, state).any { it != null }) {
+            DeviceVitals(
+                batteryPercent = battery,
+                caseBatteryPercent = case,
+                firmwareVersion = firmware?.ifBlank { null },
+                signalRssi = rssi,
+                deviceId = id?.ifBlank { null },
+                connectionState = state?.uppercase(),
+            )
+        } else {
+            null
+        }
+    }
+
+    private fun parseLegacyJson(text: String): DeviceVitals? {
+        if (!text.startsWith("{") || !text.endsWith("}")) return null
+
+        val battery = Regex(""""bat"\\s*:\\s*(\\d{1,3})""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 100)
+        val case = Regex(""""case"\\s*:\\s*(\\d{1,3})"""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 100)
+        val firmware = Regex(""""fw"\\s*:\\s*"([^"]+)"""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(1)
+        val rssi = Regex(""""rssi"\\s*:\\s*(-?\\d{1,3})"""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val id = Regex(""""id"\\s*:\\s*"([^"]+)"""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(1)
+        val state = Regex(""""state"\\s*:\\s*"([^"]+)"""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.getOrNull(1)
+
+        return if (listOf(battery, case, firmware, rssi, id, state).any { it != null }) {
+            DeviceVitals(
+                batteryPercent = battery,
+                caseBatteryPercent = case,
+                firmwareVersion = firmware?.ifBlank { null },
+                signalRssi = rssi,
+                deviceId = id?.ifBlank { null },
+                connectionState = state?.uppercase(),
+            )
+        } else {
+            null
+        }
+    }
+
+    private fun parseLegacyBinary(bytes: ByteArray): DeviceVitals? {
+        if (bytes.size < 3 || bytes[0] != BIN_MAGIC) return null
+
+        var index = 1
+        var battery: Int? = null
+        var case: Int? = null
+        var firmware: String? = null
+        var rssi: Int? = null
+        var id: String? = null
+        var state: String? = null
+
+        while (index + 1 < bytes.size) {
+            val tag = bytes[index]
+            val length = (bytes[index + 1] and 0xFF.toByte()).toInt()
+            val start = index + 2
+            val end = start + length
+            if (end > bytes.size) break
+            val payload = bytes.copyOfRange(start, end)
+
+            when (tag) {
+                T_BATTERY -> if (payload.isNotEmpty()) {
+                    battery = (payload[0].toInt() and 0xFF).coerceIn(0, 100)
+                }
+
+                T_CASE_BATTERY -> if (payload.isNotEmpty()) {
+                    case = (payload[0].toInt() and 0xFF).coerceIn(0, 100)
+                }
+
+                T_FIRMWARE -> firmware = payload.toString(Charsets.UTF_8)
+                T_SIGNAL -> if (payload.isNotEmpty()) {
+                    rssi = payload[0].toInt()
+                }
+
+                T_DEVICE_ID -> id = payload.toString(Charsets.UTF_8)
+                T_CONNECTION_STATE -> state = payload.toString(Charsets.UTF_8)
+            }
+            index = end
+        }
+
+        return if (listOf(battery, case, firmware, rssi, id, state).any { it != null }) {
+            DeviceVitals(
+                batteryPercent = battery,
+                caseBatteryPercent = case,
+                firmwareVersion = firmware?.ifBlank { null },
+                signalRssi = rssi,
+                deviceId = id?.ifBlank { null },
+                connectionState = state?.ifBlank { null },
+            )
+        } else {
+            null
+        }
+    }
+
+    private fun parseLegacyKeyValue(text: String): DeviceVitals? {
+        if (text.isBlank()) return null
+        val entries = text.split(',', ';', '|')
+            .map { it.trim() }
+            .filter { '=' in it }
+        if (entries.isEmpty()) return null
+
+        var battery: Int? = null
+        var case: Int? = null
+        var firmware: String? = null
+        var rssi: Int? = null
+        var id: String? = null
+        var state: String? = null
+
+        entries.forEach { entry ->
+            val parts = entry.split('=', limit = 2)
+            if (parts.size != 2) return@forEach
+            val key = parts[0].trim().lowercase()
+            val value = parts[1].trim()
+            when {
+                key.contains("case") -> case = value.toIntOrNull()?.coerceIn(0, 100)
+                key.contains("bat") -> battery = value.toIntOrNull()?.coerceIn(0, 100)
+                key.contains("fw") || key.contains("firm") -> firmware = value.ifBlank { null }
+                key.contains("rssi") || key.contains("signal") -> rssi = value.toIntOrNull()
+                key == "id" || key.contains("device") -> id = value.ifBlank { null }
+                key.contains("state") || key.contains("status") -> state = value.uppercase()
+            }
+        }
+
+        return if (listOf(battery, case, firmware, rssi, id, state).any { it != null }) {
+            DeviceVitals(
+                batteryPercent = battery,
+                caseBatteryPercent = case,
+                firmwareVersion = firmware,
+                signalRssi = rssi,
+                deviceId = id,
+                connectionState = state,
+            )
+        } else {
+            null
+        }
+    }
+
+    private fun mergeLegacyVitals(current: DeviceVitals?, next: DeviceVitals?): DeviceVitals? {
+        if (current == null) return next
+        if (next == null) return current
+        return DeviceVitals(
+            batteryPercent = next.batteryPercent ?: current.batteryPercent,
+            caseBatteryPercent = next.caseBatteryPercent ?: current.caseBatteryPercent,
+            firmwareVersion = next.firmwareVersion ?: current.firmwareVersion,
+            signalRssi = next.signalRssi ?: current.signalRssi,
+            deviceId = next.deviceId ?: current.deviceId,
+            connectionState = next.connectionState ?: current.connectionState,
+            wearing = next.wearing ?: current.wearing,
+            inCradle = next.inCradle ?: current.inCradle,
+            charging = next.charging ?: current.charging,
+            silentMode = next.silentMode ?: current.silentMode,
+            caseOpen = next.caseOpen ?: current.caseOpen,
+        )
+    }
+
     private fun parseLittleEndianUInt(bytes: ByteArray, start: Int, length: Int): Long? {
         if (start < 0 || length <= 0) return null
         var value = 0L
@@ -413,6 +671,10 @@ object G1ReplyParser {
     }
 
     private fun Byte.toUnsignedInt(): Int = this.toUByte().toInt()
+
+    private fun ByteArray.toHexString(): String = joinToString(separator = "") { byte ->
+        "%02X".format(byte.toInt() and 0xFF)
+    }
 
     data class NotifyFrame(
         val opcode: Int,

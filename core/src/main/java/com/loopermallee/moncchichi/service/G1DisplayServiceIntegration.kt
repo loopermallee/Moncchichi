@@ -3,7 +3,7 @@ package com.loopermallee.moncchichi.service
 import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import com.loopermallee.moncchichi.ble.G1BleUartClient
-import com.loopermallee.moncchichi.ble.G1ReplyParser
+import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch

@@ -17,7 +17,7 @@ import com.loopermallee.moncchichi.core.BmpPacketBuilder
 import com.loopermallee.moncchichi.core.SendTextPacketBuilder
 import com.loopermallee.moncchichi.core.text.TextPaginator
 import com.loopermallee.moncchichi.core.ble.DeviceVitals
-import com.loopermallee.moncchichi.core.ble.G1ReplyParser
+import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.telemetry.G1TelemetryEvent
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
