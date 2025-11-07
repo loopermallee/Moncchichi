@@ -26,7 +26,6 @@ class TeleprompterFragment : Fragment() {
 
     private val viewModel: TeleprompterViewModel by viewModels {
         TeleprompterVmFactory(
-            AppLocator.settings,
             AppLocator.repository,
             AppLocator.memory,
         )

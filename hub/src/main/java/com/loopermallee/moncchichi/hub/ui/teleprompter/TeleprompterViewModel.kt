@@ -33,16 +33,15 @@ private const val MAX_SPEED = 200f
 private const val SPEED_STEP = 8f
 
 class TeleprompterViewModel(
-    private val settingsRepository: SettingsRepository,
     private val repository: Repository,
     private val memoryRepository: MemoryRepository,
 ) : ViewModel() {
 
     data class TeleprompterUiState(
         val text: String = "",
-        val speed: Float = settingsRepository.teleprompterSpeed(),
+        val speed: Float = SettingsRepository.getTeleprompterSpeed(),
         val isPlaying: Boolean = false,
-        val isMirror: Boolean = settingsRepository.teleprompterMirror(),
+        val isMirror: Boolean = SettingsRepository.getTeleprompterMirror(),
         val isHudSyncEnabled: Boolean = false,
         val visibleLine: String = "",
         val hudStatusMessage: String = "HUD sync idle",
@@ -55,9 +54,9 @@ class TeleprompterViewModel(
 
     private val _uiState = MutableStateFlow(
         TeleprompterUiState(
-            text = settingsRepository.teleprompterText(),
-            speed = settingsRepository.teleprompterSpeed(),
-            isMirror = settingsRepository.teleprompterMirror(),
+            text = SettingsRepository.getTeleprompterText(),
+            speed = SettingsRepository.getTeleprompterSpeed(),
+            isMirror = SettingsRepository.getTeleprompterMirror(),
         )
     )
     val uiState: StateFlow<TeleprompterUiState> = _uiState.asStateFlow()
@@ -82,7 +81,7 @@ class TeleprompterViewModel(
 
     fun updateText(newText: String) {
         _uiState.update { it.copy(text = newText) }
-        settingsRepository.updateTeleprompterText(newText)
+        SettingsRepository.setTeleprompterText(newText)
         resetScroll()
         updateVisibleLine(newText.lineSequence().firstOrNull()?.trim().orEmpty())
     }
@@ -112,12 +111,12 @@ class TeleprompterViewModel(
     fun setSpeed(value: Float) {
         val clamped = min(MAX_SPEED, max(MIN_SPEED, value))
         _uiState.update { it.copy(speed = clamped) }
-        settingsRepository.updateTeleprompterSpeed(clamped)
+        SettingsRepository.setTeleprompterSpeed(clamped)
     }
 
     fun toggleMirror(enabled: Boolean) {
         _uiState.update { it.copy(isMirror = enabled) }
-        settingsRepository.updateTeleprompterMirror(enabled)
+        SettingsRepository.setTeleprompterMirror(enabled)
     }
 
     fun toggleHudSync(enabled: Boolean) {
