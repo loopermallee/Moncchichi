@@ -1,61 +1,78 @@
-# CONTEXT_ENGINEERING.md v1.4
-Extends v1.3. Locks parser architecture + plumbing so Codex can implement safely.
+CONTEXT ENGINEERING UPDATE — v4.4 Multi-Source Audio Routing Layer
+Moncchichi Hub Context Engineering v4.4
+
+Extends v4.3. Introduces multi-source audio routing between Glasses, Wearable, and Phone.
 
 ────────────────────────────────────────
-§1. Parser Coexistence & Migration Plan
+SECTION 1 – AUDIO ROUTING ARCHITECTURE
 ────────────────────────────────────────
-• Introduce ProtocolMap + BleTelemetryParser alongside the legacy when{} in BleTelemetryRepository.
-• Route initial set: 0x2B, 0x2C/01, 0x37, 0xF1, 0xF5.
-• Unknown or not-yet-migrated opcodes fall back to legacy when{}.
-• Goal: migrate ≥90% before removing legacy path.
+• All audio flows pass through MicStreamManager (input) and AudioOutManager (output).
+• SettingsRepository persists preferred MicSource & AudioSink.
+• AppLocator provides singletons for both managers.
+• Each manager exposes a StateFlow for UI updates (rx rate, active sink label, errors).
+• BLE G1 remains default; other sources/sinks activated on demand.
 
 ────────────────────────────────────────
-§2. ProtocolMap Contract
+SECTION 2 – MIC INPUT ROUTING
 ────────────────────────────────────────
-• Map<Opcode, Handler>, where Handler = (lens, payload, ts) → List<TelemetryEvent>.
-• Handlers call canonical parsing helpers in G1ReplyParser (telemetry package).
-• Events: StateEvent, BatteryEvent, UptimeEvent, AudioPacketEvent(seq, data), F5Event(code, meta).
-• Emit console via §4 tags ([STATE], [VITALS], [GESTURE], [DIAG]); throttle ≤3/s.
+Order of preference → GLASSES (BLE 0xF1 stream) > WEARABLE (Bluetooth SCO) > PHONE (AudioRecord 16 kHz mono).
+Switch within 200 ms on source change or disconnect.
+Apply AEC when input and output both Phone.
+Stats: rxRate (pkts/s) + gaps count → Developer Console tag [DIAG][AUDIOIN].
 
 ────────────────────────────────────────
-§3. BleTelemetryParser Contract
+SECTION 3 – AUDIO OUTPUT ROUTING
 ────────────────────────────────────────
-• Input: frame(opcode, subOpcode?, lens, payload, ts).
-• Look up handler in ProtocolMap; emit typed events via callbacks to Repo.
-• Return boolean handled; Repo uses legacy when{} if false.
+Sink priority → GLASSES (HUD BLE speaker) > WEARABLE (A2DP) > PHONE (AudioTrack).
+Prebuffer 100–200 ms and cross-fade on switch.
+Playback uses Flow with single writer model.
+Console tag [DIAG][AUDIOOUT].
 
 ────────────────────────────────────────
-§4. Canonical G1ReplyParser
+SECTION 4 – SETTINGS CONTRACT
 ────────────────────────────────────────
-• Location: core/.../telemetry/G1ReplyParser (authoritative).
-• Old file in core/.../core/ble is deprecated → delegate or remove next patch.
-• Helpers: parseState(0x2B codes), parseBattery(0x2C/01), parseUptime(0x37), parseF5(code-range), parseFirmwareAscii([0x23,0x74]).
-(Use modular routing style similar to “handler flows” from your refs.  [oai_citation:8‡ajay-bhargava-clairvoyant-8a5edab282632443.txt](file-service://file-Po5GeTwpn9ivKUHHkfDTpo)  [oai_citation:9‡ajay-bhargava-clairvoyant-8a5edab282632443.txt](file-service://file-Po5GeTwpn9ivKUHHkfDTpo))
+Keys: preferred_mic_source, preferred_audio_sink.
+Enums MicSource & AudioSink live in audio/AudioRouting.kt.
+Values persist in SharedPreferences and are observed as Flow.
+Defaults → GLASSES/GLASSES.
+Auto-restore on launch and BLE reconnect.
 
 ────────────────────────────────────────
-§5. MicStreamManager (0xF1) & Mic Toggle (0x0E)
+SECTION 5 – UI / USER WORKFLOW
 ────────────────────────────────────────
-• Lives inside BleTelemetryRepository; created on first 0xF1.
-• Tracks: lastSeq, rxRate (packets/s), gaps; exposes State{rxRate,gaps,lastSeq}.
-• sendMicToggle(enable): write 0x0E; expect 0xC9; persist Settings.mic_enabled; [DIAG] single-line log.
-(Wake/audio managers with clean callbacks mirror patterns in wake systems.  [oai_citation:10‡picovoice-porcupine-8a5edab282632443.txt](file-service://file-3F7UzxX2y7CrSx3JdBsPJB)  [oai_citation:11‡picovoice-porcupine-8a5edab282632443.txt](file-service://file-3F7UzxX2y7CrSx3JdBsPJB))
+VoiceAudioSettingsFragment lists two toggle groups (Input, Output).
+Selecting a new option updates SettingsRepository and restarts managers.
+BLE status affects availability of “Glasses” options.
+Fallbacks occur silently with console note [DIAG][ROUTE].
 
 ────────────────────────────────────────
-§6. DashboardDataEncoder (0x06 07–1C)
+SECTION 6 – PERMISSIONS & LIFECYCLE
 ────────────────────────────────────────
-• Command-path utility to chunk >180B payloads into ≈189B packets; add sequence header; small inter-packet delay.
-• Repo enqueues bursts; single concise “[DIAG] Dashboard burst …” per send.
+Request RECORD_AUDIO & BLUETOOTH_CONNECT when needed.
+Handle permission denial with toast + fallback Phone mic.
+Stop all streams on fragment destroy or BLE service stop.
+Lifecycle binding follows existing HubService patterns.
 
 ────────────────────────────────────────
-§7. Developer UI & Settings Contract
+SECTION 7 – EXPECTED BEHAVIOUR / TESTS
 ────────────────────────────────────────
-• Settings: mic_enabled(bool), voice_wake_on_lift(bool).
-• Developer screen: toggles (mic/voice-lift), cards: audio stats (rx,gaps), dashboard burst status, firmware info.
-• Placeholders “—/Waiting…” if data not ready.
+• BLE connected → Mic/Sink = Glasses.
+• BLE drop → fallback Wearable → Phone.
+• Manual toggle re-routes ≤ 200 ms.
+• Prefs persist across sessions.
+• Reconnection restores user selection or defaults.
 
 ────────────────────────────────────────
-§8. Expected Behaviour Snapshot
+SECTION 8 – EXTENSIBILITY
 ────────────────────────────────────────
-• Map-driven handlers process migrated opcodes; legacy path covers the rest.
-• No UI regressions; telemetry stable; console format per v1.1 §4.
-• Mic toggle persists + logs; audio stats live-update; dashboard bursts are queued and throttled.
+Future hooks → multi-channel beamforming input or spatial TTS.
+Both MicStreamManager and AudioOutManager expose public switchSource()/switchSink() for AI assistant integration.
+
+────────────────────────────────────────
+SECTION 9 – LOG FORMAT
+────────────────────────────────────────
+Follow v1.1 §4 console schema →
+[AUDIOIN] Using Phone mic (16 kHz)
+[AUDIOOUT] Routing to Glasses HUD
+Throttled ≤ 3/s.
+---
