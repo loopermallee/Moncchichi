@@ -4,8 +4,9 @@ import android.bluetooth.BluetoothDevice
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
-import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
+import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
+import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -26,7 +27,6 @@ import java.util.Locale
 import java.util.regex.Pattern
 import kotlin.collections.buildList
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.text.Charsets
 
 /**
@@ -37,6 +37,9 @@ class BleTelemetryRepository(
     private val persistenceScope: CoroutineScope,
     private val logger: (String) -> Unit = {},
 ) {
+
+    private val telemetryParser = BleTelemetryParser()
+    private val missingOpcodeLog = mutableSetOf<Int>()
 
     data class LensTelemetry(
         val batteryPercent: Int? = null,
@@ -296,6 +299,13 @@ class BleTelemetryRepository(
     fun onFrame(lens: Lens, frame: ByteArray) {
         if (frame.isEmpty()) return
         val opcode = frame.first().toInt() and 0xFF
+        val timestamp = System.currentTimeMillis()
+        val parseResult = telemetryParser.parse(lens, frame, timestamp) { event ->
+            handleTelemetryEvent(event)
+        }
+        if (parseResult.eventsEmitted) {
+            return
+        }
         when (val parsed = G1ReplyParser.parseNotify(frame)) {
             is G1ReplyParser.Parsed.Vitals -> {
                 handleParsedVitals(lens, parsed.vitals, frame)
@@ -305,6 +315,9 @@ class BleTelemetryRepository(
             }
             is G1ReplyParser.Parsed.Ack -> return
             else -> Unit
+        }
+        if (!parseResult.handlerFound) {
+            logParserFallback(opcode, timestamp)
         }
         when (opcode) {
             BATTERY_OPCODE, STATUS_OPCODE -> handleBattery(lens, frame)
@@ -322,6 +335,201 @@ class BleTelemetryRepository(
                     }
                 }
             }
+        }
+    }
+
+    private fun handleTelemetryEvent(event: BleTelemetryParser.TelemetryEvent) {
+        when (event) {
+            is BleTelemetryParser.TelemetryEvent.StateEvent -> {
+                val hex = event.rawFrame.toHex()
+                applyStateFlags(event.lens, event.flags, event.timestampMs, hex)
+            }
+            is BleTelemetryParser.TelemetryEvent.BatteryEvent -> {
+                applyBatteryEvent(event)
+            }
+            is BleTelemetryParser.TelemetryEvent.UptimeEvent -> {
+                applyUptimeEvent(event)
+            }
+            is BleTelemetryParser.TelemetryEvent.AudioPacketEvent -> {
+                handleAudioPacket(event)
+            }
+            is BleTelemetryParser.TelemetryEvent.F5Event -> {
+                handleF5Event(event)
+            }
+        }
+    }
+
+    private fun logParserFallback(opcode: Int, timestamp: Long) {
+        if (missingOpcodeLog.add(opcode)) {
+            emitConsole("DIAG", null, "Legacy fallback for ${opcode.toHexLabel()}", timestamp)
+        }
+    }
+
+    private fun applyStateFlags(
+        lens: Lens,
+        flags: G1ReplyParser.StateFlags,
+        timestamp: Long,
+        hex: String,
+    ) {
+        var reasonToEmit: StateChangedEvent.Reason? = null
+        var reasonValue: Boolean? = null
+        updateSnapshot(eventTimestamp = timestamp) { current ->
+            val existing = current.lens(lens)
+            var updated = existing
+            var changed = false
+
+            if (existing.inCase != flags.inCradle) {
+                changed = true
+                updated = updated.copy(inCase = flags.inCradle)
+                if (reasonToEmit == null || statePriority(StateChangedEvent.Reason.IN_CASE) < statePriority(reasonToEmit!!)) {
+                    reasonToEmit = StateChangedEvent.Reason.IN_CASE
+                    reasonValue = flags.inCradle
+                }
+            }
+            if (existing.wearing != flags.wearing) {
+                changed = true
+                updated = updated.copy(wearing = flags.wearing)
+                if (reasonToEmit == null || statePriority(StateChangedEvent.Reason.WEARING) < statePriority(reasonToEmit!!)) {
+                    reasonToEmit = StateChangedEvent.Reason.WEARING
+                    reasonValue = flags.wearing
+                }
+            }
+            if (existing.silentMode != flags.silentMode) {
+                changed = true
+                updated = updated.copy(silentMode = flags.silentMode)
+                if (reasonToEmit == null || statePriority(StateChangedEvent.Reason.SILENT) < statePriority(reasonToEmit!!)) {
+                    reasonToEmit = StateChangedEvent.Reason.SILENT
+                    reasonValue = flags.silentMode
+                }
+            }
+            if (existing.caseOpen != flags.caseOpen) {
+                changed = true
+                updated = updated.copy(caseOpen = flags.caseOpen)
+                if (reasonToEmit == null || statePriority(StateChangedEvent.Reason.CASE_OPEN) < statePriority(reasonToEmit!!)) {
+                    reasonToEmit = StateChangedEvent.Reason.CASE_OPEN
+                    reasonValue = flags.caseOpen
+                }
+            }
+            if (changed) {
+                updated = updated.copy(lastUpdatedAt = timestamp)
+            }
+            if (existing.lastStateUpdatedAt != timestamp) {
+                updated = updated.copy(lastStateUpdatedAt = timestamp)
+            }
+            val next = if (updated == existing) current else current.updateLens(lens, updated)
+            next.withFrame(lens, hex)
+        }
+        reasonToEmit?.let { reason ->
+            val message = when (reason) {
+                StateChangedEvent.Reason.IN_CASE -> if (flags.inCradle) "In case" else "Out of case"
+                StateChangedEvent.Reason.WEARING -> if (flags.wearing && !flags.inCradle) "Now wearing" else "Not wearing"
+                StateChangedEvent.Reason.SILENT -> if (flags.silentMode) "Silent on" else "Silent off"
+                StateChangedEvent.Reason.CASE_OPEN -> if (flags.caseOpen) "Case open" else "Case closed"
+            }
+            emitConsole("STATE", lens, message, timestamp)
+            _stateEvents.tryEmit(StateChangedEvent(lens, timestamp, reason, reasonValue))
+        }
+    }
+
+    private fun applyBatteryEvent(event: BleTelemetryParser.TelemetryEvent.BatteryEvent) {
+        val lens = event.lens
+        val lensBattery = event.batteryPercent
+        val caseBattery = event.caseBatteryPercent
+        if (lensBattery == null && caseBattery == null) {
+            logRaw(lens, event.rawFrame)
+            return
+        }
+        val opcode = event.opcode
+        val timestamp = event.timestampMs
+        val hex = event.rawFrame.toHex()
+        var batteryChanged = false
+        var caseChanged = false
+        updateSnapshot(eventTimestamp = timestamp) { current ->
+            val existing = current.lens(lens)
+            var updated = existing
+            val authoritativeFresh = existing.batterySourceOpcode == BATTERY_OPCODE &&
+                existing.batteryUpdatedAt?.let { timestamp - it < BATTERY_STICKY_WINDOW_MS } == true
+            lensBattery?.let { percent ->
+                val shouldIgnoreQuickStatus = opcode != BATTERY_OPCODE && authoritativeFresh
+                if (!shouldIgnoreQuickStatus && shouldAdopt(existing.batterySourceOpcode, existing.batteryUpdatedAt, opcode, timestamp, ::batteryPriority)) {
+                    if (existing.batteryPercent != percent || existing.batterySourceOpcode != opcode) {
+                        batteryChanged = true
+                    }
+                    updated = updated.copy(
+                        batteryPercent = percent,
+                        batterySourceOpcode = opcode,
+                        batteryUpdatedAt = timestamp,
+                        lastUpdatedAt = timestamp,
+                    )
+                }
+            }
+            caseBattery?.let { value ->
+                if (existing.caseBatteryPercent != value) {
+                    caseChanged = true
+                    updated = updated.copy(caseBatteryPercent = value, lastUpdatedAt = timestamp)
+                }
+            }
+            if (lensBattery != null || caseBattery != null) {
+                val history = (updated.powerHistory + PowerFrame(opcode, hex, timestamp)).takeLast(POWER_HISTORY_SIZE)
+                if (history != updated.powerHistory) {
+                    updated = updated.copy(powerHistory = history)
+                }
+                updated = updated.copy(lastPowerOpcode = opcode, lastPowerUpdatedAt = timestamp)
+            }
+            val next = if (updated == existing) current else current.updateLens(lens, updated)
+            next.withFrame(lens, hex)
+        }
+        val parts = mutableListOf<String>()
+        if (batteryChanged) {
+            lensBattery?.let { percent -> parts += "battery=${percent}%@${opcode.toHexLabel()}" }
+        }
+        if (caseChanged) {
+            caseBattery?.let { percent -> parts += "case=${percent}%" }
+        }
+        if (parts.isNotEmpty()) {
+            emitConsole("VITALS", lens, parts.joinToString(", "), timestamp)
+        }
+    }
+
+    private fun applyUptimeEvent(event: BleTelemetryParser.TelemetryEvent.UptimeEvent) {
+        val lens = event.lens
+        val timestamp = event.timestampMs
+        val hex = event.rawFrame.toHex()
+        val uptime = event.uptimeSeconds
+        updateSnapshot(eventTimestamp = timestamp) { current ->
+            if (current.uptimeSeconds == uptime && current.lastLens == lens && current.lastFrameHex == hex) {
+                current
+            } else {
+                current.copy(uptimeSeconds = uptime).withFrame(lens, hex)
+            }
+        }
+        emitConsole("VITALS", lens, "uptime=${uptime}s", timestamp)
+    }
+
+    private fun handleAudioPacket(event: BleTelemetryParser.TelemetryEvent.AudioPacketEvent) {
+        val sequence = event.sequence?.toString() ?: "?"
+        val size = event.payload.size
+        emitConsole("DIAG", event.lens, "Audio packet seq=${sequence} size=${size}B", event.timestampMs)
+    }
+
+    private fun handleF5Event(event: BleTelemetryParser.TelemetryEvent.F5Event) {
+        event.vitals?.let { vitals ->
+            handleParsedVitals(event.lens, vitals, event.rawFrame)
+        }
+        event.evenAiEvent?.let { evenAi ->
+            val message = describeEvenAi(evenAi)
+            emitConsole("GESTURE", event.lens, message, event.timestampMs)
+        }
+    }
+
+    private fun describeEvenAi(event: G1ReplyParser.EvenAiEvent): String {
+        return when (event) {
+            G1ReplyParser.EvenAiEvent.ActivationRequested -> "Activation requested"
+            G1ReplyParser.EvenAiEvent.RecordingStopped -> "Recording stopped"
+            is G1ReplyParser.EvenAiEvent.ManualExit -> "Manual exit (${event.gesture.name.lowercase(Locale.US)})"
+            is G1ReplyParser.EvenAiEvent.ManualPaging -> "Manual paging (${event.gesture.name.lowercase(Locale.US)})"
+            is G1ReplyParser.EvenAiEvent.SilentModeToggle -> "Silent toggle (${event.gesture.name.lowercase(Locale.US)})"
+            is G1ReplyParser.EvenAiEvent.Unknown -> "Even AI 0x%02X".format(Locale.US, event.subcommand)
         }
     }
 
@@ -445,93 +653,43 @@ class BleTelemetryRepository(
     }
 
     private fun handleBattery(lens: Lens, frame: ByteArray) {
-        val payload = frame.extractPayload()
-        val (primary, case) = parseBatteryPayload(payload)
-        val primaryCandidate = primary ?: frame.getOrNull(2)?.toInt()?.takeIf { it in 0..100 }
-        val caseCandidate = case ?: frame.getOrNull(3)?.toInt()?.takeIf { it in 0..100 }
-        val lensBattery = primaryCandidate
-        val caseBattery = caseCandidate
+        val notifyFrame = G1ReplyParser.decodeFrame(frame)
+        val status = notifyFrame?.let { G1ReplyParser.parseBattery(it) }
+        val lensBattery = status?.batteryPercent
+        val caseBattery = status?.caseBatteryPercent
         if (lensBattery == null && caseBattery == null) {
             logRaw(lens, frame)
             return
         }
         val timestamp = System.currentTimeMillis()
-        val hex = frame.toHex()
-        val opcode = frame.firstOrNull()?.toInt()?.and(0xFF) ?: BATTERY_OPCODE
-        var batteryChanged = false
-        var caseChanged = false
-        updateSnapshot(eventTimestamp = timestamp) { current ->
-            val existing = current.lens(lens)
-            var updated = existing
-            val authoritativeFresh = existing.batterySourceOpcode == BATTERY_OPCODE &&
-                existing.batteryUpdatedAt?.let { timestamp - it < BATTERY_STICKY_WINDOW_MS } == true
-            lensBattery?.let { percent ->
-                val shouldIgnoreQuickStatus = opcode != BATTERY_OPCODE && authoritativeFresh
-                if (!shouldIgnoreQuickStatus && shouldAdopt(existing.batterySourceOpcode, existing.batteryUpdatedAt, opcode, timestamp, ::batteryPriority)) {
-                    if (existing.batteryPercent != percent || existing.batterySourceOpcode != opcode) {
-                        batteryChanged = true
-                    }
-                    updated = updated.copy(
-                        batteryPercent = percent,
-                        batterySourceOpcode = opcode,
-                        batteryUpdatedAt = timestamp,
-                        lastUpdatedAt = timestamp,
-                    )
-                }
-            }
-            caseBattery?.let { value ->
-                if (existing.caseBatteryPercent != value) {
-                    caseChanged = true
-                    updated = updated.copy(caseBatteryPercent = value, lastUpdatedAt = timestamp)
-                }
-            }
-            if (lensBattery != null || caseBattery != null) {
-                val history = (updated.powerHistory + PowerFrame(opcode, hex, timestamp)).takeLast(POWER_HISTORY_SIZE)
-                if (history != updated.powerHistory) {
-                    updated = updated.copy(powerHistory = history)
-                }
-            }
-            if (lensBattery != null || caseBattery != null) {
-                updated = updated.copy(lastPowerOpcode = opcode, lastPowerUpdatedAt = timestamp)
-            }
-            if (updated != existing) {
-                current.updateLens(lens, updated).withFrame(lens, hex)
-            } else {
-                current.withFrame(lens, hex)
-            }
-        }
-        val parts = mutableListOf<String>()
-        if (batteryChanged) {
-            lensBattery?.let { percent -> parts += "battery=${percent}%@${opcode.toHexLabel()}" }
-        }
-        if (caseChanged) {
-            caseBattery?.let { percent -> parts += "case=${percent}%" }
-        }
-        if (parts.isNotEmpty()) {
-            emitConsole("VITALS", lens, parts.joinToString(", "), timestamp)
-        }
+        val opcode = notifyFrame?.opcode ?: BATTERY_OPCODE
+        val event = BleTelemetryParser.TelemetryEvent.BatteryEvent(
+            lens = lens,
+            timestampMs = timestamp,
+            opcode = opcode,
+            batteryPercent = lensBattery,
+            caseBatteryPercent = caseBattery,
+            rawFrame = frame.copyOf(),
+        )
+        applyBatteryEvent(event)
     }
 
     private fun handleUptime(lens: Lens, frame: ByteArray) {
-        val payload = frame.extractPayload()
-        val uptime = when {
-            payload != null -> parseLittleEndianUInt(payload, start = 0, length = min(4, payload.size))
-            else -> parseLittleEndianUInt(frame, start = 2, length = min(4, frame.size - 2))
-        }
-        if (uptime == null) {
+        val notifyFrame = G1ReplyParser.decodeFrame(frame)
+        val uptime = notifyFrame?.let { G1ReplyParser.parseUptime(it) }
+        if (notifyFrame == null || uptime == null) {
             logRaw(lens, frame)
             return
         }
-        val hex = frame.toHex()
-        val eventTimestamp = System.currentTimeMillis()
-        updateSnapshot(eventTimestamp = eventTimestamp) { current ->
-            if (current.uptimeSeconds == uptime && current.lastLens == lens && current.lastFrameHex == hex) {
-                current
-            } else {
-                current.copy(uptimeSeconds = uptime).withFrame(lens, hex)
-            }
-        }
-        emitConsole("VITALS", lens, "uptime=${uptime}s", eventTimestamp)
+        val timestamp = System.currentTimeMillis()
+        val event = BleTelemetryParser.TelemetryEvent.UptimeEvent(
+            lens = lens,
+            timestampMs = timestamp,
+            opcode = notifyFrame.opcode,
+            uptimeSeconds = uptime,
+            rawFrame = frame.copyOf(),
+        )
+        applyUptimeEvent(event)
     }
 
     private fun handleFirmware(lens: Lens, frame: ByteArray) {
@@ -618,87 +776,14 @@ class BleTelemetryRepository(
     }
 
     private fun handleGlassesState(lens: Lens, frame: ByteArray) {
-        val payload = frame.extractPayload()
-        if (payload == null || payload.isEmpty()) {
+        val notifyFrame = G1ReplyParser.decodeFrame(frame)
+        val flags = notifyFrame?.let { G1ReplyParser.parseState(it) }
+        if (notifyFrame == null || flags == null) {
             logRaw(lens, frame)
             return
         }
         val timestamp = System.currentTimeMillis()
-        val flags = payload.first().toInt() and 0xFF
-        val wearing = flags and 0x02 != 0
-        val inCase = flags and 0x01 != 0
-        val silentMode = flags and 0x04 != 0
-        val caseOpen = flags and 0x08 != 0
-        val hex = frame.toHex()
-        var reasonToEmit: StateChangedEvent.Reason? = null
-        var reasonValue: Boolean? = null
-        updateSnapshot(eventTimestamp = timestamp) { current ->
-            val existing = current.lens(lens)
-            var updated = existing
-            var changed = false
-            if (existing.inCase != inCase) {
-                changed = true
-                updated = updated.copy(inCase = inCase)
-                if (reasonToEmit == null || statePriority(StateChangedEvent.Reason.IN_CASE) < statePriority(reasonToEmit!!)) {
-                    reasonToEmit = StateChangedEvent.Reason.IN_CASE
-                    reasonValue = inCase
-                }
-            }
-            if (existing.wearing != wearing) {
-                changed = true
-                updated = updated.copy(wearing = wearing)
-                if (reasonToEmit == null || statePriority(StateChangedEvent.Reason.WEARING) < statePriority(reasonToEmit!!)) {
-                    reasonToEmit = StateChangedEvent.Reason.WEARING
-                    reasonValue = wearing
-                }
-            }
-            if (existing.silentMode != silentMode) {
-                changed = true
-                updated = updated.copy(silentMode = silentMode)
-                if (reasonToEmit == null || statePriority(StateChangedEvent.Reason.SILENT) < statePriority(reasonToEmit!!)) {
-                    reasonToEmit = StateChangedEvent.Reason.SILENT
-                    reasonValue = silentMode
-                }
-            }
-            if (existing.caseOpen != caseOpen) {
-                changed = true
-                updated = updated.copy(caseOpen = caseOpen)
-                if (reasonToEmit == null || statePriority(StateChangedEvent.Reason.CASE_OPEN) < statePriority(reasonToEmit!!)) {
-                    reasonToEmit = StateChangedEvent.Reason.CASE_OPEN
-                    reasonValue = caseOpen
-                }
-            }
-            if (changed) {
-                updated = updated.copy(lastUpdatedAt = timestamp)
-            }
-            if (existing.lastStateUpdatedAt != timestamp) {
-                updated = updated.copy(lastStateUpdatedAt = timestamp)
-            }
-            val next = if (updated == existing) current else current.updateLens(lens, updated)
-            next.withFrame(lens, hex)
-        }
-        reasonToEmit?.let { reason ->
-            val message = when (reason) {
-                StateChangedEvent.Reason.IN_CASE -> if (inCase) "In case" else "Out of case"
-                StateChangedEvent.Reason.WEARING -> if (wearing && !inCase) "Now wearing" else "Not wearing"
-                StateChangedEvent.Reason.SILENT -> if (silentMode) "Silent on" else "Silent off"
-                StateChangedEvent.Reason.CASE_OPEN -> if (caseOpen) "Case open" else "Case closed"
-            }
-            emitConsole("STATE", lens, message, timestamp)
-            _stateEvents.tryEmit(StateChangedEvent(lens, timestamp, reason, reasonValue))
-        }
-    }
-
-    private fun parseBatteryPayload(payload: ByteArray?): Pair<Int?, Int?> {
-        if (payload == null || payload.isEmpty()) return null to null
-        val bytes = payload
-        val startIndex = when (bytes.first().toInt() and 0xFF) {
-            0x01, 0x02 -> 1
-            else -> 0
-        }
-        val primary = bytes.getOrNull(startIndex)?.toInt()?.takeIf { it in 0..100 }
-        val case = bytes.getOrNull(startIndex + 1)?.toInt()?.takeIf { it in 0..100 }
-        return primary to case
+        applyStateFlags(lens, flags, timestamp, frame.toHex())
     }
 
     private fun mergeKeepAlive(lens: Lens, status: MoncchichiBleService.LensStatus) {
@@ -1089,42 +1174,11 @@ class BleTelemetryRepository(
         }
     }
 
-    private fun parseLittleEndianUInt(frame: ByteArray, start: Int, length: Int): Long? {
-        if (start >= frame.size || length <= 0) return null
-        var value = 0L
-        for (index in 0 until length) {
-            val byte = frame.getOrNull(start + index)?.toLong() ?: return null
-            value = value or ((byte and 0xFF) shl (8 * index))
-        }
-        return value
-    }
-
     private fun ByteArray.toHex(): String = joinToString(separator = "") { byte ->
         ((byte.toInt() and 0xFF).toString(16)).padStart(2, '0')
     }
 
     private fun Int.toHexLabel(): String = String.format("0x%02X", this and 0xFF)
-
-    private fun ByteArray.extractPayload(): ByteArray? {
-        if (size < 2) return null
-        val status = this[1]
-        val remaining = size - 2
-        if (status == 0xC9.toByte() || status == 0xCA.toByte() || status.toUnsignedInt() > remaining) {
-            return if (remaining > 0) copyOfRange(2, size) else ByteArray(0)
-        }
-        val length = status.toUnsignedInt()
-        var payloadStart = 2
-        var payloadLength = length
-        if (length >= 2 && size >= 4) {
-            payloadStart = 4
-            payloadLength = (length - 2).coerceAtLeast(0)
-        }
-        val available = (size - payloadStart).coerceAtLeast(0)
-        val actual = min(payloadLength, available)
-        return if (actual <= 0) ByteArray(0) else copyOfRange(payloadStart, payloadStart + actual)
-    }
-
-    private fun Byte.toUnsignedInt(): Int = this.toUByte().toInt()
 
     private fun updateSnapshot(
         eventTimestamp: Long? = null,
