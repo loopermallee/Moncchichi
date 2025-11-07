@@ -10,8 +10,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
-import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
+import com.loopermallee.moncchichi.hub.audio.AudioSink
+import com.loopermallee.moncchichi.hub.audio.MicSource
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperViewModel.DeveloperEvent
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
@@ -25,9 +27,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 private const val PREF_KEY_MODE = "developer_mode_selection"
@@ -66,6 +70,12 @@ class DeveloperViewModel(
 
     private val _voiceOnLift = MutableStateFlow(SettingsRepository.isVoiceWakeOnLiftEnabled())
     val voiceOnLift: StateFlow<Boolean> = _voiceOnLift.asStateFlow()
+
+    val micSource: StateFlow<MicSource> = SettingsRepository.micSourceFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsRepository.getMicSource())
+
+    val audioSink: StateFlow<AudioSink> = SettingsRepository.audioSinkFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsRepository.getAudioSink())
 
     private val _events = MutableSharedFlow<DeveloperEvent>(extraBufferCapacity = 1)
     val events: SharedFlow<DeveloperEvent> = _events.asSharedFlow()
@@ -144,6 +154,14 @@ class DeveloperViewModel(
         if (_voiceOnLift.value == enabled) return
         _voiceOnLift.value = enabled
         SettingsRepository.setVoiceWakeOnLiftEnabled(enabled)
+    }
+
+    fun setMicSource(source: MicSource) {
+        SettingsRepository.setMicSource(source)
+    }
+
+    fun setAudioSink(sink: AudioSink) {
+        SettingsRepository.setAudioSink(sink)
     }
 
     fun exportAllLogs(context: Context) {
