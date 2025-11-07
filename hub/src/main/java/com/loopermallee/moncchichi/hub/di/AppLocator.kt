@@ -56,6 +56,8 @@ object AppLocator {
         private set
     lateinit var httpClient: OkHttpClient
         private set
+    val applicationContext: Context
+        get() = appContext
 
     private var initialized = false
     private const val useLiveBle: Boolean = true

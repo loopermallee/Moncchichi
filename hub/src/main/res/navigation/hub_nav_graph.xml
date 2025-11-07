@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/hub_nav_graph"
+    app:startDestination="@id/hubFragment">
+
+    <fragment
+        android:id="@+id/hubFragment"
+        android:name="com.loopermallee.moncchichi.hub.ui.HubFragment"
+        android:label="@string/hub_title" />
+
+    <fragment
+        android:id="@+id/hudFragment"
+        android:name="com.loopermallee.moncchichi.hub.ui.hud.HudFragment"
+        android:label="@string/hud_title" />
+
+    <fragment
+        android:id="@+id/assistantFragment"
+        android:name="com.loopermallee.moncchichi.hub.ui.assistant.AssistantFragment"
+        android:label="@string/assistant_title" />
+
+    <fragment
+        android:id="@+id/developerFragment"
+        android:name="com.loopermallee.moncchichi.hub.ui.developer.DeveloperFragment"
+        android:label="@string/developer_console_title" />
+
+    <fragment
+        android:id="@+id/settingsFragment"
+        android:name="com.loopermallee.moncchichi.hub.ui.settings.SettingsFragment"
+        android:label="@string/settings_title" />
+
+    <fragment
+        android:id="@+id/permissionsFragment"
+        android:name="com.loopermallee.moncchichi.hub.ui.PermissionsFragment"
+        android:label="@string/permissions_screen_title" />
+
+    <fragment
+        android:id="@+id/teleprompterFragment"
+        android:name="com.loopermallee.moncchichi.hub.ui.teleprompter.TeleprompterFragment"
+        android:label="@string/teleprompter_title" />
+
+</navigation>
