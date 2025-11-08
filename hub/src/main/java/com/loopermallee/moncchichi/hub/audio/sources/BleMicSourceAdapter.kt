@@ -148,7 +148,8 @@ class BleMicSourceAdapter(
     }
 
     private fun reset() {
-        if (mutex.tryLock()) {
+        val locked = mutex.tryLock(owner = null)
+        if (locked) {
             try {
                 clearState()
             } finally {
