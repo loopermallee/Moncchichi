@@ -14,6 +14,7 @@ import com.loopermallee.moncchichi.hub.ui.developer.DeveloperFragment
 import com.loopermallee.moncchichi.hub.ui.hud.HudFragment
 import com.loopermallee.moncchichi.hub.ui.PermissionsFragment
 import com.loopermallee.moncchichi.hub.ui.settings.SettingsFragment
+import com.loopermallee.moncchichi.hub.ui.settings.VoiceAudioSettingsFragment
 import com.loopermallee.moncchichi.hub.ui.teleprompter.TeleprompterFragment
 
 class HubMainActivity : AppCompatActivity() {
@@ -41,6 +42,10 @@ class HubMainActivity : AppCompatActivity() {
                     }
                     R.id.menu_settings -> {
                         showOverlayFragment(SettingsFragment(), R.string.settings_title)
+                        true
+                    }
+                    R.id.menu_voice_audio -> {
+                        showOverlayFragment(VoiceAudioSettingsFragment(), R.string.voice_audio_title)
                         true
                     }
                     R.id.menu_teleprompter -> {

@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.hub.data.telemetry
 
 import android.bluetooth.BluetoothDevice
+import android.os.SystemClock
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
@@ -9,9 +10,10 @@ import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
-import com.loopermallee.moncchichi.telemetry.MicStreamManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -31,6 +34,7 @@ import java.util.regex.Pattern
 import kotlin.collections.buildList
 import kotlin.math.max
 import kotlin.text.Charsets
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Aggregates BLE telemetry packets (battery %, uptime, firmware, RSSI) emitted by [MoncchichiBleService].
@@ -134,11 +138,18 @@ class BleTelemetryRepository(
     )
     val uartText: SharedFlow<UartLine> = _uartText.asSharedFlow()
 
-    private val _micStream = MutableStateFlow(MicStreamManager.State())
-    val micStream: StateFlow<MicStreamManager.State> = _micStream.asStateFlow()
-
     private val _dashboardStatus = MutableStateFlow(DashboardDataEncoder.BurstStatus())
     val dashboardStatus: StateFlow<DashboardDataEncoder.BurstStatus> = _dashboardStatus.asStateFlow()
+
+    private val _micPackets = MutableSharedFlow<BleTelemetryParser.TelemetryEvent.AudioPacketEvent>(
+        replay = 0,
+        extraBufferCapacity = 128,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val micPackets: SharedFlow<BleTelemetryParser.TelemetryEvent.AudioPacketEvent> = _micPackets.asSharedFlow()
+
+    private val _micAvailability = MutableStateFlow(false)
+    val micAvailability: StateFlow<Boolean> = _micAvailability.asStateFlow()
 
     data class UartLine(val lens: Lens, val text: String)
 
@@ -238,12 +249,13 @@ class BleTelemetryRepository(
     private var frameJob: Job? = null
     private var stateJob: Job? = null
     private var ackJob: Job? = null
-    private var micStateJob: Job? = null
     private var dashboardStatusJob: Job? = null
-    private var micStreamManager: MicStreamManager? = null
     private var dashboardEncoder: DashboardDataEncoder? = null
     private var boundService: MoncchichiBleService? = null
     private var lastConnected = false
+    private var serviceScope: CoroutineScope? = null
+    private val lastAudioPacketTs = AtomicLong(0L)
+    private var audioWatchdogJob: Job? = null
 
     private val leftBuffer = ByteArrayOutputStream()
     private val rightBuffer = ByteArrayOutputStream()
@@ -261,14 +273,22 @@ class BleTelemetryRepository(
         emitConsole("DIAG", null, "telemetry reset")
         clearBuffers()
         keepAliveSnapshots.clear()
-        micStreamManager?.reset()
-        _micStream.value = MicStreamManager.State()
+        _micAvailability.value = false
+        audioWatchdogJob?.cancel()
+        audioWatchdogJob = null
+        lastAudioPacketTs.set(0L)
         _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
+        serviceScope?.let { scope ->
+            if (boundService != null) {
+                startAudioWatchdog(scope)
+            }
+        }
     }
 
     fun bindToService(service: MoncchichiBleService, scope: CoroutineScope) {
         unbind()
         boundService = service
+        serviceScope = scope
         lastConnected = service.state.value.left.isConnected || service.state.value.right.isConnected
         dashboardEncoder = DashboardDataEncoder(
             scope = scope,
@@ -280,6 +300,7 @@ class BleTelemetryRepository(
                 }
             }
         }
+        startAudioWatchdog(scope)
         frameJob = scope.launch {
             service.incoming.collect { frame ->
                 onFrame(frame.lens, frame.payload)
@@ -292,6 +313,10 @@ class BleTelemetryRepository(
                     reset()
                 }
                 lastConnected = connected
+                if (!connected) {
+                    _micAvailability.value = false
+                    lastAudioPacketTs.set(0L)
+                }
                 mergeRssi(Lens.LEFT, state.left.rssi)
                 mergeRssi(Lens.RIGHT, state.right.rssi)
                 mergeKeepAlive(Lens.LEFT, state.left)
@@ -319,13 +344,14 @@ class BleTelemetryRepository(
         frameJob?.cancel(); frameJob = null
         stateJob?.cancel(); stateJob = null
         ackJob?.cancel(); ackJob = null
-        micStateJob?.cancel(); micStateJob = null
         dashboardStatusJob?.cancel(); dashboardStatusJob = null
         dashboardEncoder?.dispose(); dashboardEncoder = null
+        audioWatchdogJob?.cancel(); audioWatchdogJob = null
         boundService = null
+        serviceScope = null
         _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
-        micStreamManager?.reset()
-        _micStream.value = MicStreamManager.State()
+        _micAvailability.value = false
+        lastAudioPacketTs.set(0L)
         lastConnected = false
         clearBuffers()
         keepAliveSnapshots.clear()
@@ -432,29 +458,6 @@ class BleTelemetryRepository(
         if (missingOpcodeLog.add(opcode)) {
             emitConsole("DIAG", null, "Legacy fallback for ${opcode.toHexLabel()}", timestamp)
         }
-    }
-
-    private fun ensureMicStreamManager(): MicStreamManager {
-        val existing = micStreamManager
-        if (existing != null) {
-            if (micStateJob == null) {
-                micStateJob = persistenceScope.launch {
-                    existing.state.collect { state ->
-                        _micStream.value = state
-                    }
-                }
-            }
-            return existing
-        }
-        val manager = MicStreamManager()
-        micStreamManager = manager
-        micStateJob?.cancel()
-        micStateJob = persistenceScope.launch {
-            manager.state.collect { state ->
-                _micStream.value = state
-            }
-        }
-        return manager
     }
 
     private fun applyStateFlags(
@@ -604,15 +607,29 @@ class BleTelemetryRepository(
             emitConsole("DIAG", event.lens, "Audio packet missing sequence", event.timestampMs)
             return
         }
-        val manager = ensureMicStreamManager()
-        val gapsAdded = manager.record(sequence, event.timestampMs)
-        if (gapsAdded > 0) {
-            emitConsole(
-                "DIAG",
-                event.lens,
-                "Audio stream gap +${gapsAdded} (seq=${sequence})",
-                event.timestampMs,
-            )
+        val now = SystemClock.elapsedRealtime()
+        val previous = lastAudioPacketTs.getAndSet(now)
+        val wasInactive = !_micAvailability.value
+        _micAvailability.value = true
+        if (wasInactive) {
+            val gap = if (previous != 0L) now - previous else 0L
+            val suffix = if (gap > 0L) " after ${gap} ms" else ""
+            logger("[AUDIO][WATCHDOG] BLE mic reactivated${suffix}")
+        }
+        _micPackets.tryEmit(event)
+    }
+
+    private fun startAudioWatchdog(scope: CoroutineScope) {
+        audioWatchdogJob?.cancel()
+        audioWatchdogJob = scope.launch(Dispatchers.Default) {
+            while (isActive) {
+                val since = SystemClock.elapsedRealtime() - lastAudioPacketTs.get()
+                if (since > 2000 && _micAvailability.value) {
+                    _micAvailability.value = false
+                    logger("[AUDIO][WATCHDOG] BLE mic inactive for ${since} ms")
+                }
+                delay(1000)
+            }
         }
     }
 

@@ -8,6 +8,9 @@
             android:id="@+id/menu_settings"
             android:title="Settings" />
         <item
+            android:id="@+id/menu_voice_audio"
+            android:title="@string/voice_audio_title" />
+        <item
             android:id="@+id/menu_teleprompter"
             android:title="@string/menu_teleprompter" />
     </group>

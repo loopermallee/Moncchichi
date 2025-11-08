@@ -69,12 +69,12 @@
     <string name="developer_section_voice_audio">Voice &amp; audio</string>
     <string name="developer_toggle_mic">Microphone stream</string>
     <string name="developer_toggle_voice_on_lift">Voice wake on lift</string>
-    <string name="developer_audio_rx">Audio rate: %1$s pkt/s</string>
+    <string name="developer_audio_rx">Audio rate: %1$d fps</string>
     <string name="developer_audio_rx_placeholder">Audio rate: —</string>
-    <string name="developer_audio_gaps">Audio gaps: %1$d</string>
+    <string name="developer_audio_gaps">Audio gaps: %1$d (last %2$d ms)</string>
     <string name="developer_audio_gaps_placeholder">Audio gaps: —</string>
-    <string name="developer_audio_last_seq">Last audio seq: %1$d</string>
-    <string name="developer_audio_last_seq_placeholder">Last audio seq: —</string>
+    <string name="developer_audio_last_seq">Mic source: %1$s (loss %2$s)</string>
+    <string name="developer_audio_last_seq_placeholder">Mic source: —</string>
     <string name="developer_dashboard_status_placeholder">Dashboard: Waiting…</string>
     <string name="developer_dashboard_status_idle">Dashboard: Idle</string>
     <string name="developer_dashboard_status_active">Dashboard: Sending %1$d/%2$d</string>
@@ -172,6 +172,8 @@
     <string name="teleprompter_hud_status">%1$s • %2$s</string>
     <string name="teleprompter_hud_idle">HUD sync idle</string>
     <string name="menu_teleprompter">Teleprompter</string>
+    <string name="voice_audio_title">Voice &amp; Audio</string>
+    <string name="voice_audio_stub">Voice &amp; Audio (coming soon)</string>
     <plurals name="teleprompter_lens_count">
         <item quantity="one">%d lens</item>
         <item quantity="other">%d lenses</item>
