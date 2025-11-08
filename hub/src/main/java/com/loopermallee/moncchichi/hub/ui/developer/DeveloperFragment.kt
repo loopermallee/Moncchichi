@@ -59,6 +59,7 @@ class DeveloperFragment : Fragment() {
             requireContext().applicationContext,
             hubViewModel,
             AppLocator.telemetry,
+            AppLocator.mic,
             AppLocator.prefs,
         )
     }
@@ -263,15 +264,17 @@ class DeveloperFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.micStats.collectLatest { stats ->
-                    if (stats.lastSequence == null) {
+                    val hasData = stats.framesPerSec > 0 || stats.gapCount > 0 || stats.packetLossPct != null
+                    if (!hasData) {
                         audioRateView.text = getString(R.string.developer_audio_rx_placeholder)
                         audioGapsView.text = getString(R.string.developer_audio_gaps_placeholder)
                         audioSeqView.text = getString(R.string.developer_audio_last_seq_placeholder)
                     } else {
-                        val rate = String.format(Locale.US, "%.1f", stats.rxRate)
-                        audioRateView.text = getString(R.string.developer_audio_rx, rate)
-                        audioGapsView.text = getString(R.string.developer_audio_gaps, stats.gaps)
-                        audioSeqView.text = getString(R.string.developer_audio_last_seq, stats.lastSequence)
+                        val lossLabel = stats.packetLossPct?.let { String.format(Locale.US, "%.1f%%", it) } ?: "—"
+                        val sourceLabel = stats.source.name.lowercase(Locale.US).replaceFirstChar { ch -> ch.titlecase(Locale.US) }
+                        audioRateView.text = getString(R.string.developer_audio_rx, stats.framesPerSec)
+                        audioGapsView.text = getString(R.string.developer_audio_gaps, stats.gapCount, stats.lastGapMs)
+                        audioSeqView.text = getString(R.string.developer_audio_last_seq, sourceLabel, lossLabel)
                     }
                 }
             }

@@ -12,12 +12,13 @@ import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
 import com.loopermallee.moncchichi.hub.audio.AudioSink
 import com.loopermallee.moncchichi.hub.audio.MicSource
+import com.loopermallee.moncchichi.hub.audio.MicStreamManager
+import com.loopermallee.moncchichi.hub.audio.MicMetrics
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperViewModel.DeveloperEvent
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
-import com.loopermallee.moncchichi.telemetry.MicStreamManager
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -40,6 +41,7 @@ class DeveloperViewModel(
     private val appContext: Context,
     private val hubViewModel: HubViewModel,
     private val telemetry: BleTelemetryRepository,
+    private val micManager: MicStreamManager,
     private val prefs: SharedPreferences,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
@@ -59,8 +61,18 @@ class DeveloperViewModel(
     private val _snapshot = MutableStateFlow(telemetry.snapshot.value)
     val snapshot: StateFlow<BleTelemetryRepository.Snapshot> = _snapshot.asStateFlow()
 
-    private val _micStats = MutableStateFlow(telemetry.micStream.value)
-    val micStats: StateFlow<MicStreamManager.State> = _micStats.asStateFlow()
+    private val _micStats = MutableStateFlow(
+        MicMetrics(
+            source = SettingsRepository.getMicSource(),
+            sampleRateHz = 0,
+            framesPerSec = 0,
+            gapCount = 0,
+            lastGapMs = 0,
+            rssiAvg = null,
+            packetLossPct = null,
+        ),
+    )
+    val micStats: StateFlow<MicMetrics> = _micStats.asStateFlow()
 
     private val _dashboardStatus = MutableStateFlow(telemetry.dashboardStatus.value)
     val dashboardStatus: StateFlow<DashboardDataEncoder.BurstStatus> = _dashboardStatus.asStateFlow()
@@ -92,7 +104,7 @@ class DeveloperViewModel(
             }
         }
         viewModelScope.launch {
-            telemetry.micStream.collect { stats ->
+            micManager.metrics.collect { stats ->
                 _micStats.value = stats
             }
         }
@@ -158,6 +170,7 @@ class DeveloperViewModel(
 
     fun setMicSource(source: MicSource) {
         SettingsRepository.setMicSource(source)
+        micManager.startCapture(source)
     }
 
     fun setAudioSink(sink: AudioSink) {
@@ -359,12 +372,13 @@ class DeveloperViewModel(
         private val appContext: Context,
         private val hubViewModel: HubViewModel,
         private val telemetry: BleTelemetryRepository,
+        private val micManager: MicStreamManager,
         private val prefs: SharedPreferences,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(DeveloperViewModel::class.java))
-            return DeveloperViewModel(appContext, hubViewModel, telemetry, prefs) as T
+            return DeveloperViewModel(appContext, hubViewModel, telemetry, micManager, prefs) as T
         }
     }
 }

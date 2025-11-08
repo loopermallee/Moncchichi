@@ -9,7 +9,6 @@ import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
-import com.loopermallee.moncchichi.telemetry.MicStreamManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -134,11 +133,18 @@ class BleTelemetryRepository(
     )
     val uartText: SharedFlow<UartLine> = _uartText.asSharedFlow()
 
-    private val _micStream = MutableStateFlow(MicStreamManager.State())
-    val micStream: StateFlow<MicStreamManager.State> = _micStream.asStateFlow()
-
     private val _dashboardStatus = MutableStateFlow(DashboardDataEncoder.BurstStatus())
     val dashboardStatus: StateFlow<DashboardDataEncoder.BurstStatus> = _dashboardStatus.asStateFlow()
+
+    private val _micPackets = MutableSharedFlow<BleTelemetryParser.TelemetryEvent.AudioPacketEvent>(
+        replay = 0,
+        extraBufferCapacity = 128,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val micPackets: SharedFlow<BleTelemetryParser.TelemetryEvent.AudioPacketEvent> = _micPackets.asSharedFlow()
+
+    private val _micAvailability = MutableStateFlow(false)
+    val micAvailability: StateFlow<Boolean> = _micAvailability.asStateFlow()
 
     data class UartLine(val lens: Lens, val text: String)
 
@@ -238,9 +244,7 @@ class BleTelemetryRepository(
     private var frameJob: Job? = null
     private var stateJob: Job? = null
     private var ackJob: Job? = null
-    private var micStateJob: Job? = null
     private var dashboardStatusJob: Job? = null
-    private var micStreamManager: MicStreamManager? = null
     private var dashboardEncoder: DashboardDataEncoder? = null
     private var boundService: MoncchichiBleService? = null
     private var lastConnected = false
@@ -261,8 +265,7 @@ class BleTelemetryRepository(
         emitConsole("DIAG", null, "telemetry reset")
         clearBuffers()
         keepAliveSnapshots.clear()
-        micStreamManager?.reset()
-        _micStream.value = MicStreamManager.State()
+        _micAvailability.value = false
         _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
     }
 
@@ -292,6 +295,7 @@ class BleTelemetryRepository(
                     reset()
                 }
                 lastConnected = connected
+                _micAvailability.value = connected
                 mergeRssi(Lens.LEFT, state.left.rssi)
                 mergeRssi(Lens.RIGHT, state.right.rssi)
                 mergeKeepAlive(Lens.LEFT, state.left)
@@ -319,13 +323,11 @@ class BleTelemetryRepository(
         frameJob?.cancel(); frameJob = null
         stateJob?.cancel(); stateJob = null
         ackJob?.cancel(); ackJob = null
-        micStateJob?.cancel(); micStateJob = null
         dashboardStatusJob?.cancel(); dashboardStatusJob = null
         dashboardEncoder?.dispose(); dashboardEncoder = null
         boundService = null
         _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
-        micStreamManager?.reset()
-        _micStream.value = MicStreamManager.State()
+        _micAvailability.value = false
         lastConnected = false
         clearBuffers()
         keepAliveSnapshots.clear()
@@ -432,29 +434,6 @@ class BleTelemetryRepository(
         if (missingOpcodeLog.add(opcode)) {
             emitConsole("DIAG", null, "Legacy fallback for ${opcode.toHexLabel()}", timestamp)
         }
-    }
-
-    private fun ensureMicStreamManager(): MicStreamManager {
-        val existing = micStreamManager
-        if (existing != null) {
-            if (micStateJob == null) {
-                micStateJob = persistenceScope.launch {
-                    existing.state.collect { state ->
-                        _micStream.value = state
-                    }
-                }
-            }
-            return existing
-        }
-        val manager = MicStreamManager()
-        micStreamManager = manager
-        micStateJob?.cancel()
-        micStateJob = persistenceScope.launch {
-            manager.state.collect { state ->
-                _micStream.value = state
-            }
-        }
-        return manager
     }
 
     private fun applyStateFlags(
@@ -604,16 +583,7 @@ class BleTelemetryRepository(
             emitConsole("DIAG", event.lens, "Audio packet missing sequence", event.timestampMs)
             return
         }
-        val manager = ensureMicStreamManager()
-        val gapsAdded = manager.record(sequence, event.timestampMs)
-        if (gapsAdded > 0) {
-            emitConsole(
-                "DIAG",
-                event.lens,
-                "Audio stream gap +${gapsAdded} (seq=${sequence})",
-                event.timestampMs,
-            )
-        }
+        _micPackets.tryEmit(event)
     }
 
     private fun handleF5Event(event: BleTelemetryParser.TelemetryEvent.F5Event) {
