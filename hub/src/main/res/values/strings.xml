@@ -172,6 +172,8 @@
     <string name="teleprompter_hud_status">%1$s • %2$s</string>
     <string name="teleprompter_hud_idle">HUD sync idle</string>
     <string name="menu_teleprompter">Teleprompter</string>
+    <string name="voice_audio_title">Voice &amp; Audio</string>
+    <string name="voice_audio_stub">Voice &amp; Audio (coming soon)</string>
     <plurals name="teleprompter_lens_count">
         <item quantity="one">%d lens</item>
         <item quantity="other">%d lenses</item>

@@ -30,6 +30,11 @@
         android:label="@string/settings_title" />
 
     <fragment
+        android:id="@+id/voiceAudioSettingsFragment"
+        android:name="com.loopermallee.moncchichi.hub.ui.settings.VoiceAudioSettingsFragment"
+        android:label="@string/voice_audio_title" />
+
+    <fragment
         android:id="@+id/permissionsFragment"
         android:name="com.loopermallee.moncchichi.hub.ui.PermissionsFragment"
         android:label="@string/permissions_screen_title" />
