@@ -1,61 +1,85 @@
-# Moncchichi Hub Context Engineering v4.5
-────────────────────────────────────────────
-PHASE P1 – BLE Stability Core (Watchdog + Dual ACK)
+# CONTEXT_ENGINEERING v1.5 — BLE ↔ Voice Stabilization Roadmap
 
-Goal:
-Stabilize BLE communication and mic stream availability to create a reliable foundation for HUD and teleprompter work.
+## 1. CURRENT STATE
+- Dual-lens BLE architecture operational but unstable.
+- Repeated `[ACK][R] opcode=0x00 status=0xCA → FAIL` indicates right-lens command mis-sequencing.
+- Heartbeat (`0x25`) missing → lenses disconnect after 32 s.
+- BLE ACKs may appear as either binary (0xC9/0x04) or textual “OK”.
+- Telemetry (`0xF1` audio, `0x2C` battery, `0x37` uptime) partially parsed.
+- Build currently fails due to missing `AudioOutManager` and unimplemented Voice Settings fragments.
+- MCP (Model Context Protocol) integration planned but deferred until BLE stabilized.
 
-────────────────────────────────────────────
-1. ACK Handling Update
-• Older firmware (< v1.5.0) returns binary ACK bytes `0xC9 04`.  
-• Newer firmware (≥ v1.5.6) sends textual “OK” or no payload.  
-• Repository now accepts both formats and logs type.  
-  → Eliminates false `→ PING ← ERR` in Developer Console.  
-Source: Even Realities G1 BLE Protocol + EvenDemoApp logs (2024–2025).
+## 2. GOALS
+1. Restore full BLE reliability (ACK logic + mic watchdog).
+2. Bring back HUD display commands (0x20/0x21/0x26).
+3. Expand telemetry coverage (battery, uptime, gestures).
+4. Re-enable build with modular audio architecture (AudioOutManager, Voice UI).
+5. Prepare stub interfaces for future MCP local memory system.
 
-────────────────────────────────────────────
-2. Mic Stream Watchdog
-• `BleTelemetryRepository.handleAudioPacket()` records last 0xF1 frame timestamp.  
-• New coroutine monitors for silence > 500 ms; sets `_micAvailability = false`.  
-• Resets on frame receipt or unbind().  
-• Exposed as Flow<Boolean> to MicStreamManager.  
-Source: Codex review (2025-11-08).
+## 3. BLE LOGIC DETAILS
+- Left/Right radios use Nordic UART with opcodes:
+  - `0x11` Firmware Info, `0x2C` Battery, `0x37` Uptime,
+  - `0x25` Heartbeat, `0x26` Dashboard Position,
+  - `0xF1` Audio frames, `0xF5` Gestures.
+- Each packet = `[Header][Opcode][Len][Seq][Payload][CRC]`.
+- App must send `0x25` heartbeat every ≤ 30 s.
+- ACK expected within < 150 ms. Missing ACK triggers retry.
+- Textual “OK” occurs on firmware v1.5.x+ instead of binary ACK.
 
-────────────────────────────────────────────
-3. Mic Source Auto-Fallback
-• MicStreamManager subscribes to micAvailability.  
-• If false for > 1 s → fallback priority order:  
-    GLASSES → WEARABLE → PHONE.  
-• Restores preferred MicSource after BLE stable ≥ 2 s.  
-• All capture lifecycle bound to HubBleService.coroutineScope.  
-• Switch latency ≤ 200 ms.  
-Source: Context Engineering Addendum v4.4a §2 and Codex notes.
+## 4. MIC WATCHDOG
+- Monitor incoming `0xF1` frames.
+- If no frame within 2 s, restart BLE mic.
+- Report `micAlive` → false when exceeded threshold.
+- Restart using existing coroutine scope in `HubBleService`.
 
-────────────────────────────────────────────
-4. Telemetry Stability Notes
-• Ping interval ≥ 1 s per lens to avoid ACK storm.  
-• Warm-up text responses are soft ACKs; don’t raise fail count.  
-• Legacy parsing path unchanged for backward compatibility.  
-• No UI impact expected.
+## 5. HUD COMMANDS
+- `0x20` Display Text → payload UTF-8 string + len.
+- `0x21` Clear Display → no payload.
+- `0x26` Dashboard Position → [0x02, 0x00/0x01, vertical (1–8), distance (1–9)].
+- Use for in-glasses text rendering and placement control.
 
-────────────────────────────────────────────
-5. Verification Checklist
-✅ PING command logs `[ACK][L/R] OK (type=…)`.  
-✅ BLE audio loss triggers fallback to Wearable within 1 s.  
-✅ BLE reconnect restores Glasses mic in < 2 s.  
-✅ No duplicate collectors in SettingsRepository flows.  
-✅ No SecurityException when permissions missing.  
+## 6. TELEMETRY EXTENSION
+- `0x2C` → Battery (voltage + charge flag).  
+- `0x37` → Uptime (seconds since boot).  
+- `0xF5` → Gesture (events: tap, swipe, hold).  
+- Merge into `DeviceTelemetrySnapshot` with timestamp.  
+- Publish via `Flow<DeviceTelemetry>`.
 
-────────────────────────────────────────────
-6. Next Phase Preview
-After P1 stabilizes, move to Phase P2 (HUD Text & Clear Control).  
-P2 will add GuiCommandHelper.kt and command queue for 0x4E/0x18.
+## 7. AUDIOOUTMANAGER DESIGN
+- Enum class `AudioSink { GLASSES, WEARABLE, PHONE }`.  
+- Pref-backed Flow for sink changes.  
+- Uses Android AudioManager / AudioDeviceInfo for routing.  
+- Handles cross-fade (100 ms) when sink changes.  
+- Default sink = GLASSES.  
+- Integrates with TTS engine and VoiceAudioSettings.
 
-────────────────────────────────────────────
-Citations:
-• Even Realities G1 BLE Protocol docs (2024).  
-• EvenDemoApp log samples (Dashboard and Battery ACK traces).  
-• Codex patch review and feedback (2025-11-08).  
-• Moncchichi Hub Context Engineering v4.4a Addendum.  
-• G1Sample Swift code (battery frame and 0xF1 audio handling).  
-────────────────────────────────────────────
+## 8. VOICE & AUDIO SETTINGS UI
+- New fragment `VoiceAudioSettingsFragment`.  
+- Toggles: “Audible Responses” (on/off), “Prefer Phone Mic”.  
+- Dropdown: Output Device (Auto / Phone / Headset).  
+- Requests `RECORD_AUDIO` permission at runtime.  
+- Updates preferences and notifies AudioOutManager / MicStreamManager.
+
+## 9. PERMISSIONS
+Manifest addition:  
+```xml
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+Runtime check with ActivityCompat.requestPermissions() → REQ_CODE_AUDIO.
+
+10. MCP PREPARATION
+	•	Stub McpBridge.kt with empty methods init(), sendContext(), receiveContext().
+	•	Placeholder for local context model engine.
+	•	No network or OpenAI calls yet; local only.
+
+11. EXECUTION PLAN
+	1.	Build Unblock: stub missing audio classes.
+	2.	Patch 1: ACK logic + mic watchdog.
+	3.	Patch 2: HUD display and clear.
+	4.	Patch 3: Telemetry (battery, gesture).
+	5.	Patch 4: Voice and Audio UI + permissions.
+	6.	Validate: dual-lens sync, telemetry stability, no crash on mic toggle.
+	7.	Then: MCP integration phase begins.
+
+⸻
+
+This document provides Codex full architectural context for implementing the above patches with minimal ambiguity. All commands, file paths, and expected behaviors are explicit.
