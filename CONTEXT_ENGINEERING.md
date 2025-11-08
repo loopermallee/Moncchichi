@@ -1,78 +1,61 @@
-CONTEXT ENGINEERING UPDATE — v4.4 Multi-Source Audio Routing Layer
-Moncchichi Hub Context Engineering v4.4
+# Moncchichi Hub Context Engineering v4.5
+────────────────────────────────────────────
+PHASE P1 – BLE Stability Core (Watchdog + Dual ACK)
 
-Extends v4.3. Introduces multi-source audio routing between Glasses, Wearable, and Phone.
+Goal:
+Stabilize BLE communication and mic stream availability to create a reliable foundation for HUD and teleprompter work.
 
-────────────────────────────────────────
-SECTION 1 – AUDIO ROUTING ARCHITECTURE
-────────────────────────────────────────
-• All audio flows pass through MicStreamManager (input) and AudioOutManager (output).
-• SettingsRepository persists preferred MicSource & AudioSink.
-• AppLocator provides singletons for both managers.
-• Each manager exposes a StateFlow for UI updates (rx rate, active sink label, errors).
-• BLE G1 remains default; other sources/sinks activated on demand.
+────────────────────────────────────────────
+1. ACK Handling Update
+• Older firmware (< v1.5.0) returns binary ACK bytes `0xC9 04`.  
+• Newer firmware (≥ v1.5.6) sends textual “OK” or no payload.  
+• Repository now accepts both formats and logs type.  
+  → Eliminates false `→ PING ← ERR` in Developer Console.  
+Source: Even Realities G1 BLE Protocol + EvenDemoApp logs (2024–2025).
 
-────────────────────────────────────────
-SECTION 2 – MIC INPUT ROUTING
-────────────────────────────────────────
-Order of preference → GLASSES (BLE 0xF1 stream) > WEARABLE (Bluetooth SCO) > PHONE (AudioRecord 16 kHz mono).
-Switch within 200 ms on source change or disconnect.
-Apply AEC when input and output both Phone.
-Stats: rxRate (pkts/s) + gaps count → Developer Console tag [DIAG][AUDIOIN].
+────────────────────────────────────────────
+2. Mic Stream Watchdog
+• `BleTelemetryRepository.handleAudioPacket()` records last 0xF1 frame timestamp.  
+• New coroutine monitors for silence > 500 ms; sets `_micAvailability = false`.  
+• Resets on frame receipt or unbind().  
+• Exposed as Flow<Boolean> to MicStreamManager.  
+Source: Codex review (2025-11-08).
 
-────────────────────────────────────────
-SECTION 3 – AUDIO OUTPUT ROUTING
-────────────────────────────────────────
-Sink priority → GLASSES (HUD BLE speaker) > WEARABLE (A2DP) > PHONE (AudioTrack).
-Prebuffer 100–200 ms and cross-fade on switch.
-Playback uses Flow with single writer model.
-Console tag [DIAG][AUDIOOUT].
+────────────────────────────────────────────
+3. Mic Source Auto-Fallback
+• MicStreamManager subscribes to micAvailability.  
+• If false for > 1 s → fallback priority order:  
+    GLASSES → WEARABLE → PHONE.  
+• Restores preferred MicSource after BLE stable ≥ 2 s.  
+• All capture lifecycle bound to HubBleService.coroutineScope.  
+• Switch latency ≤ 200 ms.  
+Source: Context Engineering Addendum v4.4a §2 and Codex notes.
 
-────────────────────────────────────────
-SECTION 4 – SETTINGS CONTRACT
-────────────────────────────────────────
-Keys: preferred_mic_source, preferred_audio_sink.
-Enums MicSource & AudioSink live in audio/AudioRouting.kt.
-Values persist in SharedPreferences and are observed as Flow.
-Defaults → GLASSES/GLASSES.
-Auto-restore on launch and BLE reconnect.
+────────────────────────────────────────────
+4. Telemetry Stability Notes
+• Ping interval ≥ 1 s per lens to avoid ACK storm.  
+• Warm-up text responses are soft ACKs; don’t raise fail count.  
+• Legacy parsing path unchanged for backward compatibility.  
+• No UI impact expected.
 
-────────────────────────────────────────
-SECTION 5 – UI / USER WORKFLOW
-────────────────────────────────────────
-VoiceAudioSettingsFragment lists two toggle groups (Input, Output).
-Selecting a new option updates SettingsRepository and restarts managers.
-BLE status affects availability of “Glasses” options.
-Fallbacks occur silently with console note [DIAG][ROUTE].
+────────────────────────────────────────────
+5. Verification Checklist
+✅ PING command logs `[ACK][L/R] OK (type=…)`.  
+✅ BLE audio loss triggers fallback to Wearable within 1 s.  
+✅ BLE reconnect restores Glasses mic in < 2 s.  
+✅ No duplicate collectors in SettingsRepository flows.  
+✅ No SecurityException when permissions missing.  
 
-────────────────────────────────────────
-SECTION 6 – PERMISSIONS & LIFECYCLE
-────────────────────────────────────────
-Request RECORD_AUDIO & BLUETOOTH_CONNECT when needed.
-Handle permission denial with toast + fallback Phone mic.
-Stop all streams on fragment destroy or BLE service stop.
-Lifecycle binding follows existing HubService patterns.
+────────────────────────────────────────────
+6. Next Phase Preview
+After P1 stabilizes, move to Phase P2 (HUD Text & Clear Control).  
+P2 will add GuiCommandHelper.kt and command queue for 0x4E/0x18.
 
-────────────────────────────────────────
-SECTION 7 – EXPECTED BEHAVIOUR / TESTS
-────────────────────────────────────────
-• BLE connected → Mic/Sink = Glasses.
-• BLE drop → fallback Wearable → Phone.
-• Manual toggle re-routes ≤ 200 ms.
-• Prefs persist across sessions.
-• Reconnection restores user selection or defaults.
-
-────────────────────────────────────────
-SECTION 8 – EXTENSIBILITY
-────────────────────────────────────────
-Future hooks → multi-channel beamforming input or spatial TTS.
-Both MicStreamManager and AudioOutManager expose public switchSource()/switchSink() for AI assistant integration.
-
-────────────────────────────────────────
-SECTION 9 – LOG FORMAT
-────────────────────────────────────────
-Follow v1.1 §4 console schema →
-[AUDIOIN] Using Phone mic (16 kHz)
-[AUDIOOUT] Routing to Glasses HUD
-Throttled ≤ 3/s.
----
+────────────────────────────────────────────
+Citations:
+• Even Realities G1 BLE Protocol docs (2024).  
+• EvenDemoApp log samples (Dashboard and Battery ACK traces).  
+• Codex patch review and feedback (2025-11-08).  
+• Moncchichi Hub Context Engineering v4.4a Addendum.  
+• G1Sample Swift code (battery frame and 0xF1 audio handling).  
+────────────────────────────────────────────
