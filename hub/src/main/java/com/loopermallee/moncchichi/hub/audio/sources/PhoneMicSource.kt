@@ -23,9 +23,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 
 private const val SAMPLE_RATE = 16_000
 private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
@@ -126,7 +126,7 @@ class PhoneMicSource(
             return
         }
         val buffer = ShortArray(bufferSize)
-        while (coroutineContext.isActive) {
+        while (isActive) {
             val read = try {
                 audioRecord.read(buffer, 0, buffer.size)
             } catch (t: Throwable) {
