@@ -5,6 +5,7 @@ import android.os.SystemClock
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+import com.loopermallee.moncchichi.hub.audio.MicStreamManager
 import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
@@ -150,6 +151,7 @@ class BleTelemetryRepository(
 
     private val _micAvailability = MutableStateFlow(false)
     val micAvailability: StateFlow<Boolean> = _micAvailability.asStateFlow()
+    val micAlive: StateFlow<Boolean> = _micAvailability.asStateFlow()
 
     data class UartLine(val lens: Lens, val text: String)
 
@@ -254,8 +256,8 @@ class BleTelemetryRepository(
     private var boundService: MoncchichiBleService? = null
     private var lastConnected = false
     private var serviceScope: CoroutineScope? = null
-    private val lastAudioPacketTs = AtomicLong(0L)
-    private var audioWatchdogJob: Job? = null
+    private val lastAudioFrameTime = AtomicLong(0L)
+    private var micWatchdogJob: Job? = null
 
     private val leftBuffer = ByteArrayOutputStream()
     private val rightBuffer = ByteArrayOutputStream()
@@ -274,13 +276,13 @@ class BleTelemetryRepository(
         clearBuffers()
         keepAliveSnapshots.clear()
         _micAvailability.value = false
-        audioWatchdogJob?.cancel()
-        audioWatchdogJob = null
-        lastAudioPacketTs.set(0L)
+        micWatchdogJob?.cancel()
+        micWatchdogJob = null
+        lastAudioFrameTime.set(0L)
         _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
         serviceScope?.let { scope ->
             if (boundService != null) {
-                startAudioWatchdog(scope)
+                startMicWatchdog(scope)
             }
         }
     }
@@ -300,7 +302,7 @@ class BleTelemetryRepository(
                 }
             }
         }
-        startAudioWatchdog(scope)
+        startMicWatchdog(scope)
         frameJob = scope.launch {
             service.incoming.collect { frame ->
                 onFrame(frame.lens, frame.payload)
@@ -315,7 +317,7 @@ class BleTelemetryRepository(
                 lastConnected = connected
                 if (!connected) {
                     _micAvailability.value = false
-                    lastAudioPacketTs.set(0L)
+                    lastAudioFrameTime.set(0L)
                 }
                 mergeRssi(Lens.LEFT, state.left.rssi)
                 mergeRssi(Lens.RIGHT, state.right.rssi)
@@ -346,12 +348,12 @@ class BleTelemetryRepository(
         ackJob?.cancel(); ackJob = null
         dashboardStatusJob?.cancel(); dashboardStatusJob = null
         dashboardEncoder?.dispose(); dashboardEncoder = null
-        audioWatchdogJob?.cancel(); audioWatchdogJob = null
+        micWatchdogJob?.cancel(); micWatchdogJob = null
         boundService = null
         serviceScope = null
         _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
         _micAvailability.value = false
-        lastAudioPacketTs.set(0L)
+        lastAudioFrameTime.set(0L)
         lastConnected = false
         clearBuffers()
         keepAliveSnapshots.clear()
@@ -608,7 +610,7 @@ class BleTelemetryRepository(
             return
         }
         val now = SystemClock.elapsedRealtime()
-        val previous = lastAudioPacketTs.getAndSet(now)
+        val previous = lastAudioFrameTime.getAndSet(now)
         val wasInactive = !_micAvailability.value
         _micAvailability.value = true
         if (wasInactive) {
@@ -619,16 +621,23 @@ class BleTelemetryRepository(
         _micPackets.tryEmit(event)
     }
 
-    private fun startAudioWatchdog(scope: CoroutineScope) {
-        audioWatchdogJob?.cancel()
-        audioWatchdogJob = scope.launch(Dispatchers.Default) {
+    private fun startMicWatchdog(scope: CoroutineScope) {
+        micWatchdogJob?.cancel()
+        micWatchdogJob = scope.launch(Dispatchers.Default) {
             while (isActive) {
-                val since = SystemClock.elapsedRealtime() - lastAudioPacketTs.get()
-                if (since > 2000 && _micAvailability.value) {
-                    _micAvailability.value = false
-                    logger("[AUDIO][WATCHDOG] BLE mic inactive for ${since} ms")
+                delay(2000)
+                val last = lastAudioFrameTime.get()
+                if (last == 0L) {
+                    continue
                 }
-                delay(1000)
+                val delta = SystemClock.elapsedRealtime() - last
+                if (delta > 2000) {
+                    val wasAvailable = _micAvailability.value
+                    if (wasAvailable) {
+                        _micAvailability.value = false
+                        MicStreamManager().restart()
+                    }
+                }
             }
         }
     }

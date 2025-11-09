@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.ble.G1BleUartClient
@@ -48,6 +49,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.jvm.Volatile
+import kotlin.text.Charsets
 
 // --------------------------------------------------------------------
 //  Compatibility constants for pre-API 31 bond failure reasons
@@ -169,10 +171,27 @@ internal fun Int.toBondReasonString(): String {
     }
 }
 
+private fun ByteArray.matchesSimpleAck(): Boolean {
+    if (isNotEmpty()) {
+        val head = this[0]
+        if (head == G1Protocols.STATUS_OK.toByte() || head == 0x04.toByte()) {
+            return true
+        }
+    }
+    val ascii = runCatching { String(this, Charsets.UTF_8) }.getOrNull() ?: return false
+    return ascii.trim() == "OK"
+}
+
 internal fun ByteArray.parseAckOutcome(): AckOutcome? {
     if (isEmpty()) return null
 
     val opcode = this[0].toInt() and 0xFF
+
+    if (size == 1 && matchesSimpleAck()) {
+        val status = this[0].toInt() and 0xFF
+        val normalizedStatus = if (status == 0x04) G1Protocols.STATUS_OK else status
+        return AckOutcome.Success(opcode = null, status = normalizedStatus)
+    }
 
     val statusByteFromHeader = getOrNull(1)?.toInt()?.and(0xFF)
     when (statusByteFromHeader) {
@@ -314,6 +333,10 @@ class G1BleClient(
         internal const val KEEP_ALIVE_OPCODE = G1Protocols.CMD_KEEPALIVE
         private const val HELLO_WATCHDOG_TIMEOUT_MS = 12_000L
         private const val HELLO_RECOVERY_RECONNECT_DELAY_MS = 750L
+        private const val ACK_DELAY_THRESHOLD_MS = 500L
+        private const val ACK_MISSING_THRESHOLD_MS = 2_000L
+        private const val ACK_HEALTH_POLL_INTERVAL_MS = 200L
+        private const val ACK_TIMEOUT_STREAK_TRIGGER = 3
         private val AUTH_FAILURE_STATUS_CODES = setOf(0x85, 0x13)
         private val GATT_RECONNECT_BACKOFF_MS = longArrayOf(500L, 1_000L, 2_000L)
     }
@@ -330,6 +353,12 @@ class G1BleClient(
         Ready,
         Disconnected,
         Timeout,
+    }
+
+    enum class AckState {
+        OK,
+        Delayed,
+        Missing,
     }
 
     data class State(
@@ -351,6 +380,10 @@ class G1BleClient(
         val lastBondState: Int = BluetoothDevice.BOND_NONE,
         val lastBondReason: Int? = null,
         val lastBondEventAt: Long? = null,
+        val lastAckRealtimeMs: Long? = null,
+        val ackDelayMs: Long? = null,
+        val ackState: AckState = AckState.Missing,
+        val ackTimeoutStreak: Int = 0,
     )
 
     private val uartClient = uartClientFactory(
@@ -436,6 +469,10 @@ class G1BleClient(
     private var lastBondState: Int = device.bondState
 
     private val lastAckTimestamp = AtomicLong(0L)
+    private val lastAckRealtime = AtomicLong(0L)
+    private val ackTimeoutStreak = AtomicInteger(0)
+    private val _ackHealth = MutableStateFlow(AckState.Missing)
+    val ackHealth: StateFlow<AckState> = _ackHealth.asStateFlow()
     private val mtuCommandMutex = Mutex()
     @Volatile private var lastAckedMtu: Int? = null
     @Volatile private var warmupExpected: Boolean = false
@@ -445,12 +482,14 @@ class G1BleClient(
     private var gattReconnectJob: Job? = null
     private var gattReconnectAttempts = 0
     @Volatile private var bondRemovalInFlight: Boolean = false
+    private var ackWatchdogJob: Job? = null
 
     fun connect() {
         lastAckedMtu = null
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
         keepAliveInFlight.set(0)
+        resetAckTelemetry()
         settingsLaunchedThisSession = false
         dismissPairingNotification()
         cancelHelloWatchdog()
@@ -579,6 +618,8 @@ class G1BleClient(
             }
         }
 
+        startAckWatchdog()
+
         scope.launch {
             uartClient.observeNotifications { payload ->
                 payload.parseAckOutcome()?.let { ack ->
@@ -588,7 +629,7 @@ class G1BleClient(
                     var keepAlivePrompt: KeepAlivePrompt? = null
                     val warmupAck = ack is AckOutcome.Success && ack.satisfiesWarmupAck()
                     if (ack is AckOutcome.Success) {
-                        lastAckTimestamp.set(now)
+                        onAckEvent(now, AckState.OK, evaluateDelay = true)
                         if (warmupExpected && ack.satisfiesWarmupAck()) {
                             warmupExpected = false
                             val negotiatedMtu = runCatching { uartClient.mtu.value }.getOrNull()
@@ -624,11 +665,14 @@ class G1BleClient(
                             }
                         }
                     } else if (ack is AckOutcome.Failure && ack.opcode == KEEP_ALIVE_OPCODE) {
+                        onAckEvent(now, AckState.Delayed, evaluateDelay = false)
                         val previous = decrementKeepAliveInFlight()
                         if (previous <= 0) {
                             keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
                             deliverAck = false
                         }
+                    } else if (ack is AckOutcome.Failure) {
+                        onAckEvent(now, AckState.Delayed, evaluateDelay = false)
                     }
                     val event = AckEvent(
                         timestampMs = now,
@@ -932,6 +976,7 @@ class G1BleClient(
                         label,
                         "${tt()} ACK timeout opcode=${opcode.toLabel()} (attempt ${attempt + 1})",
                     )
+                    handleAckTimeout(ackTimeoutMs)
                     onAttemptResult?.invoke(
                         CommandAttemptTelemetry(
                             attemptIndex = attempt + 1,
@@ -953,6 +998,115 @@ class G1BleClient(
     fun readRemoteRssi(): Boolean = uartClient.readRemoteRssi()
 
     fun lastAckTimestamp(): Long = lastAckTimestamp.get()
+
+    private fun onAckEvent(
+        wallClockNow: Long,
+        baseState: AckState,
+        evaluateDelay: Boolean,
+    ): AckState {
+        val realtimeNow = SystemClock.elapsedRealtime()
+        val previous = lastAckRealtime.getAndSet(realtimeNow)
+        val delay = if (previous == 0L) null else realtimeNow - previous
+        lastAckTimestamp.set(wallClockNow)
+        ackTimeoutStreak.set(0)
+        val derivedState = if (evaluateDelay && delay != null && delay > ACK_DELAY_THRESHOLD_MS) {
+            AckState.Delayed
+        } else {
+            baseState
+        }
+        updateAckStateInternal(
+            ackState = derivedState,
+            lastAckRealtimeMs = realtimeNow,
+            ackDelayMs = delay,
+            timeoutStreak = 0,
+        )
+        return derivedState
+    }
+
+    private fun handleAckTimeout(ackTimeoutMs: Long) {
+        if (ackTimeoutMs <= ACK_DELAY_THRESHOLD_MS) return
+        val streak = ackTimeoutStreak.incrementAndGet()
+        val lastRealtime = lastAckRealtime.get().takeIf { it != 0L }
+        updateAckStateInternal(
+            ackState = AckState.Delayed,
+            lastAckRealtimeMs = lastRealtime,
+            ackDelayMs = _state.value.ackDelayMs,
+            timeoutStreak = streak,
+        )
+        if (streak == ACK_TIMEOUT_STREAK_TRIGGER) {
+            logger.w(
+                label,
+                "${tt()} [ACK] Timeout streak reached $streak (timeout=${ackTimeoutMs}ms)",
+            )
+            scheduleGattReconnect("ACK timeout streak")
+        }
+    }
+
+    private fun startAckWatchdog() {
+        ackWatchdogJob?.cancel()
+        ackWatchdogJob = scope.launch {
+            while (isActive) {
+                val lastRealtime = lastAckRealtime.get()
+                val nowRealtime = SystemClock.elapsedRealtime()
+                val elapsed = if (lastRealtime == 0L) null else nowRealtime - lastRealtime
+                val state = when {
+                    lastRealtime == 0L -> AckState.Missing
+                    elapsed != null && elapsed > ACK_MISSING_THRESHOLD_MS -> AckState.Missing
+                    elapsed != null && elapsed > ACK_DELAY_THRESHOLD_MS -> AckState.Delayed
+                    else -> AckState.OK
+                }
+                updateAckStateInternal(
+                    ackState = state,
+                    lastAckRealtimeMs = lastRealtime.takeIf { it != 0L },
+                    ackDelayMs = _state.value.ackDelayMs,
+                    timeoutStreak = ackTimeoutStreak.get(),
+                )
+                delay(ACK_HEALTH_POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun resetAckTelemetry() {
+        lastAckTimestamp.set(0L)
+        lastAckRealtime.set(0L)
+        ackTimeoutStreak.set(0)
+        updateAckStateInternal(
+            ackState = AckState.Missing,
+            lastAckRealtimeMs = null,
+            ackDelayMs = null,
+            timeoutStreak = 0,
+        )
+    }
+
+    private fun updateAckStateInternal(
+        ackState: AckState,
+        lastAckRealtimeMs: Long?,
+        ackDelayMs: Long?,
+        timeoutStreak: Int,
+    ) {
+        val normalizedState = if (timeoutStreak >= ACK_TIMEOUT_STREAK_TRIGGER) {
+            AckState.Missing
+        } else {
+            ackState
+        }
+        if (_ackHealth.value != normalizedState) {
+            _ackHealth.value = normalizedState
+        }
+        val current = _state.value
+        if (
+            current.ackState != normalizedState ||
+            current.lastAckRealtimeMs != lastAckRealtimeMs ||
+            current.ackDelayMs != ackDelayMs ||
+            current.ackTimeoutStreak != timeoutStreak
+        ) {
+            _state.value = current.copy(
+                ackState = normalizedState,
+                lastAckRealtimeMs = lastAckRealtimeMs,
+                ackDelayMs = ackDelayMs,
+                ackTimeoutStreak = timeoutStreak,
+            )
+        }
+    }
 
     suspend fun respondToKeepAlivePrompt(prompt: KeepAlivePrompt): KeepAliveResult {
         var attempt = 0

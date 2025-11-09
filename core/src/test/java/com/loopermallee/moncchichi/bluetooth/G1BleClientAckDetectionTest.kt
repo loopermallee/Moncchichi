@@ -128,6 +128,24 @@ class G1BleClientAckDetectionTest {
     }
 
     @Test
+    fun `parseAckOutcome recognizes bare status ack byte`() {
+        val payload = byteArrayOf(G1Protocols.STATUS_OK.toByte())
+
+        val result = payload.parseAckOutcome()
+
+        assertIs<AckOutcome.Success>(result)
+    }
+
+    @Test
+    fun `parseAckOutcome recognizes legacy ack control byte`() {
+        val payload = byteArrayOf(0x04)
+
+        val result = payload.parseAckOutcome()
+
+        assertIs<AckOutcome.Success>(result)
+    }
+
+    @Test
     fun `parseAckOutcome returns null for unrelated text`() {
         val payload = "not ack".encodeToByteArray()
 
@@ -156,12 +174,8 @@ class G1BleClientAckDetectionTest {
 
     @Test
     fun `parseAckOutcome returns null for partial binary markers`() {
-        val onlyOpcode = byteArrayOf(0x04)
-        val onlyStatus = byteArrayOf(0xC9.toByte())
         val mismatchedStatus = byteArrayOf(0x04, 0x05)
 
-        assertNull(onlyOpcode.parseAckOutcome())
-        assertNull(onlyStatus.parseAckOutcome())
         assertNull(mismatchedStatus.parseAckOutcome())
     }
 
