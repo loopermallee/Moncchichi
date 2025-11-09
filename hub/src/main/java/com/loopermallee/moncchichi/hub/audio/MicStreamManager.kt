@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.hub.audio
 
 import android.content.Context
+import android.util.Log
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -57,7 +58,9 @@ class MicStreamManager {
 
     fun stopCapture() {}
 
-    fun restart() {}
+    fun restart() {
+        Log.d("MicStreamManager", "[Watchdog] Restarting BLE mic capture")
+    }
 
     fun isAlive(): Boolean = true
 

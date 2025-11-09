@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import com.loopermallee.moncchichi.bluetooth.G1Protocols
 import com.loopermallee.moncchichi.bluetooth.refreshCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -233,7 +234,8 @@ class G1BleUartClient(
             g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray
         ) {
             if (characteristic.uuid == NUS_TX) {
-                logger("[DEVICE][NOTIFY] ${characteristic.uuid} (${value.size} bytes)")
+                val ackSuffix = if (isAck(value)) " [ACK]" else ""
+                logger("[DEVICE][NOTIFY] ${characteristic.uuid} (${value.size} bytes)$ackSuffix")
                 _incoming.tryEmit(value)
             } else if (characteristic.uuid == SMP_CHAR) {
                 val opcode = value.firstOrNull()?.toInt()?.and(0xFF)
@@ -325,6 +327,17 @@ class G1BleUartClient(
                 }
             }
         }
+    }
+
+    private fun isAck(packet: ByteArray): Boolean {
+        if (packet.isNotEmpty()) {
+            val head = packet[0]
+            if (head == G1Protocols.STATUS_OK.toByte() || head == 0x04.toByte()) {
+                return true
+            }
+        }
+        val ascii = runCatching { String(packet, StandardCharsets.UTF_8) }.getOrNull() ?: return false
+        return ascii.trim() == "OK"
     }
 }
 
