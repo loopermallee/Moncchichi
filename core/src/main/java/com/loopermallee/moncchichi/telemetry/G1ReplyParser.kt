@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.telemetry
 
 import android.util.Log
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.experimental.and
 import kotlin.math.min
@@ -48,6 +49,34 @@ object G1ReplyParser {
         val sequence: Int?,
         val payload: ByteArray,
     )
+
+    data class BatteryInfo(
+        val voltage: Int,
+        val isCharging: Boolean,
+    )
+
+    data class GestureEvent(
+        val code: Int,
+        val name: String,
+    ) {
+        companion object {
+            private val codeNames = mapOf(
+                0x00 to "unknown",
+                0x01 to "single_tap",
+                0x02 to "double_tap",
+                0x03 to "triple_tap",
+                0x04 to "long_press",
+                0x05 to "swipe_forward",
+                0x06 to "swipe_backward",
+            )
+
+            fun fromCode(code: Int): GestureEvent {
+                val name = codeNames[code]
+                    ?: String.format(Locale.US, "code_0x%02X", code and 0xFF)
+                return GestureEvent(code, name)
+            }
+        }
+    }
 
     data class F5Payload(
         val subcommand: Int?,
@@ -206,6 +235,25 @@ object G1ReplyParser {
             ByteArray(0)
         }
         return AudioPacket(sequence = frame.raw.getOrNull(1)?.toUnsignedInt(), payload = payload)
+    }
+
+    fun parseBattery(payload: ByteArray): BatteryInfo {
+        val low = payload.getOrNull(0)?.toUnsignedInt() ?: 0
+        val high = payload.getOrNull(1)?.toUnsignedInt() ?: 0
+        val voltage = (high shl 8) or low
+        val isCharging = payload.getOrNull(2)?.toUnsignedInt() == 1
+        return BatteryInfo(voltage = voltage, isCharging = isCharging)
+    }
+
+    fun parseUptime(payload: ByteArray): Int {
+        val low = payload.getOrNull(0)?.toUnsignedInt() ?: 0
+        val high = payload.getOrNull(1)?.toUnsignedInt() ?: 0
+        return low or (high shl 8)
+    }
+
+    fun parseGesture(payload: ByteArray): GestureEvent {
+        val code = payload.firstOrNull()?.toUnsignedInt() ?: 0
+        return GestureEvent.fromCode(code)
     }
 
     fun parseF5Payload(frame: NotifyFrame): F5Payload? {

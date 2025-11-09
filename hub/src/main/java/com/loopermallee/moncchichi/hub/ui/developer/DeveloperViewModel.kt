@@ -19,6 +19,7 @@ import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperViewModel.DeveloperEvent
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
+import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -88,6 +89,10 @@ class DeveloperViewModel(
 
     val audioSink: StateFlow<AudioSink> = SettingsRepository.audioSinkFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsRepository.getAudioSink())
+
+    val battery: StateFlow<G1ReplyParser.BatteryInfo?> = telemetry.battery
+
+    val gestures: SharedFlow<G1ReplyParser.GestureEvent> = telemetry.gesture
 
     private val _events = MutableSharedFlow<DeveloperEvent>(extraBufferCapacity = 1)
     val events: SharedFlow<DeveloperEvent> = _events.asSharedFlow()
