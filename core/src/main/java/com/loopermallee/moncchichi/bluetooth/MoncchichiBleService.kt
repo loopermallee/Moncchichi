@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 import java.util.Locale
@@ -450,6 +451,33 @@ class MoncchichiBleService(
     ): Boolean {
         val payload = byteArrayOf(0xF5.toByte(), 0x24)
         return send(payload, lens.toTarget(), ackTimeoutMs, retries, retryDelayMs)
+    }
+
+    fun sendHudText(lens: Lens, text: String): Boolean {
+        val bytes = text.encodeToByteArray()
+        val payload = ByteArray(3 + bytes.size)
+        payload[0] = G1Protocols.CMD_HUD_TEXT.toByte()
+        payload[1] = bytes.size.toByte()
+        payload[2] = 0x00
+        bytes.copyInto(payload, destinationOffset = 3)
+        val ok = runBlocking { send(payload, lens.toTarget()) }
+        if (ok) {
+            log("[HUD][${lens.shortLabel()}] Text sent (${bytes.size} bytes)")
+        } else {
+            logWarn("[HUD][${lens.shortLabel()}] Text send failed")
+        }
+        return ok
+    }
+
+    fun clearDisplay(lens: Lens): Boolean {
+        val payload = byteArrayOf(G1Protocols.CMD_CLEAR.toByte(), 0x00)
+        val ok = runBlocking { send(payload, lens.toTarget()) }
+        if (ok) {
+            log("[HUD][${lens.shortLabel()}] Cleared display")
+        } else {
+            logWarn("[HUD][${lens.shortLabel()}] Clear failed")
+        }
+        return ok
     }
 
     fun shutdown() {

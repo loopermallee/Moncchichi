@@ -314,6 +314,16 @@ class BleTelemetryRepository(
                 if (!connected && lastConnected) {
                     reset()
                 }
+                if (connected && !lastConnected) {
+                    val timestamp = System.currentTimeMillis()
+                    val cleared = service.clearDisplay(Lens.RIGHT)
+                    val message = if (cleared) {
+                        "Cleared display"
+                    } else {
+                        "Clear display failed"
+                    }
+                    emitConsole("HUD", Lens.RIGHT, message, timestamp)
+                }
                 lastConnected = connected
                 if (!connected) {
                     _micAvailability.value = false

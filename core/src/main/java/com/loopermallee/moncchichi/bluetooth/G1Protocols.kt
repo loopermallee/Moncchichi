@@ -8,6 +8,8 @@ object G1Protocols {
     const val CMD_BRIGHTNESS = 0x01
     const val CMD_SYSTEM = 0x23
     const val CMD_GLASSES_INFO = 0x2C
+    const val CMD_HUD_TEXT = 0x09
+    const val CMD_CLEAR = 0x25
 
     // Status codes
     const val STATUS_OK = 0xC9
@@ -37,6 +39,8 @@ object G1Protocols {
         CMD_BRIGHTNESS -> "CMD_BRIGHTNESS"
         CMD_SYSTEM -> "CMD_SYSTEM"
         CMD_GLASSES_INFO -> "CMD_GLASSES_INFO"
+        CMD_HUD_TEXT -> "CMD_HUD_TEXT"
+        CMD_CLEAR -> "CMD_CLEAR"
         else -> "0x%02X".format(opcode and 0xFF)
     }
 }
