@@ -153,6 +153,16 @@ class BleTelemetryRepository(
     val micAvailability: StateFlow<Boolean> = _micAvailability.asStateFlow()
     val micAlive: StateFlow<Boolean> = _micAvailability.asStateFlow()
 
+    private val _battery = MutableStateFlow<G1ReplyParser.BatteryInfo?>(null)
+    val battery: StateFlow<G1ReplyParser.BatteryInfo?> = _battery.asStateFlow()
+
+    private val _gestures = MutableSharedFlow<G1ReplyParser.GestureEvent>(
+        replay = 0,
+        extraBufferCapacity = 32,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val gesture: SharedFlow<G1ReplyParser.GestureEvent> = _gestures.asSharedFlow()
+
     data class UartLine(val lens: Lens, val text: String)
 
     data class StateChangedEvent(
@@ -172,6 +182,14 @@ class BleTelemetryRepository(
     val stateEvents: SharedFlow<StateChangedEvent> = _stateEvents.asSharedFlow()
 
     private val consoleTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+
+    init {
+        persistenceScope.launch {
+            telemetryParser.events.collect { event ->
+                handleTelemetryEvent(event)
+            }
+        }
+    }
 
     private fun emitConsole(tag: String, lens: Lens?, message: String, timestamp: Long = System.currentTimeMillis()) {
         val sideLabel = lens?.let { if (it == Lens.LEFT) "L" else "R" }
@@ -276,6 +294,7 @@ class BleTelemetryRepository(
         clearBuffers()
         keepAliveSnapshots.clear()
         _micAvailability.value = false
+        _battery.value = null
         micWatchdogJob?.cancel()
         micWatchdogJob = null
         lastAudioFrameTime.set(0L)
@@ -407,9 +426,7 @@ class BleTelemetryRepository(
         if (frame.isEmpty()) return
         val opcode = frame.first().toInt() and 0xFF
         val timestamp = System.currentTimeMillis()
-        val parseResult = telemetryParser.parse(lens, frame, timestamp) { event ->
-            handleTelemetryEvent(event)
-        }
+        val parseResult = telemetryParser.parse(lens, frame, timestamp)
         if (parseResult.eventsEmitted) {
             return
         }
@@ -452,10 +469,33 @@ class BleTelemetryRepository(
                 applyStateFlags(event.lens, event.flags, event.timestampMs, hex)
             }
             is BleTelemetryParser.TelemetryEvent.BatteryEvent -> {
-                applyBatteryEvent(event)
+                event.info?.let { info ->
+                    _battery.value = info
+                    emitConsole(
+                        "VITALS",
+                        event.lens,
+                        "battery=${info.voltage}mV charging=${info.isCharging}",
+                        event.timestampMs,
+                    )
+                }
+                if (event.batteryPercent != null || event.caseBatteryPercent != null) {
+                    applyBatteryEvent(event)
+                } else {
+                    handleBattery(event.lens, event.rawFrame)
+                }
             }
             is BleTelemetryParser.TelemetryEvent.UptimeEvent -> {
                 applyUptimeEvent(event)
+            }
+            is BleTelemetryParser.TelemetryEvent.GestureEvent -> {
+                _gestures.tryEmit(event.gesture)
+                val label = String.format(
+                    Locale.US,
+                    "%s (0x%02X)",
+                    event.gesture.name,
+                    event.gesture.code and 0xFF,
+                )
+                emitConsole("GESTURE", event.lens, label, event.timestampMs)
             }
             is BleTelemetryParser.TelemetryEvent.AudioPacketEvent -> {
                 handleAudioPacket(event)
@@ -809,6 +849,9 @@ class BleTelemetryRepository(
             opcode = opcode,
             batteryPercent = lensBattery,
             caseBatteryPercent = caseBattery,
+            info = notifyFrame?.payload?.let { payload ->
+                runCatching { G1ReplyParser.parseBattery(payload) }.getOrNull()
+            },
             rawFrame = frame.copyOf(),
         )
         applyBatteryEvent(event)

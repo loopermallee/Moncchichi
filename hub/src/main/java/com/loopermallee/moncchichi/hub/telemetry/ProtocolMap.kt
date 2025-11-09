@@ -2,6 +2,7 @@ package com.loopermallee.moncchichi.hub.telemetry
 
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
+import kotlin.collections.buildList
 
 internal typealias ProtocolHandler = (
     MoncchichiBleService.Lens,
@@ -26,26 +27,40 @@ object ProtocolMap {
             )
         },
         ProtocolKey(0x2C, 0x01) to { lens, frame, timestamp ->
-            val battery = G1ReplyParser.parseBattery(frame) ?: return@to emptyList()
+            val battery = G1ReplyParser.parseBattery(frame)
+            val info = if (frame.payload.isNotEmpty()) {
+                G1ReplyParser.parseBattery(frame.payload)
+            } else {
+                null
+            }
+            if (battery == null && info == null) {
+                return@to emptyList()
+            }
             listOf(
                 BleTelemetryParser.TelemetryEvent.BatteryEvent(
                     lens = lens,
                     timestampMs = timestamp,
                     opcode = frame.opcode,
-                    batteryPercent = battery.batteryPercent,
-                    caseBatteryPercent = battery.caseBatteryPercent,
+                    batteryPercent = battery?.batteryPercent,
+                    caseBatteryPercent = battery?.caseBatteryPercent,
+                    info = info,
                     rawFrame = frame.raw.copyOf(),
                 ),
             )
         },
         ProtocolKey(0x37) to { lens, frame, timestamp ->
             val uptime = G1ReplyParser.parseUptime(frame) ?: return@to emptyList()
+            val parsed = if (frame.payload.isNotEmpty()) {
+                G1ReplyParser.parseUptime(frame.payload).toLong()
+            } else {
+                uptime
+            }
             listOf(
                 BleTelemetryParser.TelemetryEvent.UptimeEvent(
                     lens = lens,
                     timestampMs = timestamp,
                     opcode = frame.opcode,
-                    uptimeSeconds = uptime,
+                    uptimeSeconds = parsed,
                     rawFrame = frame.raw.copyOf(),
                 ),
             )
@@ -64,21 +79,43 @@ object ProtocolMap {
             )
         },
         ProtocolKey(0xF5) to { lens, frame, timestamp ->
-            val parsed = G1ReplyParser.parseF5Payload(frame) ?: return@to emptyList()
-            if (parsed.vitals == null && parsed.evenAiEvent == null) {
+            val parsed = G1ReplyParser.parseF5Payload(frame)
+            val gesture = if (frame.payload.isNotEmpty()) {
+                G1ReplyParser.parseGesture(frame.payload)
+            } else {
+                null
+            }
+            if (parsed == null && gesture == null) {
                 return@to emptyList()
             }
-            listOf(
-                BleTelemetryParser.TelemetryEvent.F5Event(
-                    lens = lens,
-                    timestampMs = timestamp,
-                    opcode = frame.opcode,
-                    subcommand = parsed.subcommand,
-                    vitals = parsed.vitals,
-                    evenAiEvent = parsed.evenAiEvent,
-                    rawFrame = frame.raw.copyOf(),
-                ),
-            )
+            buildList {
+                parsed?.let {
+                    if (it.vitals != null || it.evenAiEvent != null) {
+                        add(
+                            BleTelemetryParser.TelemetryEvent.F5Event(
+                                lens = lens,
+                                timestampMs = timestamp,
+                                opcode = frame.opcode,
+                                subcommand = it.subcommand,
+                                vitals = it.vitals,
+                                evenAiEvent = it.evenAiEvent,
+                                rawFrame = frame.raw.copyOf(),
+                            ),
+                        )
+                    }
+                }
+                gesture?.let {
+                    add(
+                        BleTelemetryParser.TelemetryEvent.GestureEvent(
+                            lens = lens,
+                            timestampMs = timestamp,
+                            opcode = frame.opcode,
+                            gesture = it,
+                            rawFrame = frame.raw.copyOf(),
+                        ),
+                    )
+                }
+            }
         },
     )
 
