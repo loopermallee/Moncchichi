@@ -55,13 +55,36 @@ Success Criteria:
 - `0x26` Dashboard Position → [0x02, 0x00/0x01, vertical (1–8), distance (1–9)].
 - Use for in-glasses text rendering and placement control.
 
-## 7. TELEMETRY EXTENSION
-- `0x2C` → Battery (voltage + charge flag).  
-- `0x37` → Uptime (seconds since boot).  
-- `0xF5` → Gesture (events: tap, swipe, hold).  
-- Merge into `DeviceTelemetrySnapshot` with timestamp.  
-- Publish via `Flow<DeviceTelemetry>`.
+## 7. TELEMETRY EXTENSION (Phase 4.0 r1f)
 
+**Purpose:**  
+Integrate real-time status streams for battery (0x2C), uptime (0x37), and gesture (0xF5) telemetry.  
+Builds on the stable BLE and HUD foundations (Phases r1d–r1e) to provide complete device-state visibility.
+
+**Design:**  
+- `0x2C` → Battery telemetry  
+  - Returns voltage (mV) + charging flag (0 = idle, 1 = charging).  
+  - Parsed into `BatteryInfo(voltage:Int, isCharging:Boolean)`.  
+- `0x37` → Uptime telemetry  
+  - Reports seconds since lens boot.  
+  - Used to confirm connection stability and runtime drift.  
+- `0xF5` → Gesture telemetry  
+  - Captures events such as tap, double-tap, hold, or swipe.  
+  - Parsed into `GestureEvent(code:Int, name:String)` and emitted with lens tag.  
+- Extend `BleTelemetryParser` with opcode→handler map producing typed `TelemetryEvent` objects.  
+- Update `BleTelemetryRepository` to subscribe to parser events and maintain:  
+  - `_battery: StateFlow<BatteryInfo?>`  
+  - `_gesture: SharedFlow<GestureEvent>`  
+  - Uptime updates merged into the unified `DeviceTelemetrySnapshot` with timestamps.  
+- Expose all new telemetry via `Flow<DeviceTelemetry>` and surface through `DeveloperViewModel` for live debugging.  
+- Log to console using tags `[VITALS]` for battery/uptime and `[GESTURE]` for gesture input.
+
+**Success Criteria:**  
+1. Battery status visible and refreshed every ≈ 30 s while connected.  
+2. Uptime counter monotonic with no resets between packets.  
+3. Gesture events appear instantly per-lens in the Developer console.  
+4. All new handlers coexist with legacy `when{}` parsers (no breakage).  
+5. No regression to BLE stability, ACK timing, or mic watchdog.  
 ## 8. AUDIOOUTMANAGER DESIGN
 - Enum class `AudioSink { GLASSES, WEARABLE, PHONE }`.  
 - Pref-backed Flow for sink changes.  
