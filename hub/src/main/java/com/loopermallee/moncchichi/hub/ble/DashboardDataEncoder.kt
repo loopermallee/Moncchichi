@@ -1,6 +1,8 @@
 package com.loopermallee.moncchichi.hub.ble
 
+import com.loopermallee.moncchichi.bluetooth.G1Protocols
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -10,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class DashboardDataEncoder(
     scope: CoroutineScope,
@@ -56,6 +59,24 @@ class DashboardDataEncoder(
         if (!queue.trySend(BurstRequest(subcommand and 0xFF, payload.copyOf(), target)).isSuccess) {
             logger("Dashboard burst dropped — queue full")
         }
+    }
+
+    fun sendText(text: String, lens: Lens = Lens.RIGHT): Boolean {
+        val bytes = text.encodeToByteArray()
+        val header = byteArrayOf(
+            G1Protocols.CMD_HUD_TEXT.toByte(),
+            bytes.size.toByte(),
+            0x00,
+        )
+        return runBlocking { writer(header + bytes, targetFor(lens)) }
+    }
+
+    fun sendClear(lens: Lens = Lens.RIGHT): Boolean {
+        val payload = byteArrayOf(
+            G1Protocols.CMD_CLEAR.toByte(),
+            0x00,
+        )
+        return runBlocking { writer(payload, targetFor(lens)) }
     }
 
     fun estimateChunkCount(payloadSize: Int): Int {
@@ -157,5 +178,10 @@ class DashboardDataEncoder(
         private const val HEADER_SIZE: Int = 7
         private const val DEFAULT_CHUNK_PAYLOAD_SIZE: Int = 180
         private const val DEFAULT_DELAY_MS: Long = 30L
+    }
+
+    private fun targetFor(lens: Lens): MoncchichiBleService.Target = when (lens) {
+        Lens.LEFT -> MoncchichiBleService.Target.Left
+        Lens.RIGHT -> MoncchichiBleService.Target.Right
     }
 }
