@@ -37,12 +37,14 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "uptime_seconds") val uptimeSeconds: Long?,
     @ColumnInfo(name = "left_battery_percent") val leftBatteryPercent: Int?,
     @ColumnInfo(name = "left_case_battery_percent") val leftCaseBatteryPercent: Int?,
+    @ColumnInfo(name = "left_case_open") val leftCaseOpen: Boolean?,
     @ColumnInfo(name = "left_last_updated") val leftLastUpdated: Long?,
     @ColumnInfo(name = "left_rssi") val leftRssi: Int?,
     @ColumnInfo(name = "left_firmware_version") val leftFirmwareVersion: String?,
     @ColumnInfo(name = "left_notes") val leftNotes: String?,
     @ColumnInfo(name = "right_battery_percent") val rightBatteryPercent: Int?,
     @ColumnInfo(name = "right_case_battery_percent") val rightCaseBatteryPercent: Int?,
+    @ColumnInfo(name = "right_case_open") val rightCaseOpen: Boolean?,
     @ColumnInfo(name = "right_last_updated") val rightLastUpdated: Long?,
     @ColumnInfo(name = "right_rssi") val rightRssi: Int?,
     @ColumnInfo(name = "right_firmware_version") val rightFirmwareVersion: String?,
@@ -75,7 +77,7 @@ interface MemoryDao {
 
 @Database(
     entities = [ConsoleLine::class, AssistantEntry::class, TelemetrySnapshot::class],
-    version = 4,
+    version = 5,
 )
 abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao
@@ -85,6 +87,7 @@ class MemoryRepository(private val dao: MemoryDao) {
     data class LensSnapshot(
         val batteryPercent: Int?,
         val caseBatteryPercent: Int?,
+        val caseOpen: Boolean?,
         val lastUpdated: Long?,
         val rssi: Int?,
         val firmwareVersion: String?,
@@ -157,12 +160,14 @@ class MemoryRepository(private val dao: MemoryDao) {
             uptimeSeconds = uptimeSeconds,
             leftBatteryPercent = left.batteryPercent,
             leftCaseBatteryPercent = left.caseBatteryPercent,
+            leftCaseOpen = left.caseOpen,
             leftLastUpdated = left.lastUpdated,
             leftRssi = left.rssi,
             leftFirmwareVersion = left.firmwareVersion,
             leftNotes = left.notes,
             rightBatteryPercent = right.batteryPercent,
             rightCaseBatteryPercent = right.caseBatteryPercent,
+            rightCaseOpen = right.caseOpen,
             rightLastUpdated = right.lastUpdated,
             rightRssi = right.rssi,
             rightFirmwareVersion = right.firmwareVersion,
@@ -177,6 +182,7 @@ class MemoryRepository(private val dao: MemoryDao) {
             left = LensSnapshot(
                 batteryPercent = leftBatteryPercent,
                 caseBatteryPercent = leftCaseBatteryPercent,
+                caseOpen = leftCaseOpen,
                 lastUpdated = leftLastUpdated,
                 rssi = leftRssi,
                 firmwareVersion = leftFirmwareVersion,
@@ -185,6 +191,7 @@ class MemoryRepository(private val dao: MemoryDao) {
             right = LensSnapshot(
                 batteryPercent = rightBatteryPercent,
                 caseBatteryPercent = rightCaseBatteryPercent,
+                caseOpen = rightCaseOpen,
                 lastUpdated = rightLastUpdated,
                 rssi = rightRssi,
                 firmwareVersion = rightFirmwareVersion,

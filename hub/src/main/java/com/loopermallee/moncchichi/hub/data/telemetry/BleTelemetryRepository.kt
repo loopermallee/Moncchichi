@@ -13,6 +13,7 @@ import com.loopermallee.moncchichi.hub.audio.MicStreamManager
 import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
+import com.loopermallee.moncchichi.hub.diagnostics.TelemetryConsistencyValidator
 import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import kotlinx.coroutines.CoroutineScope
@@ -193,6 +194,8 @@ class BleTelemetryRepository(
         val timestamp: Long,
         val batteryVoltageMv: Int?,
         val isCharging: Boolean?,
+        val caseBatteryPercent: Int?,
+        val caseOpen: Boolean?,
         val uptimeSeconds: Long?,
         val firmwareVersion: String?,
         val environment: Map<String, String>?,
@@ -224,6 +227,8 @@ class BleTelemetryRepository(
             timestamp = 0L,
             batteryVoltageMv = null,
             isCharging = null,
+            caseBatteryPercent = null,
+            caseOpen = null,
             uptimeSeconds = null,
             firmwareVersion = null,
             environment = null,
@@ -324,6 +329,8 @@ class BleTelemetryRepository(
             lastGesture?.let { event ->
                 add("gesture=${gestureLabel(event.gesture)}")
             }
+            caseBatteryPercent?.let { add("casePct=$it") }
+            caseOpen?.let { add("caseOpen=$it") }
             environment?.takeIf { it.isNotEmpty() }?.let { map ->
                 add(map.entries.joinToString(prefix = "env{", postfix = "}") { (key, value) -> "$key=$value" })
             }
@@ -331,7 +338,8 @@ class BleTelemetryRepository(
 
         return MemoryRepository.LensSnapshot(
             batteryPercent = null,
-            caseBatteryPercent = null,
+            caseBatteryPercent = caseBatteryPercent,
+            caseOpen = caseOpen,
             lastUpdated = timestamp,
             rssi = null,
             firmwareVersion = firmwareVersion,
@@ -359,6 +367,19 @@ class BleTelemetryRepository(
 
     private val consoleTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
+    private val telemetryValidator: TelemetryConsistencyValidator? =
+        if (SettingsRepository.isDiagnosticsEnabled()) {
+            TelemetryConsistencyValidator(
+                scope = deviceTelemetryScope,
+                telemetry = deviceTelemetryFlow,
+                emitConsole = { tag, lens, message, timestamp ->
+                    emitConsole(tag, lens, message, timestamp)
+                },
+            )
+        } else {
+            null
+        }
+
     init {
         persistenceScope.launch {
             telemetryParser.events.collect { event ->
@@ -379,8 +400,12 @@ class BleTelemetryRepository(
                 append(it)
                 append("]")
             }
-            append(' ')
-            append(message)
+            if (message.startsWith("[")) {
+                append(message)
+            } else {
+                append(' ')
+                append(message)
+            }
             append(" @ ")
             append(timeLabel)
         }
@@ -479,6 +504,7 @@ class BleTelemetryRepository(
         lensTelemetrySnapshots.forEach { (lens, flow) ->
             flow.value = initialDeviceTelemetrySnapshot(lens)
         }
+        telemetryValidator?.reset()
         micWatchdogJob?.cancel()
         micWatchdogJob = null
         lastAudioFrameTime.set(0L)
@@ -688,10 +714,23 @@ class BleTelemetryRepository(
                     silentMode = event.flags.silentMode,
                     caseOpen = event.flags.caseOpen,
                 )
+                updateDeviceTelemetry(
+                    lens = event.lens,
+                    eventTimestamp = event.timestampMs,
+                    logUpdate = false,
+                ) { snapshot ->
+                    snapshot.copy(caseOpen = event.flags.caseOpen)
+                }
                 emitConsole(
                     "STATUS",
                     event.lens,
                     "caseOpen=${event.flags.caseOpen}",
+                    event.timestampMs,
+                )
+                emitConsole(
+                    "CASE",
+                    event.lens,
+                    "open=${event.flags.caseOpen}",
                     event.timestampMs,
                 )
             }
@@ -708,6 +747,21 @@ class BleTelemetryRepository(
                         "VITALS",
                         event.lens,
                         "${info.voltage} mV charging=${info.isCharging}",
+                        event.timestampMs,
+                    )
+                }
+                event.caseBatteryPercent?.let { percent ->
+                    updateDeviceTelemetry(
+                        lens = event.lens,
+                        eventTimestamp = event.timestampMs,
+                        logUpdate = false,
+                    ) { snapshot ->
+                        snapshot.copy(caseBatteryPercent = percent)
+                    }
+                    emitConsole(
+                        "CASE",
+                        event.lens,
+                        "caseBattery=${percent}%",
                         event.timestampMs,
                     )
                 }
@@ -1759,6 +1813,7 @@ class BleTelemetryRepository(
         MemoryRepository.LensSnapshot(
             batteryPercent = batteryPercent,
             caseBatteryPercent = caseBatteryPercent,
+            caseOpen = caseOpen,
             lastUpdated = lastUpdatedAt,
             rssi = rssi,
             firmwareVersion = firmwareVersion,

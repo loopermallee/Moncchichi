@@ -121,6 +121,11 @@ class DeveloperFragment : Fragment() {
             voltageView = view.findViewById(R.id.text_lens_left_voltage_value),
             chargingIcon = view.findViewById(R.id.text_lens_left_charging_icon),
             chargingValue = view.findViewById(R.id.text_lens_left_charging_value),
+            caseBatteryRow = view.findViewById(R.id.row_lens_left_case_battery),
+            caseBatteryValue = view.findViewById(R.id.text_lens_left_case_battery_value),
+            caseOpenRow = view.findViewById(R.id.row_lens_left_case_open),
+            caseOpenIcon = view.findViewById(R.id.text_lens_left_case_open_icon),
+            caseOpenValue = view.findViewById(R.id.text_lens_left_case_open_value),
             uptimeView = view.findViewById(R.id.text_lens_left_uptime_value),
             firmwareView = view.findViewById(R.id.text_lens_left_firmware_value),
             gestureRow = view.findViewById(R.id.row_lens_left_gesture),
@@ -132,6 +137,11 @@ class DeveloperFragment : Fragment() {
             voltageView = view.findViewById(R.id.text_lens_right_voltage_value),
             chargingIcon = view.findViewById(R.id.text_lens_right_charging_icon),
             chargingValue = view.findViewById(R.id.text_lens_right_charging_value),
+            caseBatteryRow = view.findViewById(R.id.row_lens_right_case_battery),
+            caseBatteryValue = view.findViewById(R.id.text_lens_right_case_battery_value),
+            caseOpenRow = view.findViewById(R.id.row_lens_right_case_open),
+            caseOpenIcon = view.findViewById(R.id.text_lens_right_case_open_icon),
+            caseOpenValue = view.findViewById(R.id.text_lens_right_case_open_value),
             uptimeView = view.findViewById(R.id.text_lens_right_uptime_value),
             firmwareView = view.findViewById(R.id.text_lens_right_firmware_value),
             gestureRow = view.findViewById(R.id.row_lens_right_gesture),
@@ -407,6 +417,11 @@ class DeveloperFragment : Fragment() {
         private val voltageView: TextView,
         private val chargingIcon: TextView,
         private val chargingValue: TextView,
+        private val caseBatteryRow: View,
+        private val caseBatteryValue: TextView,
+        private val caseOpenRow: View,
+        private val caseOpenIcon: TextView,
+        private val caseOpenValue: TextView,
         private val uptimeView: TextView,
         private val firmwareView: TextView,
         private val gestureRow: View,
@@ -419,17 +434,21 @@ class DeveloperFragment : Fragment() {
         private val defaultTextColor = ContextCompat.getColor(context, R.color.er_text_primary)
         private val batteryNormalColor = ContextCompat.getColor(context, R.color.batteryNormal)
         private val batteryLowColor = ContextCompat.getColor(context, R.color.batteryLow)
+        private val caseBatteryMidColor = ContextCompat.getColor(context, R.color.chargingActive)
         private val chargingActiveColor = ContextCompat.getColor(context, R.color.chargingActive)
         private val chargingInactiveColor = ContextCompat.getColor(context, R.color.chargingInactive)
         private val firmwareHighlightColor = ContextCompat.getColor(context, R.color.firmwareHighlight)
         private val uptimeStartColor = ContextCompat.getColor(context, R.color.uptimeStart)
         private val uptimeEndColor = ContextCompat.getColor(context, R.color.uptimeEnd)
+        private val caseOpenStartColor = ContextCompat.getColor(context, R.color.lens_header_left)
+        private val caseOpenEndColor = ContextCompat.getColor(context, R.color.lens_header_right)
         private val evaluator = ArgbEvaluator()
         private val glowStrokeWidth = context.resources.getDimensionPixelSize(R.dimen.lens_card_glow_stroke)
 
         private var chargingAnimator: ObjectAnimator? = null
         private var firmwareAnimator: ValueAnimator? = null
         private var glowAnimator: ValueAnimator? = null
+        private var caseOpenAnimator: ObjectAnimator? = null
         private var lastFirmware: String? = null
 
         init {
@@ -453,6 +472,8 @@ class DeveloperFragment : Fragment() {
             }
 
             updateCharging(snapshot?.isCharging)
+            updateCaseBattery(snapshot?.caseBatteryPercent)
+            updateCaseOpen(snapshot?.caseOpen)
 
             val uptime = snapshot?.uptimeSeconds
             if (uptime != null) {
@@ -499,10 +520,18 @@ class DeveloperFragment : Fragment() {
             firmwareAnimator = null
             glowAnimator?.cancel()
             glowAnimator = null
+            caseOpenAnimator?.cancel()
+            caseOpenAnimator = null
             card.setStrokeColor(Color.TRANSPARENT)
             card.strokeWidth = 0
             chargingIcon.alpha = 1f
             firmwareView.setTextColor(defaultTextColor)
+            caseBatteryRow.isVisible = false
+            caseBatteryValue.text = placeholder
+            caseBatteryValue.setTextColor(defaultTextColor)
+            caseOpenRow.isVisible = false
+            caseOpenValue.text = placeholder
+            caseOpenIcon.setTextColor(defaultTextColor)
         }
 
         private fun updateCharging(value: Boolean?) {
@@ -524,6 +553,48 @@ class DeveloperFragment : Fragment() {
             } else {
                 chargingIcon.setTextColor(chargingInactiveColor)
                 chargingIcon.alpha = 1f
+            }
+        }
+
+        private fun updateCaseBattery(value: Int?) {
+            if (value == null) {
+                caseBatteryRow.isVisible = false
+                caseBatteryValue.text = placeholder
+                caseBatteryValue.setTextColor(defaultTextColor)
+                return
+            }
+            caseBatteryRow.isVisible = true
+            caseBatteryValue.text = String.format(Locale.US, "%d %%", value)
+            val color = when {
+                value > 60 -> batteryNormalColor
+                value >= 30 -> caseBatteryMidColor
+                else -> batteryLowColor
+            }
+            caseBatteryValue.setTextColor(color)
+        }
+
+        private fun updateCaseOpen(value: Boolean?) {
+            caseOpenAnimator?.cancel()
+            caseOpenAnimator = null
+            if (value == null) {
+                caseOpenRow.isVisible = false
+                caseOpenValue.text = placeholder
+                caseOpenIcon.setTextColor(defaultTextColor)
+                return
+            }
+            caseOpenRow.isVisible = true
+            caseOpenValue.text = if (value) yesLabel else noLabel
+            if (value) {
+                caseOpenIcon.setTextColor(caseOpenStartColor)
+                caseOpenAnimator = ObjectAnimator.ofInt(caseOpenIcon, "textColor", caseOpenStartColor, caseOpenEndColor).apply {
+                    duration = 1000L
+                    repeatMode = ValueAnimator.REVERSE
+                    repeatCount = ValueAnimator.INFINITE
+                    setEvaluator(ArgbEvaluator())
+                    start()
+                }
+            } else {
+                caseOpenIcon.setTextColor(defaultTextColor)
             }
         }
 
