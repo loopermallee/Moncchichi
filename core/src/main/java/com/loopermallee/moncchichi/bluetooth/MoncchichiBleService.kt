@@ -5,6 +5,10 @@ import android.content.Context
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.BondAwaitResult
 import com.loopermallee.moncchichi.bluetooth.BondResult
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_PING
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.isAckComplete
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.isAckContinuation
 import com.loopermallee.moncchichi.core.MicControlPacket
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import kotlinx.coroutines.CoroutineScope
@@ -19,15 +23,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
-import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
+import java.io.ByteArrayOutputStream
+import java.util.EnumMap
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.collections.ArrayDeque
+import kotlin.text.Charsets
 
 /**
  * High-level BLE orchestration layer that manages the dual-lens Even Realities G1 glasses.
@@ -181,7 +190,20 @@ class MoncchichiBleService(
     private var totalBondResetEvents = 0
 
     private var heartbeatJob: Job? = null
+    private var rebondJob: Job? = null
     private var consecutiveConnectionFailures = 0
+
+    private val ackContinuationBuffers: MutableMap<Lens, ByteArrayOutputStream> =
+        EnumMap<Lens, ByteArrayOutputStream>(Lens::class.java).apply {
+            Lens.values().forEach { lens -> put(lens, ByteArrayOutputStream()) }
+        }
+    private val ackSignalFlow = MutableSharedFlow<AckSignal>(extraBufferCapacity = 32)
+    private val pendingCommandAcks: MutableMap<Lens, ArrayDeque<Long>> =
+        EnumMap<Lens, ArrayDeque<Long>>(Lens::class.java).apply {
+            Lens.values().forEach { lens -> put(lens, ArrayDeque()) }
+        }
+    private val lastAckSuccessMs = EnumMap<Lens, Long>(Lens::class.java)
+    private val lastAckSignature = EnumMap<Lens, AckSignature>(Lens::class.java)
 
     suspend fun connect(device: BluetoothDevice, lensOverride: Lens? = null): Boolean =
         withContext(Dispatchers.IO) {
@@ -354,6 +376,10 @@ class MoncchichiBleService(
         hostHeartbeatSequence[lens.ordinal] = 0
         knownDevices.remove(lens)
         bondFailureStreak.remove(lens)
+        resetContinuationBuffer(lens)
+        clearPendingCommands(lens)
+        lastAckSuccessMs.remove(lens)
+        lastAckSignature.remove(lens)
         cancelReconnect(lens)
         updateLens(lens) { LensStatus() }
         if (connectionOrder.remove(lens)) {
@@ -412,8 +438,13 @@ class MoncchichiBleService(
         }
         var success = true
         records.forEachIndexed { index, record ->
+            val now = System.currentTimeMillis()
+            if (ackTimeoutMs > 0) {
+                registerPendingCommand(record.lens, now)
+            }
             val ok = record.client.sendCommand(payload, ackTimeoutMs, retries, retryDelayMs)
             if (!ok) {
+                failPendingCommand(record.lens)
                 success = false
                 updateLens(record.lens) { it.copy(degraded = true) }
                 logWarn("Command failed on ${record.lens}")
@@ -483,10 +514,16 @@ class MoncchichiBleService(
     fun shutdown() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        rebondJob?.cancel()
+        rebondJob = null
         clientRecords.values.forEach { it.dispose() }
         clientRecords.clear()
         keepAliveWriteTimestamps.clear()
         hostHeartbeatSequence.fill(0)
+        ackContinuationBuffers.values.forEach { it.reset() }
+        pendingCommandAcks.values.forEach { it.clear() }
+        lastAckSuccessMs.clear()
+        lastAckSignature.clear()
         ALL_LENSES.forEach { updateLens(it) { LensStatus() } }
         if (connectionOrder.isNotEmpty()) {
             connectionOrder.clear()
@@ -535,6 +572,46 @@ class MoncchichiBleService(
         }
         jobs += scope.launch {
             client.incoming.collect { payload ->
+                val now = System.currentTimeMillis()
+                notifyHeartbeatSignal(lens, now)
+                val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
+                when {
+                    isAckContinuation(opcode) -> {
+                        ackContinuationBuffers[lens]?.let { buffer ->
+                            if (payload.size > 1) {
+                                buffer.write(payload, 1, payload.size - 1)
+                            }
+                        }
+                        emitConsole("ACK", lens, "continue +${(payload.size - 1).coerceAtLeast(0)}B", now)
+                        return@collect
+                    }
+                    isAckComplete(opcode) -> {
+                        val buffer = ackContinuationBuffers[lens]
+                        if (payload.size > 1) {
+                            buffer?.write(payload, 1, payload.size - 1)
+                        }
+                        val complete = buffer?.toByteArray()
+                        buffer?.reset()
+                        complete?.takeIf { it.isNotEmpty() }?.let { data ->
+                            emitAckFrame(lens, data)
+                        }
+                        emitConsole("ACK", lens, "continuation complete", now)
+                        return@collect
+                    }
+                    payload.isTextualOk() -> {
+                        emitConsole("ACK", lens, "textual OK", now)
+                        val ackEvent = AckEvent(
+                            lens = lens,
+                            opcode = null,
+                            status = STATUS_OK,
+                            success = true,
+                            timestampMs = now,
+                            warmup = false,
+                        )
+                        handleAckEvent(lens, ackEvent)
+                        return@collect
+                    }
+                }
                 _incoming.tryEmit(IncomingFrame(lens, payload))
                 when (val parsed = G1ReplyParser.parseNotify(payload)) {
                     is G1ReplyParser.Parsed.Vitals -> {
@@ -559,27 +636,15 @@ class MoncchichiBleService(
         }
         jobs += scope.launch {
             client.ackEvents.collect { event ->
-                if (event.success) {
-                    updateLens(lens) {
-                        it.copy(lastAckAt = event.timestampMs, degraded = false)
-                    }
-                    log("ACK success on $lens opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}")
-                } else {
-                    updateLens(lens) { it.copy(degraded = true) }
-                    logWarn(
-                        "ACK failure on $lens opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}"
-                    )
-                }
-                _ackEvents.tryEmit(
-                    AckEvent(
-                        lens = lens,
-                        opcode = event.opcode,
-                        status = event.status,
-                        success = event.success,
-                        timestampMs = event.timestampMs,
-                        warmup = event.warmup,
-                    )
+                val ackEvent = AckEvent(
+                    lens = lens,
+                    opcode = event.opcode,
+                    status = event.status,
+                    success = event.success,
+                    timestampMs = event.timestampMs,
+                    warmup = event.warmup,
                 )
+                handleAckEvent(lens, ackEvent)
             }
         }
         jobs += scope.launch {
@@ -849,56 +914,7 @@ class MoncchichiBleService(
             return
         }
         if (heartbeatJob?.isActive == true) return
-        heartbeatJob = scope.launch { heartbeatLoop() }
-    }
-
-    private suspend fun heartbeatLoop() {
-        val deferralLogged = mutableMapOf<Lens, Boolean>()
-        while (coroutineContext.isActive) {
-            var anyConnected = false
-            val readyRecords = mutableListOf<ClientRecord>()
-            ALL_LENSES.forEach { lens ->
-                val record = clientRecords[lens]
-                val status = record?.clientState()
-                if (record == null || status == null || !status.isConnected) {
-                    deferralLogged.remove(lens)
-                    return@forEach
-                }
-                anyConnected = true
-                if (status.isReadyForKeepAlive()) {
-                    readyRecords += record
-                    deferralLogged.remove(lens)
-                } else if (deferralLogged[lens] != true) {
-                    val mtuLabel = status.attMtu?.toString() ?: "n/a"
-                    log("[BLE][PING][${lens.shortLabel()}] deferring (bonded=${status.bonded} warmup=${status.warmupOk} mtu=${mtuLabel})")
-                    deferralLogged[lens] = true
-                }
-            }
-            if (!anyConnected) {
-                break
-            }
-            if (readyRecords.isEmpty()) {
-                delay(G1Protocols.HOST_HEARTBEAT_INTERVAL_MS)
-                continue
-            }
-            readyRecords.forEachIndexed { index, record ->
-                val payload = nextHostHeartbeatPayload(record.lens)
-                val ok = record.client.sendCommand(
-                    payload = payload,
-                    ackTimeoutMs = 0L,
-                    retries = 1,
-                    retryDelayMs = 0L,
-                    expectAck = false,
-                )
-                if (!ok) {
-                    logWarn("${G1Protocols.opcodeName(G1Protocols.CMD_PING)} send failed on ${record.lens}")
-                }
-                if (index < readyRecords.lastIndex) {
-                    delay(CHANNEL_STAGGER_DELAY_MS)
-                }
-            }
-            delay(G1Protocols.HOST_HEARTBEAT_INTERVAL_MS)
-        }
+        heartbeatJob = startHeartbeatMonitor(scope)
     }
 
     private fun nextHostHeartbeatPayload(lens: Lens): ByteArray {
@@ -911,11 +927,225 @@ class MoncchichiBleService(
         )
     }
 
-    private fun LensStatus.isReadyForKeepAlive(): Boolean {
-        return bonded && (attMtu != null || warmupOk)
+    private fun startHeartbeatMonitor(scope: CoroutineScope): Job {
+        return scope.launch(Dispatchers.IO) {
+            var missCount = 0
+            while (isActive) {
+                delay(HEARTBEAT_INTERVAL_MS)
+                sendHeartbeatToAll()
+                val ackLens = waitForAckWithin(HEARTBEAT_ACK_WINDOW_MS)
+                val now = System.currentTimeMillis()
+                if (ackLens != null) {
+                    missCount = 0
+                    emitConsole("HB", ackLens, "[OK]", now)
+                } else {
+                    missCount += 1
+                    emitConsole("HB", null, "[MISS $missCount]", now)
+                    if (missCount >= HEARTBEAT_REBOND_THRESHOLD) {
+                        emitConsole("HB", null, "[REBONDED]", now)
+                        performRebond()
+                        missCount = 0
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun sendHeartbeatToAll() {
+        val records = ALL_LENSES.mapNotNull { lens ->
+            clientRecords[lens]?.takeIf { it.clientState().isConnected }
+        }
+        if (records.isEmpty()) {
+            return
+        }
+        records.forEachIndexed { index, record ->
+            val payload = nextHostHeartbeatPayload(record.lens)
+            val ok = record.client.sendCommand(
+                payload = payload,
+                ackTimeoutMs = 0L,
+                retries = 1,
+                retryDelayMs = 0L,
+                expectAck = false,
+            )
+            if (!ok) {
+                logWarn("${G1Protocols.opcodeName(CMD_PING)} send failed on ${record.lens}")
+            }
+            if (index < records.lastIndex) {
+                delay(CHANNEL_STAGGER_DELAY_MS)
+            }
+        }
+    }
+
+    private suspend fun waitForAckWithin(timeoutMs: Long): Lens? {
+        val start = System.currentTimeMillis()
+        val signal = withTimeoutOrNull(timeoutMs) {
+            ackSignalFlow.filter { it.timestamp >= start }.first()
+        }
+        return signal?.lens
     }
 
     private fun Lens.shortLabel(): String = if (this == Lens.LEFT) "L" else "R"
+
+    private fun emitAckFrame(lens: Lens, payload: ByteArray) {
+        val outcome = payload.parseAckOutcome() ?: return
+        val timestamp = System.currentTimeMillis()
+        val ackEvent = when (outcome) {
+            is AckOutcome.Success -> AckEvent(
+                lens = lens,
+                opcode = outcome.opcode,
+                status = outcome.status,
+                success = true,
+                timestampMs = timestamp,
+                warmup = outcome.warmupPrompt,
+            )
+            is AckOutcome.Failure -> AckEvent(
+                lens = lens,
+                opcode = outcome.opcode,
+                status = outcome.status,
+                success = false,
+                timestampMs = timestamp,
+                warmup = false,
+            )
+        }
+        handleAckEvent(lens, ackEvent)
+    }
+
+    private fun handleAckEvent(lens: Lens, event: AckEvent) {
+        if (isDuplicateAck(lens, event)) {
+            return
+        }
+        lastAckSignature[lens] = AckSignature(event.opcode, event.status, event.timestampMs)
+        if (event.success) {
+            markAckSuccess(lens, event.timestampMs)
+            emitConsole("ACK", lens, "opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}", event.timestampMs)
+        } else {
+            failPendingCommand(lens)
+            val suppressed = shouldSuppressAckFailure(lens, event)
+            if (!suppressed) {
+                updateLens(lens) { it.copy(degraded = true) }
+                emitConsole(
+                    "ACK",
+                    lens,
+                    "fail opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}",
+                    event.timestampMs,
+                )
+                logWarn(
+                    "[ACK][${lens.shortLabel()}] failure opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}"
+                )
+            } else {
+                emitConsole(
+                    "ACK",
+                    lens,
+                    "fail suppressed opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}",
+                    event.timestampMs,
+                )
+            }
+        }
+        _ackEvents.tryEmit(event)
+    }
+
+    private fun markAckSuccess(lens: Lens, timestamp: Long) {
+        completePendingCommand(lens)
+        lastAckSuccessMs[lens] = timestamp
+        updateLens(lens) {
+            it.copy(lastAckAt = timestamp, degraded = false)
+        }
+        notifyHeartbeatSignal(lens, timestamp)
+    }
+
+    private fun isDuplicateAck(lens: Lens, event: AckEvent): Boolean {
+        val previous = lastAckSignature[lens] ?: return false
+        if (previous.opcode != event.opcode || previous.status != event.status) {
+            return false
+        }
+        val delta = event.timestampMs - previous.timestamp
+        return delta in 0..ACK_DUPLICATE_WINDOW_MS
+    }
+
+    private fun shouldSuppressAckFailure(lens: Lens, event: AckEvent): Boolean {
+        if (event.opcode != CMD_PING) return false
+        val lastSuccess = lastAckSuccessMs[lens] ?: return false
+        val delta = event.timestampMs - lastSuccess
+        return delta in 0..PING_ACK_SUPPRESS_WINDOW_MS
+    }
+
+    private fun registerPendingCommand(lens: Lens, timestamp: Long) {
+        synchronized(pendingCommandAcks) {
+            pendingCommandAcks[lens]?.addLast(timestamp)
+        }
+    }
+
+    private fun completePendingCommand(lens: Lens) {
+        synchronized(pendingCommandAcks) {
+            pendingCommandAcks[lens]?.let { deque ->
+                if (deque.isNotEmpty()) {
+                    deque.removeFirst()
+                }
+            }
+        }
+    }
+
+    private fun failPendingCommand(lens: Lens) {
+        synchronized(pendingCommandAcks) {
+            pendingCommandAcks[lens]?.let { deque ->
+                if (deque.isNotEmpty()) {
+                    deque.removeFirst()
+                }
+            }
+        }
+    }
+
+    private fun clearPendingCommands(lens: Lens) {
+        synchronized(pendingCommandAcks) {
+            pendingCommandAcks[lens]?.clear()
+        }
+    }
+
+    private fun notifyHeartbeatSignal(lens: Lens?, timestamp: Long) {
+        ackSignalFlow.tryEmit(AckSignal(lens, timestamp))
+    }
+
+    private fun emitConsole(
+        tag: String,
+        lens: Lens?,
+        message: String,
+        @Suppress("UNUSED_PARAMETER") timestamp: Long,
+    ) {
+        val lensLabel = lens?.shortLabel() ?: "-"
+        log("[$tag][$lensLabel] $message")
+    }
+
+    private fun ByteArray.isTextualOk(): Boolean =
+        toString(Charsets.UTF_8).trim().equals("OK", ignoreCase = true)
+
+    private fun performRebond() {
+        if (rebondJob?.isActive == true) {
+            return
+        }
+        val devices = knownDevices.toMap()
+        if (devices.isEmpty()) {
+            return
+        }
+        rebondJob = scope.launch(Dispatchers.IO) {
+            log("[HB][-] rebond sequence start")
+            disconnectAll()
+            delay(REBOND_DELAY_MS)
+            devices.forEach { (lens, device) ->
+                connect(device, lens)
+                delay(CHANNEL_STAGGER_DELAY_MS)
+            }
+        }.also { job ->
+            job.invokeOnCompletion { rebondJob = null }
+        }
+    }
+
+    private fun resetContinuationBuffer(lens: Lens) {
+        ackContinuationBuffers[lens]?.reset()
+    }
+
+    private data class AckSignature(val opcode: Int?, val status: Int?, val timestamp: Long)
+
+    private data class AckSignal(val lens: Lens?, val timestamp: Long)
 
     private fun updateLens(lens: Lens, reducer: (LensStatus) -> LensStatus) {
         val current = _state.value
@@ -1092,6 +1322,12 @@ class MoncchichiBleService(
         private const val KEEP_ALIVE_MIN_INTERVAL_MS = 1_000L
         private const val BOND_RECOVERY_GUARD_MS = 3_000L
         private const val UNBOND_REASON_REMOVED = 5
+        private const val HEARTBEAT_INTERVAL_MS = 28_000L
+        private const val HEARTBEAT_ACK_WINDOW_MS = 1_500L
+        private const val HEARTBEAT_REBOND_THRESHOLD = 3
+        private const val PING_ACK_SUPPRESS_WINDOW_MS = 150L
+        private const val ACK_DUPLICATE_WINDOW_MS = 50L
+        private const val REBOND_DELAY_MS = 500L
     }
 }
 
