@@ -46,6 +46,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.jvm.Volatile
@@ -338,6 +339,7 @@ class G1BleClient(
         private const val MTU_COMMAND_RETRY_COUNT = G1Protocols.MAX_RETRIES
         private const val MTU_COMMAND_RETRY_DELAY_MS = G1Protocols.MTU_RETRY_DELAY_MS
         private const val POST_BOND_CONNECT_DELAY_MS = 1_000L
+        private const val GATT_REDISCOVERY_DELAY_MS = 100L
         private const val BOND_STATE_REMOVED = 9
         private const val BOND_RETRY_DELAY_MS = 750L
         private const val BOND_RETRY_WINDOW_MS = 30_000L
@@ -417,6 +419,7 @@ class G1BleClient(
         scope,
     )
     private val ackSignals = Channel<AckOutcome>(capacity = Channel.CONFLATED)
+    private val refreshOnConnect = AtomicBoolean(false)
     private val bondMutex = Mutex()
     data class BondEvent(val state: Int, val reason: Int, val timestampMs: Long)
     private val bondEvents = MutableSharedFlow<BondEvent>(replay = 1, extraBufferCapacity = 8)
@@ -433,6 +436,10 @@ class G1BleClient(
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var pairingDialogRunnable: Runnable? = null
     @Volatile private var settingsLaunchedThisSession: Boolean = false
+
+    init {
+        uartClient.onConnectAction = { gatt -> scheduleServiceDiscovery(gatt) }
+    }
 
     data class KeepAlivePrompt(
         val timestampMs: Long,
@@ -911,8 +918,13 @@ class G1BleClient(
         }
     }
 
-    fun enqueueHeartbeat(payload: ByteArray): Boolean {
-        return uartClient.write(payload, withResponse = false)
+    fun enqueueHeartbeat(sequence: Int, payload: ByteArray): Boolean {
+        val ok = uartClient.write(payload, withResponse = false)
+        logger.i(
+            label,
+            "${tt()} [BLE][PING] queued seq=${sequence.toByteHex()} ok=$ok",
+        )
+        return ok
     }
 
     private suspend fun sendCommandLocked(
@@ -2086,6 +2098,34 @@ class G1BleClient(
         scope.launch {
             val refreshed = refreshGattCache()
             logger.i(label, "${tt()} [GATT] Manual refresh result=$refreshed")
+        }
+    }
+
+    fun requestGattRefreshOnConnect() {
+        refreshOnConnect.set(true)
+    }
+
+    @SuppressLint("DiscouragedPrivateApi")
+    private fun scheduleServiceDiscovery(gatt: BluetoothGatt) {
+        scope.launch {
+            val refreshRequested = refreshOnConnect.getAndSet(false)
+            if (refreshRequested) {
+                logger.i(label, "${tt()} [GATT] Refresh requested before discovery")
+                val refreshed = runCatching {
+                    gatt.refreshCompat { message -> logger.i(label, "${tt()} $message") }
+                }.onFailure {
+                    logger.w(label, "${tt()} [GATT] Refresh failed: ${it.message}")
+                }.getOrDefault(false)
+                if (refreshed) {
+                    logger.i(label, "${tt()} [GATT] Cache refresh acknowledged")
+                }
+                delay(GATT_REDISCOVERY_DELAY_MS)
+            } else {
+                logger.i(label, "${tt()} [SERVICE] Connected; discovering services…")
+            }
+            withContext(Dispatchers.Main) {
+                gatt.discoverServices()
+            }
         }
     }
 
