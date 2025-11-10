@@ -56,6 +56,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.bluetooth.G1Inbound
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.DeviceTelemetrySnapshot
+import com.loopermallee.moncchichi.hub.data.telemetry.LensGestureEvent
+import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.service.G1DisplayService
 import com.loopermallee.moncchichi.hub.ui.theme.StatusConnected
 import com.loopermallee.moncchichi.hub.ui.theme.StatusError
@@ -147,12 +151,15 @@ fun DeviceConsoleBody(
 ) {
     val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf("Hello G1!") }
-    var battery by remember { mutableStateOf("—") }
-    var firmware by remember { mutableStateOf("—") }
     var connectionState by remember { mutableStateOf(G1ConnectionState.DISCONNECTED) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
     val binder = binderProvider()
+
+    val deviceTelemetry by AppLocator.telemetry.deviceTelemetryFlow.collectAsState(initial = emptyList())
+    val telemetryByLens = remember(deviceTelemetry) { deviceTelemetry.associateBy { it.lens } }
+    val leftTelemetry = telemetryByLens[MoncchichiBleService.Lens.LEFT]
+    val rightTelemetry = telemetryByLens[MoncchichiBleService.Lens.RIGHT]
 
     val targetColor = when (connectionState) {
         G1ConnectionState.CONNECTED -> StatusConnected
@@ -190,10 +197,6 @@ fun DeviceConsoleBody(
     )
 
     LaunchedEffect(connectionState) {
-        if (!isConnected) {
-            battery = "—"
-            firmware = "—"
-        }
         if (connectionState == G1ConnectionState.DISCONNECTED) {
             statusMessage = null
         }
@@ -206,24 +209,15 @@ fun DeviceConsoleBody(
         val inboundFlow = binder?.inbound()
         if (inboundFlow != null) {
             inboundJob = scope.launch {
-                inboundFlow.collectLatest { inbound ->
-                    when (inbound) {
-                        is G1Inbound.Battery -> {
-                            val left = inbound.leftPct?.toString() ?: "?"
-                            val right = inbound.rightPct?.toString() ?: "?"
-                            val case = inbound.casePct?.toString() ?: "?"
-                            battery = "L $left% • R $right% • Case $case%"
-                        }
+                        inboundFlow.collectLatest { inbound ->
+                            when (inbound) {
+                                is G1Inbound.Battery -> Unit
+                                is G1Inbound.Firmware -> Unit
+                                is G1Inbound.Error -> {
+                                    statusMessage = "Error code=${inbound.code} ${inbound.message}"
+                                }
 
-                        is G1Inbound.Firmware -> {
-                            firmware = inbound.version
-                        }
-
-                        is G1Inbound.Error -> {
-                            statusMessage = "Error code=${inbound.code} ${inbound.message}"
-                        }
-
-                        else -> Unit
+                                else -> Unit
                     }
                 }
             }
@@ -244,8 +238,7 @@ fun DeviceConsoleBody(
         if (vitalsFlow != null) {
             vitalsJob = scope.launch {
                 vitalsFlow.collectLatest { vitals ->
-                    vitals.batteryPercent?.let { level ->
-                        battery = "$level%"
+                    vitals.batteryPercent?.let {
                         batteryPulse.value = true
                         launch {
                             delay(400)
@@ -366,13 +359,11 @@ fun DeviceConsoleBody(
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            StatusCard(title = "Battery", value = battery, modifier = Modifier.weight(1f))
-            StatusCard(title = "Firmware", value = firmware, modifier = Modifier.weight(1f))
-        }
+        LensVitalsCard(
+            left = leftTelemetry,
+            right = rightTelemetry,
+            modifier = Modifier.fillMaxWidth()
+        )
 
         if (!isConnected) {
             Text(
@@ -537,20 +528,121 @@ fun DeviceConsoleBody(
 }
 
 @Composable
-private fun StatusCard(title: String, value: String, modifier: Modifier = Modifier) {
+private fun LensVitalsCard(
+    left: DeviceTelemetrySnapshot?,
+    right: DeviceTelemetrySnapshot?,
+    modifier: Modifier = Modifier,
+) {
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-            Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = "Lens vitals",
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                LensVitalsColumn(
+                    title = "👓 LEFT",
+                    snapshot = left,
+                    modifier = Modifier.weight(1f)
+                )
+                LensVitalsColumn(
+                    title = "👓 RIGHT",
+                    snapshot = right,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun LensVitalsColumn(
+    title: String,
+    snapshot: DeviceTelemetrySnapshot?,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "🔋 ${formatVoltage(snapshot?.batteryVoltageMv, snapshot?.isCharging)}",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "💻 Firmware: ${formatFirmwareLabel(snapshot?.firmwareVersion)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = "⏱️ Uptime: ${formatUptimeLabel(snapshot?.uptimeSeconds)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        snapshot?.lastGesture?.let {
+            Text(
+                text = "✋ ${gestureLabel(it)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun formatVoltage(voltageMv: Int?, isCharging: Boolean?): String {
+    if (voltageMv == null) return "—"
+    return buildString {
+        append(voltageMv)
+        append(" mV")
+        if (isCharging == true) {
+            append(" ⚡")
+        }
+    }
+}
+
+private fun formatFirmwareLabel(raw: String?): String {
+    val cleaned = raw?.trim().orEmpty()
+    if (cleaned.isEmpty()) return "—"
+    return if (cleaned.startsWith("v", ignoreCase = true) || !cleaned.first().isDigit()) {
+        cleaned
+    } else {
+        "v$cleaned"
+    }
+}
+
+private fun formatUptimeLabel(seconds: Long?): String {
+    return seconds?.let { "$it s" } ?: "—"
+}
+
+private fun gestureLabel(event: LensGestureEvent): String {
+    return when (event.gesture.code) {
+        0x01 -> "single"
+        0x02 -> "double"
+        0x03 -> "triple"
+        0x04 -> "hold"
+        else -> event.gesture.name.lowercase(Locale.US).replace('_', ' ')
     }
 }

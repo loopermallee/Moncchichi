@@ -20,7 +20,7 @@ import com.loopermallee.moncchichi.hub.data.telemetry.LensGestureEvent
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperViewModel.DeveloperEvent
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
-import com.loopermallee.moncchichi.telemetry.G1ReplyParser
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -91,7 +92,10 @@ class DeveloperViewModel(
     val audioSink: StateFlow<AudioSink> = SettingsRepository.audioSinkFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsRepository.getAudioSink())
 
-    val battery: StateFlow<G1ReplyParser.BatteryInfo?> = telemetry.battery
+    val deviceTelemetry: StateFlow<Map<MoncchichiBleService.Lens, BleTelemetryRepository.DeviceTelemetrySnapshot>> =
+        telemetry.deviceTelemetryFlow
+            .map { snapshots -> snapshots.associateBy { it.lens } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     val gestures: SharedFlow<LensGestureEvent> = telemetry.gesture
 

@@ -27,4 +27,16 @@
     <color name="er_console_accent">#FFA691F2</color>
     <color name="developer_console_background">#12131A</color>
     <color name="developer_diagnostics_background">#F4F6FA</color>
+
+    <!-- Developer diagnostics lens vitals -->
+    <color name="lens_header_left">#03A9F4</color>
+    <color name="lens_header_right">#9C27B0</color>
+    <color name="lens_card_background">#99000000</color>
+    <color name="batteryNormal">#4CAF50</color>
+    <color name="batteryLow">#F44336</color>
+    <color name="chargingActive">#FFC107</color>
+    <color name="chargingInactive">#9E9E9E</color>
+    <color name="firmwareHighlight">#00BCD4</color>
+    <color name="uptimeStart">#4CAF50</color>
+    <color name="uptimeEnd">#2196F3</color>
 </resources>
