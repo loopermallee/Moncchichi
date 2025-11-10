@@ -93,12 +93,57 @@ Builds on the stable BLE and HUD foundations (Phases r1d–r1e) to provide compl
 - Default sink = GLASSES.  
 - Integrates with TTS engine and VoiceAudioSettings.
 
-## 9. VOICE & AUDIO SETTINGS UI
-- New fragment `VoiceAudioSettingsFragment`.  
-- Toggles: “Audible Responses” (on/off), “Prefer Phone Mic”.  
-- Dropdown: Output Device (Auto / Phone / Headset).  
-- Requests `RECORD_AUDIO` permission at runtime.  
-- Updates preferences and notifies AudioOutManager / MicStreamManager.
+## 9. VOICE & AUDIO SETTINGS UI (Phase 4.0 r1g)
+
+**Purpose:**  
+Provide users with a centralized interface to manage microphone routing, audio output, and voice-feedback behavior.  
+Completes the BLE ↔ Voice stabilization cycle by giving control over the new AudioOutManager and MicStreamManager.
+
+---
+
+**Design & Implementation**
+
+- **Fragment:** `VoiceAudioSettingsFragment`
+  - Built under `hub/ui/settings/`.
+  - Accessible via the main Settings menu or overflow navigation in `SettingsFragment`.
+  - Contains:
+    - **Toggle 1 – “Audible Responses”** → Enables/disables TTS or spoken feedback.
+    - **Toggle 2 – “Prefer Phone Mic”** → Switches mic input routing between Glasses / Phone.
+    - **Dropdown – “Output Device”** → Choices: Auto / Phone / Headset (GLASSES default).
+  - Requests `RECORD_AUDIO` permission dynamically when user enables “Prefer Phone Mic”.
+
+- **AudioOutManager** (`hub/audio/AudioOutManager.kt`)
+  - Centralized sink router with `enum AudioSink { GLASSES, WEARABLE, PHONE }`.
+  - Backed by a reactive `StateFlow<AudioSink>` persisted in `SettingsRepository`.
+  - Handles cross-fade (~100 ms) between sinks and will later link to Android AudioManager/TTS routing.
+
+- **SettingsRepository**
+  - New keys and flows:
+    - `KEY_AUDIO_SINK` → `audioSinkFlow`
+    - `KEY_AUDIBLE_RESPONSES` → `audibleResponsesFlow`
+    - `KEY_PREFER_PHONE_MIC` → `preferPhoneMicFlow`
+  - Each exposes a `Flow` that immediately updates `AudioOutManager` and `MicStreamManager`.
+
+- **Permission Handling**
+  - Manifest includes:
+    ```xml
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    ```
+  - Runtime request handled in `HubViewModel.requestAudioPermission()`, using `ActivityCompat.requestPermissions()`.
+
+- **Integration**
+  - `HubViewModel` observes flows from `SettingsRepository` and updates active mic routing.
+  - `MicStreamManager` restarts capture when source changes or permission granted.
+
+---
+
+**Success Criteria**
+1. Settings screen is reachable and reflects live preference states.  
+2. Mic routing updates instantly when user toggles “Prefer Phone Mic.”  
+3. Audio output changes between devices with no crashes or stutter.  
+4. Permission prompt appears only once and degrades gracefully on denial.  
+5. All preferences persist between sessions and sync with repository flows.  
+6. Ready baseline for MCP/Voice-Assistant integration in Phase 5.0.  
 
 ## 10. PERMISSIONS
 Manifest addition:  
