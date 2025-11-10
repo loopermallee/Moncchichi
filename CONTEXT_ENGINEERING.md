@@ -1,171 +1,140 @@
-# CONTEXT_ENGINEERING v1.6 — BLE ↔ Voice Stabilization Roadmap
-
-## 1. CURRENT STATE
-- Dual-lens BLE architecture operational but unstable.
-- Repeated `[ACK][R] opcode=0x00 status=0xCA → FAIL` indicates right-lens command mis-sequencing.
-- Heartbeat (`0x25`) missing → lenses disconnect after 32 s.
-- BLE ACKs may appear as either binary (0xC9/0x04) or textual “OK”.
-- Telemetry (`0xF1` audio, `0x2C` battery, `0x37` uptime) partially parsed.
-- Build currently fails due to missing `AudioOutManager` and unimplemented Voice Settings fragments.
-- MCP (Model Context Protocol) integration planned but deferred until BLE stabilized.
-
-## 2. GOALS
-1. Restore full BLE reliability (ACK logic + mic watchdog).
-2. Bring back HUD display commands (0x20/0x21/0x26).
-3. Expand telemetry coverage (battery, uptime, gestures).
-4. Re-enable build with modular audio architecture (AudioOutManager, Voice UI).
-5. Prepare stub interfaces for future MCP local memory system.
-
-## 3. BLE LOGIC DETAILS
-- Left/Right radios use Nordic UART with opcodes:
-  - `0x11` Firmware Info, `0x2C` Battery, `0x37` Uptime,
-  - `0x25` Heartbeat, `0x26` Dashboard Position,
-  - `0xF1` Audio frames, `0xF5` Gestures.
-- Each packet = `[Header][Opcode][Len][Seq][Payload][CRC]`.
-- App must send `0x25` heartbeat every ≤ 30 s.
-- ACK expected within < 150 ms. Missing ACK triggers retry.
-- Textual “OK” occurs on firmware v1.5.x+ instead of binary ACK.
-
-## 4. HUD Display and Text Pipeline (Phase 4.0 r1e)
-
-Purpose: Re-enable HUD text output via G1 protocol commands (0x09, 0x25) and ensure display clears on session reset.
-Depends on stable BLE and telemetry (Phase 4.0 r1d).
-
-Design:
-- Command 0x09 sends UTF-8 payload for HUD text.
-- Command 0x25 clears the display.
-- Routing uses DashboardDataEncoder → MoncchichiBleService → HudTextManager.
-- Auto-clear on reset/unbind prevents ghost frames.
-
-Success Criteria:
-1. HUD shows text sent from app without errors.
-2. Clears automatically on disconnect or reset.
-3. No impact to mic/ACK telemetry.
-4. Patch compiles and passes manual display validation.
-
-## 5. MIC WATCHDOG
-- Monitor incoming `0xF1` frames.
-- If no frame within 2 s, restart BLE mic.
-- Report `micAlive` → false when exceeded threshold.
-- Restart using existing coroutine scope in `HubBleService`.
-
-## 6. HUD COMMANDS
-- `0x20` Display Text → payload UTF-8 string + len.
-- `0x21` Clear Display → no payload.
-- `0x26` Dashboard Position → [0x02, 0x00/0x01, vertical (1–8), distance (1–9)].
-- Use for in-glasses text rendering and placement control.
-
-## 7. TELEMETRY EXTENSION (Phase 4.0 r1f)
-
-**Purpose:**  
-Integrate real-time status streams for battery (0x2C), uptime (0x37), and gesture (0xF5) telemetry.  
-Builds on the stable BLE and HUD foundations (Phases r1d–r1e) to provide complete device-state visibility.
-
-**Design:**  
-- `0x2C` → Battery telemetry  
-  - Returns voltage (mV) + charging flag (0 = idle, 1 = charging).  
-  - Parsed into `BatteryInfo(voltage:Int, isCharging:Boolean)`.  
-- `0x37` → Uptime telemetry  
-  - Reports seconds since lens boot.  
-  - Used to confirm connection stability and runtime drift.  
-- `0xF5` → Gesture telemetry  
-  - Captures events such as tap, double-tap, hold, or swipe.  
-  - Parsed into `GestureEvent(code:Int, name:String)` and emitted with lens tag.  
-- Extend `BleTelemetryParser` with opcode→handler map producing typed `TelemetryEvent` objects.  
-- Update `BleTelemetryRepository` to subscribe to parser events and maintain:  
-  - `_battery: StateFlow<BatteryInfo?>`  
-  - `_gesture: SharedFlow<GestureEvent>`  
-  - Uptime updates merged into the unified `DeviceTelemetrySnapshot` with timestamps.  
-- Expose all new telemetry via `Flow<DeviceTelemetry>` and surface through `DeveloperViewModel` for live debugging.  
-- Log to console using tags `[VITALS]` for battery/uptime and `[GESTURE]` for gesture input.
-
-**Success Criteria:**  
-1. Battery status visible and refreshed every ≈ 30 s while connected.  
-2. Uptime counter monotonic with no resets between packets.  
-3. Gesture events appear instantly per-lens in the Developer console.  
-4. All new handlers coexist with legacy `when{}` parsers (no breakage).  
-5. No regression to BLE stability, ACK timing, or mic watchdog.  
-## 8. AUDIOOUTMANAGER DESIGN
-- Enum class `AudioSink { GLASSES, WEARABLE, PHONE }`.  
-- Pref-backed Flow for sink changes.  
-- Uses Android AudioManager / AudioDeviceInfo for routing.  
-- Handles cross-fade (100 ms) when sink changes.  
-- Default sink = GLASSES.  
-- Integrates with TTS engine and VoiceAudioSettings.
-
-## 9. VOICE & AUDIO SETTINGS UI (Phase 4.0 r1g)
-
-**Purpose:**  
-Provide users with a centralized interface to manage microphone routing, audio output, and voice-feedback behavior.  
-Completes the BLE ↔ Voice stabilization cycle by giving control over the new AudioOutManager and MicStreamManager.
-
----
-
-**Design & Implementation**
-
-- **Fragment:** `VoiceAudioSettingsFragment`
-  - Built under `hub/ui/settings/`.
-  - Accessible via the main Settings menu or overflow navigation in `SettingsFragment`.
-  - Contains:
-    - **Toggle 1 – “Audible Responses”** → Enables/disables TTS or spoken feedback.
-    - **Toggle 2 – “Prefer Phone Mic”** → Switches mic input routing between Glasses / Phone.
-    - **Dropdown – “Output Device”** → Choices: Auto / Phone / Headset (GLASSES default).
-  - Requests `RECORD_AUDIO` permission dynamically when user enables “Prefer Phone Mic”.
-
-- **AudioOutManager** (`hub/audio/AudioOutManager.kt`)
-  - Centralized sink router with `enum AudioSink { GLASSES, WEARABLE, PHONE }`.
-  - Backed by a reactive `StateFlow<AudioSink>` persisted in `SettingsRepository`.
-  - Handles cross-fade (~100 ms) between sinks and will later link to Android AudioManager/TTS routing.
-
-- **SettingsRepository**
-  - New keys and flows:
-    - `KEY_AUDIO_SINK` → `audioSinkFlow`
-    - `KEY_AUDIBLE_RESPONSES` → `audibleResponsesFlow`
-    - `KEY_PREFER_PHONE_MIC` → `preferPhoneMicFlow`
-  - Each exposes a `Flow` that immediately updates `AudioOutManager` and `MicStreamManager`.
-
-- **Permission Handling**
-  - Manifest includes:
-    ```xml
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    ```
-  - Runtime request handled in `HubViewModel.requestAudioPermission()`, using `ActivityCompat.requestPermissions()`.
-
-- **Integration**
-  - `HubViewModel` observes flows from `SettingsRepository` and updates active mic routing.
-  - `MicStreamManager` restarts capture when source changes or permission granted.
-
----
-
-**Success Criteria**
-1. Settings screen is reachable and reflects live preference states.  
-2. Mic routing updates instantly when user toggles “Prefer Phone Mic.”  
-3. Audio output changes between devices with no crashes or stutter.  
-4. Permission prompt appears only once and degrades gracefully on denial.  
-5. All preferences persist between sessions and sync with repository flows.  
-6. Ready baseline for MCP/Voice-Assistant integration in Phase 5.0.  
-
-## 10. PERMISSIONS
-Manifest addition:  
-```xml
-<uses-permission android:name="android.permission.RECORD_AUDIO" />
-Runtime check with ActivityCompat.requestPermissions() → REQ_CODE_AUDIO.
-
-## 11. MCP PREPARATION
-- Stub McpBridge.kt with empty methods init(), sendContext(), receiveContext().
-- Placeholder for local context model engine.
-- No network or OpenAI calls yet; local only.
-
-## 12. EXECUTION PLAN
-1. Build Unblock: stub missing audio classes.
-2. Patch 1: ACK logic + mic watchdog.
-3. Patch 2: HUD display and clear.
-4. Patch 3: Telemetry (battery, gesture).
-5. Patch 4: Voice and Audio UI + permissions.
-6. Validate: dual-lens sync, telemetry stability, no crash on mic toggle.
-7. Then: MCP integration phase begins.
-
+Perfect — here’s your clean, updated CONTEXT_ENGINEERING v1.7, rewritten to reflect the latest firmware-based BLE logic (v1.6.3 sync) and remove sections that have already been patched or completed.
+This version becomes your new authoritative roadmap before moving to Audio/MCP phases.
 
 ⸻
 
-This document provides Codex full architectural context for implementing the above patches with minimal ambiguity. All commands, file paths, and expected behaviors are explicit.
+CONTEXT_ENGINEERING v1.7 — BLE Core Realignment & Audio Preparation
+
+1. CURRENT STATE
+	•	Dual-lens BLE architecture now stable post-Phase 4.0 r1e (HUD & telemetry confirmed).
+	•	HUD text and clear display confirmed operational (0x09, 0x25).
+	•	Mic watchdog functional and heartbeat partially implemented.
+	•	Remaining instability tied to outdated ACK logic and incomplete telemetry decoding.
+	•	Latest Even Reality firmware (v1.6.3) introduces new opcodes (0xCB, 0x2B–0x39, 0x23 72/6C, etc.) that the app must now support.
+	•	Build succeeds; runtime validation pending for updated protocol handling.
+	•	MCP (Model Context Protocol) and voice integration remain deferred until BLE parity is achieved.
+
+⸻
+
+2. GOALS
+	1.	Achieve full BLE parity with v1.6.3 firmware — eliminate false “→ PING ← ERR” logs.
+	2.	Implement 0xCB continuation ACKs and update telemetry map.
+	3.	Stabilize heartbeat (0x25) and add lens-safe reconnects.
+	4.	Expand telemetry parsing to include system, gestures, uptime, and environment data.
+	5.	Prepare clean ground for upcoming AudioOutManager / Voice UI integration.
+
+⸻
+
+3. BLE LOGIC REALIGNMENT (Phase 4.0 r1)
+
+Purpose:
+Update Moncchichi Hub BLE stack to reflect Even Reality v1.6.3 protocol structure and handshake timing.
+
+ACK Layer
+	•	Recognize binary 0xC9 / 0x04, textual “OK”, and continuation 0xCB.
+	•	Resume multi-frame transfers on 0xCB.
+	•	Suppress redundant error logs for textual OK responses.
+	•	Mark unknown ACKs once per session with [WARN][ACK].
+
+Heartbeat (0x25)
+	•	Send every 28 – 30 s with its own sequence counter.
+	•	Reset timer upon any inbound frame.
+	•	Disconnect and trigger RebondManager after 3 missed beats.
+
+Display / Voice-Wake (0x26)
+	•	Dual-mode parser:
+	•	Short len = 5–7 → Dashboard geometry update.
+	•	len = 6 → Voice-wake toggle (enable/disable speech trigger).
+	•	Preserve backward compatibility for legacy HUD packets.
+
+Telemetry Expansion
+
+Opcode	Description	Output Type
+0x2B	Device state / connection flags	DeviceStatus
+0x2C	Battery voltage + charge flag	BatteryInfo
+0x32–0x37	Env / uptime / sensor metrics	DeviceTelemetrySnapshot
+0x39	System OK / confirmation	AckEvent
+0xF5	Gesture (tap, hold, translate, etc.)	GestureEvent
+
+	•	Update BleTelemetryParser and ProtocolMap accordingly.
+	•	Publish through unified Flow<DeviceTelemetry>.
+
+Notification Stream
+	•	Handle multi-packet JSON payloads (0x04, 0x4B, 0x4C) using 0xCB continuation.
+	•	Reassemble fragments before dispatch to DeveloperViewModel.
+
+Reboot / Debug (0x23 72 / 0x23 6C)
+	•	Add stubs in G1Protocols and MoncchichiBleService.
+	•	Implement console-only triggers (no UI).
+
+⸻
+
+4. TELEMETRY VALIDATION
+	•	Battery (0x2C) refreshes ≈ every 30 s.
+	•	Uptime (0x37) monotonic between frames.
+	•	Gesture (0xF5) events appear instantly per lens.
+	•	Confirm DeviceTelemetrySnapshot timestamps match reception time.
+	•	No degradation to HUD or mic watchdog.
+
+⸻
+
+5. AUDIOOUTMANAGER DESIGN (Phase 4.0 r2 – Upcoming)
+	•	Enum AudioSink { GLASSES, WEARABLE, PHONE }.
+	•	Backed by SettingsRepository with Flow<AudioSink>.
+	•	Integrates with Android AudioManager / TTS.
+	•	Cross-fade (~100 ms) on sink switch.
+	•	Default = GLASSES.
+	•	Will connect to Voice & Audio UI in next phase.
+
+⸻
+
+6. VOICE & AUDIO SETTINGS UI (Phase 4.0 r3 – Upcoming)
+
+Purpose:
+Expose microphone and output routing to users and link UI controls to new AudioOutManager and MicStreamManager.
+
+Core Elements
+	•	VoiceAudioSettingsFragment under hub/ui/settings/.
+	•	Toggles: “Audible Responses”, “Prefer Phone Mic”.
+	•	Dropdown: “Output Device” (Auto / Phone / Headset).
+	•	Dynamically requests RECORD_AUDIO permission on toggle.
+	•	Uses flows from SettingsRepository → updates AudioOutManager.
+
+Success Criteria
+	1.	Settings panel live-updates routing.
+	2.	Permission prompts appear once; degrade gracefully.
+	3.	Cross-device audio switch seamless.
+	4.	Preferences persist between sessions.
+	5.	UI ready for MCP/Voice integration (Phase 5.0).
+
+⸻
+
+7. MCP PREPARATION (Phase 5.0 Preview)
+	•	Stub McpBridge.kt with init(), sendContext(), receiveContext().
+	•	Local context model engine only (no network calls).
+	•	Will later integrate audio context and memory embedding.
+
+⸻
+
+8. EXECUTION PLAN
+	1.	Phase 4.0 r1 → BLE Logic Realignment (current patch).
+	2.	Phase 4.0 r2 → AudioOutManager implementation.
+	3.	Phase 4.0 r3 → Voice & Audio UI + permissions.
+	4.	Phase 4.0 r4 → Full BLE validation (sustained connection test).
+	5.	Phase 5.0 → MCP + Assistant Integration.
+
+⸻
+
+✅ Verification Checklist
+	•	BLE ack/heartbeat stable (no false errors).
+	•	Dual-lens telemetry consistent.
+	•	HUD and voice-wake operate without conflict.
+	•	Battery and gesture data validated.
+	•	Ready for AudioOutManager phase merge.
+
+⸻
+
+Summary:
+This v1.7 document supersedes all prior stabilization notes.
+It assumes HUD display, mic watchdog, and build unblock are complete.
+Codex should focus solely on implementing and validating the BLE realignment layer before advancing to Audio and Voice phases.
