@@ -999,7 +999,7 @@ class G1BleClient(
                     }
                 }
             }
-            when (ackResult) {
+            when (val outcome = ackResult) {
                 is AckOutcome.Success -> {
                     onAttemptResult?.invoke(
                         CommandAttemptTelemetry(
@@ -1015,8 +1015,8 @@ class G1BleClient(
                 is AckOutcome.Busy -> {
                     logger.i(
                         label,
-                        "${tt()} ACK busy opcode=${ackResult.opcode.toLabel()} " +
-                            "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
+                        "${tt()} ACK busy opcode=${outcome.opcode.toLabel()} " +
+                            "status=${outcome.status.toHexString()} (attempt ${attempt + 1})",
                     )
                     onAttemptResult?.invoke(
                         CommandAttemptTelemetry(
@@ -1028,11 +1028,27 @@ class G1BleClient(
                         )
                     )
                 }
-                is AckOutcome.Continue, is AckOutcome.Complete -> {
+                is AckOutcome.Continue -> {
                     logger.i(
                         label,
-                        "${tt()} ACK continuation opcode=${ackResult.opcode.toLabel()} " +
-                            "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
+                        "${tt()} ACK continuation opcode=${outcome.opcode.toLabel()} " +
+                            "status=${outcome.status.toHexString()} (attempt ${attempt + 1})",
+                    )
+                    onAttemptResult?.invoke(
+                        CommandAttemptTelemetry(
+                            attemptIndex = attempt + 1,
+                            success = false,
+                            ackTimedOut = false,
+                            ackFailed = false,
+                            queueFailed = false,
+                        )
+                    )
+                }
+                is AckOutcome.Complete -> {
+                    logger.i(
+                        label,
+                        "${tt()} ACK continuation opcode=${outcome.opcode.toLabel()} " +
+                            "status=${outcome.status.toHexString()} (attempt ${attempt + 1})",
                     )
                     onAttemptResult?.invoke(
                         CommandAttemptTelemetry(
@@ -1047,8 +1063,8 @@ class G1BleClient(
                 is AckOutcome.Failure -> {
                     logger.w(
                         label,
-                        "${tt()} ACK failure opcode=${ackResult.opcode.toLabel()} " +
-                            "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
+                        "${tt()} ACK failure opcode=${outcome.opcode.toLabel()} " +
+                            "status=${outcome.status.toHexString()} (attempt ${attempt + 1})",
                     )
                     onAttemptResult?.invoke(
                         CommandAttemptTelemetry(
