@@ -1,118 +1,127 @@
-CONTEXT_ENGINEERING.md v1.7 — BLE Core Realignment & Audio Preparation (Aligned with Even Reality v1.6.6)
+CONTEXT_ENGINEERING.md v1.8
+
+BLE Parity + Telemetry + UI Realignment (Even Reality v1.6.6)
+
+⸻
 
 1. CURRENT STATE
-	•	Dual-lens BLE architecture operational; HUD text and clear commands (0x09, 0x25) confirmed.
-	•	Mic watchdog active; heartbeat partial.
-	•	Outdated ACK logic still triggers false “→ PING ← ERR” events.
-	•	Even Reality firmware v1.6.6 adds new ACK codes (0xC0, 0xCB), revised audio (0xF1) headers, and sub-opcode behavior for 0x26.
-	•	Build is successful; runtime BLE verification in progress.
-	•	MCP and voice integration remain deferred until BLE parity achieved.
+	•	Dual-lens BLE architecture operational and stable across > 1 min sessions.
+	•	ACK continuation (0xCB), completion (0xC0), and textual “OK” handled correctly.
+	•	Heartbeat loop active but still locked by shared BLE write mutex.
+	•	Gestures detected from both lenses but lens metadata dropped in shared flow.
+	•	Battery telemetry now voltage-based (mV), not %; case data only when docked.
+	•	Firmware telemetry reports full version + build via 0x11/0x2B frames.
+	•	UI still assumes percentage-based display; must be updated to new voltage logic.
+	•	Build passes; runtime validation pending for case telemetry and gesture parity.
 
 ⸻
 
 2. GOALS
-	1.	Achieve full BLE parity with v1.6.6 (protocol ack logic + continuations).
-	2.	Stabilize heartbeat and mic sessions for > 30 s links.
-	3.	Add support for 0x26 dual-mode (Dashboard / Voice-Wake).
-	4.	Implement new telemetry set (0x2B–0x39, 0xF5).
-	5.	Prepare for AudioOutManager and Voice UI integration.
+	1.	Eliminate false “PING ERR” caused by 0xCA misclassification.
+	2.	Decouple heartbeat writes from BLE write mutex (stop false misses).
+	3.	Preserve lens metadata in gesture telemetry.
+	4.	Add proper voltage-based battery + firmware UI.
+	5.	Complete parity validation for all 0x2B–0x39, 0xF5 telemetry events.
 
 ⸻
 
-3. BLE LOGIC REALIGNMENT (Phase 4.0 r1)
+3. BLE CORE FIXES (Phase 4.0 r1g)
 
 ACK Layer
-	•	Recognize 0xC9, 0x04, 0xC0, 0xCB, and text “OK”.
-	•	0xCB → continuation; 0xC0 → transfer complete.
-	•	Suppress duplicate error logs for textual ACKs.
-	•	Warn once per session on unknown ACKs.
+	•	Map 0xCA → BUSY/RETRY, not FAIL.
+	•	Continue to treat 0xC9/“OK” → Success, 0xCB → Continuation, 0xC0 → Complete.
+	•	Add BUSY classification in parseAckOutcome() and suppress redundant console errors.
 
-Heartbeat (0x25)
-	•	Interval 28–30 s.
-	•	Reset on any RX frame; rebond after 3 misses.
-	•	Logged via [HB][Lens][OK].
-
-Display / Voice-Wake (0x26)
-	•	Sub-opcode defines mode: Dashboard (geometry bytes) vs Voice-Wake toggle.
-	•	Backward HUD compatibility preserved.
-
-Audio Stream (0xF1)
-	•	Now includes 2-byte length + channel prefix.
-	•	Update parser to extract PCM payload correctly.
-
-Telemetry Expansion
-
-Opcode	Function	Output Type
-0x2B	Device state / flags	DeviceStatus
-0x2C	Battery (mV + charging)	BatteryInfo
-0x32–0x37	Env + uptime	DeviceTelemetrySnapshot
-0x39	System OK	AckEvent
-0xF5	Gesture	GestureEvent
-
-	•	Update ProtocolMap and BleTelemetryParser.
-	•	Emit to Flow<DeviceTelemetry> and Developer console.
-
-Notification Stream
-	•	Reassemble multi-frame JSON (0x04 / 0x4B / 0x4C) using continuations.
-
-Reboot / Debug (0x23 72 / 0x23 6C)
-	•	Console-only stubs for future diagnostics.
+Heartbeat
+	•	Run heartbeat writes on separate non-blocking channel (no shared mutex).
+	•	Keep 28–30 s interval; rebond after 3 misses.
+	•	Log [HB][Lens][OK] and only mark misses per offending lens.
 
 ⸻
 
-4. TELEMETRY VALIDATION
-	•	Battery updates ≈ 30 s.
-	•	Uptime monotonic.
-	•	Gestures instant per lens.
-	•	Timestamps match reception time.
-	•	No regression in HUD or mic watchdog.
+4. TELEMETRY + GESTURE (Phase 4.0 r2)
+	•	Extend BleTelemetryRepository to carry lens in _gesture emissions:
+
+data class LensGestureEvent(val lens: Lens, val gesture: GestureEvent)
+
+
+	•	Update downstream consumers (Developer ViewModel, console).
+	•	Verify 0xF5 (1 = single, 2 = double, 4 = hold) from each lens.
 
 ⸻
 
-5. AUDIOOUTMANAGER DESIGN (Phase 4.0 r2 – Next)
-	•	enum AudioSink { GLASSES, WEARABLE, PHONE }.
-	•	Flow-backed preference in SettingsRepository.
-	•	Integrates with Android AudioManager and TTS.
-	•	100 ms cross-fade on sink switch.
-	•	Default sink = GLASSES.
+5. TELEMETRY PERSISTENCE (Phase 4.0 r3)
+	•	Persist per-lens DeviceTelemetrySnapshot (Voltage / Charging / Uptime / ACK).
+	•	Handle case battery (0x2E, 0x30) when docked.
+	•	Emit unified Flow .
+	•	Add 30 s refresh validation.
 
 ⸻
 
-6. VOICE & AUDIO SETTINGS UI (Phase 4.0 r3 – Next)
-	•	VoiceAudioSettingsFragment under hub/ui/settings/.
-	•	Toggles: Audible Responses, Prefer Phone Mic.
-	•	Dropdown: Output Device (Auto / Phone / Headset).
-	•	Runtime RECORD_AUDIO permission.
-	•	Live binding to AudioOutManager / MicStreamManager.
+6. UI / UX REALIGNMENT (v1.6.6 Visual Parity) — Phase 4.0 r4
+
+Battery Display
+
+Element	Old	New
+Value	%	Voltage (V / mV)
+Case data	Always visible	Only when docked
+Label	“Battery %”	“Battery Voltage (V)”
+Tooltip	none	“Firmware v1.6.6 reports voltage instead of percentage.”
+Visual	flat text	colored bar by voltage range (4.2 → 3.6 V)
+
+Firmware Info
+	•	Display “Firmware v1.6.6 (Even Reality)” + build time + Device ID.
+	•	Add “Dual-Lens Mode Active” indicator when both lenses connected.
+	•	Show “Protocol Parity 100%” status line.
+
+Developer Console
+
+[TELEMETRY][L] batt=3.92 V chg=true up=185 s ack=OK
+[TELEMETRY][R] batt=3.85 V chg=false up=183 s ack=OK
+
+	•	Prefix lens label; 30 s update divider; “—” for missing case values.
 
 ⸻
 
-7. MCP PREPARATION (Phase 5.0 Preview)
-	•	Stub McpBridge.kt with init(), sendContext(), receiveContext().
-	•	Local-only context engine (no network).
+7. EXECUTION PLAN (Incremental Patch Sequence)
+
+Phase	Focus	Priority
+Task 1	0xCA → BUSY/RETRY mapping + suppress false ERR logs	🔴 Critical
+Task 2	Heartbeat write decoupling (fix false misses)	🔴 Critical
+Task 3	Gesture parity (add LensGestureEvent)	🟠 High
+Task 4	Battery + Firmware UI/UX realignment (v1.6.6 spec)	🟡 Medium
+Task 5	Full telemetry persistence validation > 1 min run	🟢 Final Check
+
 
 ⸻
 
-8. EXECUTION PLAN
-	1.	Phase 4.0 r1 → BLE Realignment (current patch)
-	2.	Phase 4.0 r2 → AudioOutManager implementation
-	3.	Phase 4.0 r3 → Voice & Audio UI + permissions
-	4.	Phase 4.0 r4 → BLE long-duration validation
-	5.	Phase 5.0 → MCP / Assistant integration
+✅ SUCCESS CRITERIA
+	•	No “→ PING ← ERR” for > 2 minutes runtime.
+	•	Heartbeat OK per lens without cross-contamination.
+	•	Gestures log with [L]/[R] prefix.
+	•	Battery panel shows voltage + charging state accurately.
+	•	Firmware v1.6.6 values visible in About / Diagnostics UI.
+	•	MCP / Voice phases resume after parity confirmed.
 
 ⸻
 
-✅ Verification Checklist
-	•	ACK & heartbeat stable.
-	•	Dual-lens telemetry consistent.
-	•	HUD + Voice-Wake non-conflicting.
-	•	Battery & gesture events valid.
-	•	Ready for AudioOutManager merge.
+🧠 Prompt for Codex (Task 1 — ACK Busy/Retry Correction)
 
-⸻
+TASK 1 — ACK BUSY / RETRY RECLASSIFICATION (v1.6.6 Alignment)
 
-🔖 Summary
+Objective:
+Fix false "→ PING ← ERR" logs by treating opcode 0xCA as BUSY / RETRY instead of FAILURE.
 
-This v1.7 document fully supersedes prior 1.6.3-based plans.
-It reflects Even Reality firmware v1.6.6 protocol behavior, with updated ACK, audio framing, and telemetry logic.
-Codex must complete the BLE realignment before audio or MCP phases begin.
+Instructions:
+1. In G1Protocols or AckOutcome parser, map 0xCA → BUSY state.
+2. Update parseAckOutcome() to return AckOutcome.Busy for 0xCA.
+3. Suppress console error lines for BUSY ACKs; log them as:
+   `[ACK][Lens][BUSY] opcode=<code> retrying`
+4. Do not trigger reconnect / rebond on BUSY responses.
+5. Verify that PING and telemetry ACKs no longer emit "ERR" when 0xCA is seen.
+6. Maintain existing continuation (0xCB) and completion (0xC0) behavior.
+
+POST-VALIDATION:
+Confirm in logs:
+- `[ACK][L][BUSY]` appears occasionally under load (no ERR).
+- Heartbeat continues normally without false rebond.
