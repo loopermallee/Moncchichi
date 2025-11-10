@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -613,8 +614,7 @@ class MoncchichiBleService(
     }
 
     fun shutdown() {
-        heartbeatJob?.cancel()
-        heartbeatJob = null
+        heartbeatSupervisor.shutdown()
         rebondJob?.cancel()
         rebondJob = null
         clientRecords.values.forEach { it.dispose() }
@@ -625,8 +625,6 @@ class MoncchichiBleService(
         pendingCommandAcks.values.forEach { it.clear() }
         lastAckSuccessMs.clear()
         lastAckSignature.clear()
-        heartbeatLastSentAt.clear()
-        heartbeatMissCounters.replaceAll { _, _ -> 0 }
         ALL_LENSES.forEach { updateLens(it) { LensStatus() } }
         if (connectionOrder.isNotEmpty()) {
             connectionOrder.clear()
@@ -1215,6 +1213,21 @@ private class HeartbeatSupervisor(
         job?.cancel()
         job = null
         ensureLoop()
+    }
+
+    fun shutdown() {
+        job?.cancel()
+        job = null
+        lidOpen.set(null)
+        states.values.forEach { state ->
+            state.connected = false
+            state.inCase = null
+            state.nextDueAt = null
+            state.lastSuccessAt = null
+            state.lastAckAt = null
+            state.lastAckType = null
+            state.missCount = 0
+        }
     }
 
     private suspend fun runLoop() {
