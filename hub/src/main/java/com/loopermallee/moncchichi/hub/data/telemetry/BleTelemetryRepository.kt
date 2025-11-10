@@ -970,7 +970,7 @@ class BleTelemetryRepository(
             snapshot.copy(
                 lastAckStatus = ackStatus,
                 lastAckTimestamp = event.timestampMs,
-                lastAckMode = event.type,
+                lastAckMode = MoncchichiBleService.AckType.BINARY,
             )
         }
     }
@@ -2185,6 +2185,9 @@ class BleTelemetryRepository(
             rssi = rssi,
             firmwareVersion = firmwareVersion,
             notes = notes,
+            reconnectAttempts = reconnectAttemptsSnapshot,
+            heartbeatLatencyMs = heartbeatLatencySnapshotMs,
+            lastAckMode = ackMode?.name,
         )
 
     private fun MoncchichiBleService.Target.toLensOrNull(): Lens? = when (this) {
