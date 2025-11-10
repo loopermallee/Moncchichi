@@ -9,7 +9,9 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.client.G1ServiceCommon
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.model.Repository
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -19,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,6 +34,7 @@ class HudViewModel(
     private val repository: Repository,
     private val prefs: SharedPreferences,
     private val httpClient: OkHttpClient,
+    private val telemetry: BleTelemetryRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HudUiState())
@@ -42,6 +46,7 @@ class HudViewModel(
         loadConfig()
         bindRepository()
         observeRepository()
+        observeTelemetry()
         observeNotifications()
         refreshPermissions()
         scheduleWeatherRefresh()
@@ -219,6 +224,39 @@ class HudViewModel(
                     )
                 }
             }
+        }
+    }
+
+    private fun observeTelemetry() {
+        viewModelScope.launch {
+            combine(
+                telemetry.wearingStatus,
+                telemetry.inCaseStatus,
+                telemetry.caseOpenStatus,
+                telemetry.chargingStatus,
+                telemetry.caseBatteryPercentStatus,
+            ) { wearing, inCase, caseOpen, charging, caseBattery ->
+                MoncchichiBleService.Lens.values().map { lens ->
+                    HudLensStatus(
+                        id = lens.name,
+                        label = lensLabel(lens),
+                        wearing = wearing.valueFor(lens),
+                        inCase = inCase.valueFor(lens),
+                        caseOpen = caseOpen.valueFor(lens),
+                        charging = charging.valueFor(lens),
+                        caseBatteryPercent = caseBattery.valueFor(lens),
+                    )
+                }
+            }.collectLatest { statuses ->
+                _uiState.update { it.copy(lensStatus = statuses) }
+            }
+        }
+    }
+
+    private fun lensLabel(lens: MoncchichiBleService.Lens): String {
+        return when (lens) {
+            MoncchichiBleService.Lens.LEFT -> "Left"
+            MoncchichiBleService.Lens.RIGHT -> "Right"
         }
     }
 

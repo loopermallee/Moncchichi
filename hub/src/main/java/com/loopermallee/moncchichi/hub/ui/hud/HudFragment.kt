@@ -34,6 +34,7 @@ class HudFragment : Fragment() {
             AppLocator.repository,
             AppLocator.prefs,
             AppLocator.httpClient,
+            AppLocator.telemetry,
         )
     }
 

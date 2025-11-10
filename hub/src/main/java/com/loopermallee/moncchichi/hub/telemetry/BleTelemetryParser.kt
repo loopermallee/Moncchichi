@@ -89,6 +89,18 @@ class BleTelemetryParser(
             override val rawFrame: ByteArray,
         ) : TelemetryEvent
 
+        data class SystemEvent(
+            override val lens: MoncchichiBleService.Lens,
+            override val timestampMs: Long,
+            val opcode: Int,
+            val eventCode: Int,
+            val wearing: Boolean?,
+            val caseOpen: Boolean?,
+            val charging: Boolean?,
+            val caseBatteryPercent: Int?,
+            override val rawFrame: ByteArray,
+        ) : TelemetryEvent
+
         data class AudioPacketEvent(
             override val lens: MoncchichiBleService.Lens,
             override val timestampMs: Long,
@@ -309,12 +321,14 @@ class BleTelemetryParser(
         timestampMs: Long,
     ): List<TelemetryEvent> {
         val parsed = G1ReplyParser.parseF5Payload(frame)
+        val subcommand = parsed?.subcommand ?: frame.payload.firstOrNull()?.toUnsignedInt()
         val gesture = if (frame.payload.isNotEmpty()) {
             runCatching { G1ReplyParser.parseGesture(frame.payload) }.getOrNull()
         } else {
             null
         }
-        if (parsed == null && gesture == null) {
+        val isGestureEvent = subcommand != null && subcommand in gestureEventCodes
+        if (parsed == null && (!isGestureEvent || gesture == null) && subcommand !in systemEventCodes && subcommand !in specialSystemCodes) {
             return emptyList()
         }
         val events = mutableListOf<TelemetryEvent>()
@@ -331,17 +345,93 @@ class BleTelemetryParser(
                 )
             }
         }
-        gesture?.let { gestureEvent ->
+        if (isGestureEvent && gesture != null) {
             events += TelemetryEvent.GestureEvent(
                 lens = lens,
                 timestampMs = timestampMs,
                 opcode = frame.opcode,
-                gesture = gestureEvent,
+                gesture = gesture,
                 rawFrame = frame.raw.copyOf(),
             )
         }
+        subcommand?.let { code ->
+            val systemEvent = buildSystemEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                frame = frame,
+                code = code,
+            )
+            if (systemEvent != null) {
+                events += systemEvent
+            }
+        }
         return events
     }
+
+    private fun buildSystemEvent(
+        lens: MoncchichiBleService.Lens,
+        timestampMs: Long,
+        frame: G1ReplyParser.NotifyFrame,
+        code: Int,
+    ): TelemetryEvent.SystemEvent? {
+        if (code !in systemEventCodes && code !in specialSystemCodes) {
+            return null
+        }
+        val valueIndex = frame.resolveF5ValueIndex(code)
+        val rawValue = valueIndex?.let { frame.payload.getOrNull(it)?.toUnsignedInt() }
+        var wearing: Boolean? = null
+        var caseOpen: Boolean? = null
+        var charging: Boolean? = null
+        var caseBattery: Int? = null
+        when (code) {
+            0x06 -> wearing = true
+            0x07 -> wearing = false
+            0x08 -> caseOpen = true
+            0x09 -> caseOpen = false
+            0x0A -> charging = true
+            0x0B -> charging = false
+            0x0E -> charging = rawValue?.let { it == 1 }
+            0x0F -> caseBattery = rawValue?.takeIf { it in 0..100 }
+        }
+        if (wearing == null && caseOpen == null && charging == null && caseBattery == null) {
+            return null
+        }
+        return TelemetryEvent.SystemEvent(
+            lens = lens,
+            timestampMs = timestampMs,
+            opcode = frame.opcode,
+            eventCode = code,
+            wearing = wearing,
+            caseOpen = caseOpen,
+            charging = charging,
+            caseBatteryPercent = caseBattery,
+            rawFrame = frame.raw.copyOf(),
+        )
+    }
+
+    private fun G1ReplyParser.NotifyFrame.resolveF5ValueIndex(command: Int): Int? {
+        return when {
+            status?.toUnsignedInt() == command -> 0
+            payload.firstOrNull()?.toUnsignedInt() == command -> 1
+            else -> null
+        }
+    }
+    private val gestureEventCodes = setOf(
+        0x00,
+        0x01,
+        0x02,
+        0x03,
+        0x04,
+        0x05,
+        0x12,
+        0x17,
+        0x18,
+        0x1E,
+        0x1F,
+    )
+
+    private val systemEventCodes = 0x06..0x0B
+    private val specialSystemCodes = setOf(0x0E, 0x0F)
 
     private fun G1ReplyParser.NotifyFrame.toEnvironmentSnapshot(): EnvironmentSnapshot? {
         val payloadCopy = payload.copyOf()
