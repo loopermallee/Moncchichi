@@ -171,12 +171,12 @@ class BleTelemetryRepository(
     private val _uptime = MutableStateFlow<Long?>(null)
     val uptime: StateFlow<Long?> = _uptime.asStateFlow()
 
-    private val _gesture = MutableSharedFlow<G1ReplyParser.GestureEvent>(
+    private val _gesture = MutableSharedFlow<LensGestureEvent>(
         replay = 0,
         extraBufferCapacity = 32,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val gesture: SharedFlow<G1ReplyParser.GestureEvent> = _gesture.asSharedFlow()
+    val gesture: SharedFlow<LensGestureEvent> = _gesture.asSharedFlow()
 
     data class DeviceStatus(
         val wearing: Boolean?,
@@ -197,6 +197,7 @@ class BleTelemetryRepository(
         val environment: Map<String, String>?,
         val lastAckStatus: String?,
         val lastAckTimestamp: Long?,
+        val lastGesture: LensGestureEvent?,
     )
 
     private val deviceTelemetryScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -226,6 +227,7 @@ class BleTelemetryRepository(
             environment = null,
             lastAckStatus = null,
             lastAckTimestamp = null,
+            lastGesture = null,
         )
     }
 
@@ -310,6 +312,9 @@ class BleTelemetryRepository(
                     }
                 }
                 add(ackPart)
+            }
+            lastGesture?.let { event ->
+                add("gesture=${gestureLabel(event.gesture)}")
             }
             environment?.takeIf { it.isNotEmpty() }?.let { map ->
                 add(map.entries.joinToString(prefix = "env{", postfix = "}") { (key, value) -> "$key=$value" })
@@ -714,14 +719,18 @@ class BleTelemetryRepository(
                 handleAckEvent(event)
             }
             is BleTelemetryParser.TelemetryEvent.GestureEvent -> {
-                _gesture.tryEmit(event.gesture)
-                val label = String.format(
-                    Locale.US,
-                    "%s detected",
-                    event.gesture.name,
-                )
+                val lensGesture = LensGestureEvent(event.lens, event.gesture)
+                _gesture.tryEmit(lensGesture)
+                val label = gestureLabel(event.gesture)
                 emitConsole("GESTURE", event.lens, label, event.timestampMs)
-                updateDeviceTelemetry(event.lens, event.timestampMs, logUpdate = false, persist = false) { snapshot -> snapshot }
+                updateDeviceTelemetry(
+                    event.lens,
+                    event.timestampMs,
+                    logUpdate = false,
+                    persist = false,
+                ) { snapshot ->
+                    snapshot.copy(lastGesture = lensGesture)
+                }
             }
             is BleTelemetryParser.TelemetryEvent.AudioPacketEvent -> {
                 handleAudioPacket(event)
@@ -999,6 +1008,15 @@ class BleTelemetryRepository(
         event.evenAiEvent?.let { evenAi ->
             val message = describeEvenAi(evenAi)
             emitConsole("GESTURE", event.lens, message, event.timestampMs)
+        }
+    }
+
+    private fun gestureLabel(gesture: G1ReplyParser.GestureEvent): String {
+        return when (gesture.code) {
+            0x01 -> "single"
+            0x02 -> "double"
+            0x04 -> "hold"
+            else -> gesture.name.lowercase(Locale.US).replace('_', ' ')
         }
     }
 

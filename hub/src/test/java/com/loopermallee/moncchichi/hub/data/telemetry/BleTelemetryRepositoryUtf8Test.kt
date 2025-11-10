@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -146,6 +147,39 @@ class BleTelemetryRepositoryUtf8Test {
         assertEquals(3, snapshot.ackSuccessCount)
         assertEquals(0, snapshot.ackFailureCount)
         assertEquals(1, snapshot.ackWarmupCount)
+    }
+
+    @Test
+    fun `gesture events include lens context`() = runTest {
+        val logs = mutableListOf<String>()
+        val repository = BleTelemetryRepository(
+            MemoryRepository(FakeMemoryDao()),
+            backgroundScope,
+        ) { message -> logs += message }
+
+        val gestures = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.gesture.take(2).toList(mutableListOf())
+        }
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x01))
+        repository.onFrame(Lens.RIGHT, byteArrayOf(0xF5.toByte(), 0x02))
+
+        val events = gestures.await()
+        assertEquals(Lens.LEFT, events[0].lens)
+        assertEquals(0x01, events[0].gesture.code)
+        assertEquals(Lens.RIGHT, events[1].lens)
+        assertEquals(0x02, events[1].gesture.code)
+
+        val telemetrySnapshots = repository.deviceTelemetryFlow.first { snapshots ->
+            snapshots.any { it.lastGesture != null }
+        }
+        val leftSnapshot = telemetrySnapshots.first { it.lens == Lens.LEFT }
+        val rightSnapshot = telemetrySnapshots.first { it.lens == Lens.RIGHT }
+        assertEquals(0x01, leftSnapshot.lastGesture?.gesture?.code)
+        assertEquals(0x02, rightSnapshot.lastGesture?.gesture?.code)
+
+        assertTrue(logs.any { it.contains("[GESTURE][L] single") })
+        assertTrue(logs.any { it.contains("[GESTURE][R] double") })
     }
 }
 
