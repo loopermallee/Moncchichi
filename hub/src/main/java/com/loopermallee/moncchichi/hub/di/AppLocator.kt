@@ -7,6 +7,7 @@ import androidx.room.Room
 import com.loopermallee.moncchichi.bluetooth.BluetoothScanner
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.hub.assistant.EvenAiCoordinator
+import com.loopermallee.moncchichi.hub.audio.AudioOutManager
 import com.loopermallee.moncchichi.hub.audio.MicStreamManager
 import com.loopermallee.moncchichi.hub.data.db.MemoryDb
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
@@ -52,6 +53,8 @@ object AppLocator {
         private set
     lateinit var mic: MicStreamManager
         private set
+    lateinit var audioOut: AudioOutManager
+        private set
     lateinit var prefs: SharedPreferences
         private set
     lateinit var diagnostics: DiagnosticRepository
@@ -84,6 +87,7 @@ object AppLocator {
         appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         telemetry = BleTelemetryRepository(memory, appScope)
         mic = MicStreamManager.create(appCtx, appScope, telemetry)
+        audioOut = AudioOutManager(appCtx, appScope)
         ble = if (useLiveBle) {
             bleScanner = BluetoothScanner(appCtx)
             bleService = MoncchichiBleService(appCtx, appScope)

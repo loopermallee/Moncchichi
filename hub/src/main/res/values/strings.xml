@@ -173,7 +173,23 @@
     <string name="teleprompter_hud_idle">HUD sync idle</string>
     <string name="menu_teleprompter">Teleprompter</string>
     <string name="voice_audio_title">Voice &amp; Audio</string>
-    <string name="voice_audio_stub">Voice &amp; Audio (coming soon)</string>
+    <string name="voice_audio_description">Configure how Moncchichi listens and speaks so it fits your environment.</string>
+    <string name="voice_audio_toggle_audible">Audible responses</string>
+    <string name="voice_audio_toggle_audible_summary">Hear spoken replies from the assistant.</string>
+    <string name="voice_audio_toggle_phone_mic">Prefer phone microphone</string>
+    <string name="voice_audio_toggle_phone_mic_summary">
+        Automatically switch to your phone’s mic when available.
+    </string>
+    <string name="voice_audio_permission_needed">Microphone permission required for phone input.</string>
+    <string name="voice_audio_permission_granted">Microphone permission granted.</string>
+    <string name="voice_audio_permission_request">Grant microphone access to route input through your phone.</string>
+    <string name="voice_audio_permission_denied">Microphone permission denied.</string>
+    <string name="voice_audio_output_label">Output device</string>
+    <string name="voice_audio_output_summary">Pick where audible feedback should play.</string>
+    <string name="voice_audio_sink_auto">Auto (glasses default)</string>
+    <string name="voice_audio_sink_wearable">Wearable speaker</string>
+    <string name="voice_audio_sink_phone">Phone speaker</string>
+    <string name="settings_button_voice_audio">Voice &amp; Audio settings</string>
     <plurals name="teleprompter_lens_count">
         <item quantity="one">%d lens</item>
         <item quantity="other">%d lenses</item>
