@@ -179,15 +179,42 @@ class BleTelemetryRepository(
     )
     val gesture: SharedFlow<LensGestureEvent> = _gesture.asSharedFlow()
 
-    data class DeviceStatus(
+    data class DeviceStatus<T>(
+        val left: T? = null,
+        val right: T? = null,
+        val leftUpdatedAt: Long? = null,
+        val rightUpdatedAt: Long? = null,
+    ) {
+        fun valueFor(lens: Lens): T? = when (lens) {
+            Lens.LEFT -> left
+            Lens.RIGHT -> right
+        }
+    }
+
+    private val _wearingStatus = MutableStateFlow(DeviceStatus<Boolean>())
+    val wearingStatus: StateFlow<DeviceStatus<Boolean>> = _wearingStatus.asStateFlow()
+
+    private val _inCaseStatus = MutableStateFlow(DeviceStatus<Boolean>())
+    val inCaseStatus: StateFlow<DeviceStatus<Boolean>> = _inCaseStatus.asStateFlow()
+
+    private val _caseOpenStatus = MutableStateFlow(DeviceStatus<Boolean>())
+    val caseOpenStatus: StateFlow<DeviceStatus<Boolean>> = _caseOpenStatus.asStateFlow()
+
+    private val _chargingStatus = MutableStateFlow(DeviceStatus<Boolean>())
+    val chargingStatus: StateFlow<DeviceStatus<Boolean>> = _chargingStatus.asStateFlow()
+
+    private val _caseBatteryPercentStatus = MutableStateFlow(DeviceStatus<Int>())
+    val caseBatteryPercentStatus: StateFlow<DeviceStatus<Int>> = _caseBatteryPercentStatus.asStateFlow()
+
+    data class DeviceState(
         val wearing: Boolean?,
         val inCase: Boolean?,
         val silentMode: Boolean?,
         val caseOpen: Boolean?,
     )
 
-    private val _deviceStatus = MutableStateFlow<DeviceStatus?>(null)
-    val deviceStatus: StateFlow<DeviceStatus?> = _deviceStatus.asStateFlow()
+    private val _deviceStatus = MutableStateFlow<DeviceState?>(null)
+    val deviceStatus: StateFlow<DeviceState?> = _deviceStatus.asStateFlow()
 
     data class DeviceTelemetrySnapshot(
         val lens: MoncchichiBleService.Lens,
@@ -501,6 +528,11 @@ class BleTelemetryRepository(
         _battery.value = null
         _uptime.value = null
         _deviceStatus.value = null
+        _wearingStatus.value = DeviceStatus()
+        _inCaseStatus.value = DeviceStatus()
+        _caseOpenStatus.value = DeviceStatus()
+        _chargingStatus.value = DeviceStatus()
+        _caseBatteryPercentStatus.value = DeviceStatus()
         lensTelemetrySnapshots.forEach { (lens, flow) ->
             flow.value = initialDeviceTelemetrySnapshot(lens)
         }
@@ -708,12 +740,15 @@ class BleTelemetryRepository(
             is BleTelemetryParser.TelemetryEvent.DeviceStatusEvent -> {
                 val hex = event.rawFrame.toHex()
                 applyStateFlags(event.lens, event.flags, event.timestampMs, hex)
-                _deviceStatus.value = DeviceStatus(
+                _deviceStatus.value = DeviceState(
                     wearing = event.flags.wearing,
                     inCase = event.flags.inCradle,
                     silentMode = event.flags.silentMode,
                     caseOpen = event.flags.caseOpen,
                 )
+                _wearingStatus.update(event.lens, event.flags.wearing, event.timestampMs)
+                _inCaseStatus.update(event.lens, event.flags.inCradle, event.timestampMs)
+                _caseOpenStatus.update(event.lens, event.flags.caseOpen, event.timestampMs)
                 updateDeviceTelemetry(
                     lens = event.lens,
                     eventTimestamp = event.timestampMs,
@@ -793,6 +828,9 @@ class BleTelemetryRepository(
                 ) { snapshot ->
                     snapshot.copy(lastGesture = lensGesture)
                 }
+            }
+            is BleTelemetryParser.TelemetryEvent.SystemEvent -> {
+                handleSystemEvent(event)
             }
             is BleTelemetryParser.TelemetryEvent.AudioPacketEvent -> {
                 handleAudioPacket(event)
@@ -1070,6 +1108,111 @@ class BleTelemetryRepository(
         event.evenAiEvent?.let { evenAi ->
             val message = describeEvenAi(evenAi)
             emitConsole("GESTURE", event.lens, message, event.timestampMs)
+        }
+    }
+
+    private fun handleSystemEvent(event: BleTelemetryParser.TelemetryEvent.SystemEvent) {
+        val lens = event.lens
+        val timestamp = event.timestampMs
+        val eventCode = event.eventCode
+        event.wearing?.let { value ->
+            _wearingStatus.update(lens, value, timestamp)
+            val label = if (value) "wearing" else "not_wearing"
+            emitConsole("WEAR", lens, label, timestamp)
+        }
+        event.caseOpen?.let { value ->
+            _caseOpenStatus.update(lens, value, timestamp)
+            val label = if (value) "open" else "closed"
+            emitConsole("CASE", lens, label, timestamp)
+        }
+        event.charging?.let { value ->
+            _chargingStatus.update(lens, value, timestamp)
+            if (eventCode == 0x0E) {
+                val label = if (value == true) "charging" else "not_charging"
+                emitConsole("CASE", lens, label, timestamp)
+            } else {
+                emitConsole("CHG", lens, if (value) "on" else "off", timestamp)
+            }
+        }
+        event.caseBatteryPercent?.let { value ->
+            _caseBatteryPercentStatus.update(lens, value, timestamp)
+            emitConsole("CASE", lens, "caseBattery=${value}%", timestamp)
+        }
+
+        updateSnapshot(eventTimestamp = timestamp) { current ->
+            var telemetry = current.lens(lens)
+            var changed = false
+            var stateChanged = false
+            event.wearing?.let { value ->
+                if (telemetry.wearing != value) {
+                    telemetry = telemetry.copy(wearing = value)
+                    changed = true
+                    stateChanged = true
+                }
+            }
+            event.caseOpen?.let { value ->
+                if (telemetry.caseOpen != value) {
+                    telemetry = telemetry.copy(caseOpen = value)
+                    changed = true
+                    stateChanged = true
+                }
+            }
+            if (eventCode != 0x0E) {
+                event.charging?.let { value ->
+                    if (telemetry.charging != value) {
+                        telemetry = telemetry.copy(
+                            charging = value,
+                            chargingSourceOpcode = event.opcode,
+                            chargingUpdatedAt = timestamp,
+                        )
+                        changed = true
+                    }
+                }
+            }
+            event.caseBatteryPercent?.let { value ->
+                if (telemetry.caseBatteryPercent != value) {
+                    telemetry = telemetry.copy(caseBatteryPercent = value)
+                    changed = true
+                }
+            }
+            if (!changed) {
+                current
+            } else {
+                val updatedTelemetry = telemetry.copy(
+                    lastUpdatedAt = timestamp,
+                    lastStateUpdatedAt = if (stateChanged) timestamp else telemetry.lastStateUpdatedAt,
+                )
+                current.updateLens(lens, updatedTelemetry)
+            }
+        }
+
+        event.caseOpen?.let { value ->
+            updateDeviceTelemetry(
+                lens = lens,
+                eventTimestamp = timestamp,
+                logUpdate = false,
+                persist = false,
+            ) { snapshot ->
+                snapshot.copy(caseOpen = value)
+            }
+        }
+        if (eventCode != 0x0E && event.charging != null) {
+            updateDeviceTelemetry(
+                lens = lens,
+                eventTimestamp = timestamp,
+                logUpdate = false,
+            ) { snapshot ->
+                snapshot.copy(isCharging = event.charging)
+            }
+        }
+        event.caseBatteryPercent?.let { value ->
+            updateDeviceTelemetry(
+                lens = lens,
+                eventTimestamp = timestamp,
+                logUpdate = false,
+            ) { snapshot ->
+                snapshot.copy(caseBatteryPercent = value)
+            }
         }
     }
 
@@ -1610,6 +1753,22 @@ class BleTelemetryRepository(
             this
         } else {
             copy(lastLens = lens, lastFrameHex = hex)
+        }
+    }
+
+    private fun <T> MutableStateFlow<DeviceStatus<T>>.update(
+        lens: Lens,
+        value: T?,
+        timestamp: Long,
+    ) {
+        if (value == null) return
+        val current = this.value
+        val updated = when (lens) {
+            Lens.LEFT -> current.copy(left = value, leftUpdatedAt = timestamp)
+            Lens.RIGHT -> current.copy(right = value, rightUpdatedAt = timestamp)
+        }
+        if (updated != current) {
+            this.value = updated
         }
     }
 

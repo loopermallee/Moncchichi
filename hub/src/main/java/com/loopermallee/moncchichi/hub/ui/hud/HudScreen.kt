@@ -223,6 +223,10 @@ private fun MirrorCard(state: HudUiState) {
                             },
                         )
                     }
+                    if (state.lensStatus.isNotEmpty()) {
+                        Spacer(Modifier.height(16.dp))
+                        LensStatusSummary(statuses = state.lensStatus)
+                    }
                 }
             }
         }
@@ -286,6 +290,40 @@ private fun MessageComposerCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun LensStatusSummary(statuses: List<HudLensStatus>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        statuses.forEach { status ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "${status.label} lens",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = formatLensStatus(status),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+private fun formatLensStatus(status: HudLensStatus): String {
+    val parts = mutableListOf<String>()
+    status.wearing?.let { parts += if (it) "wearing" else "not wearing" }
+    status.inCase?.let { parts += if (it) "in case" else "out of case" }
+    status.caseOpen?.let { parts += if (it) "case open" else "case closed" }
+    status.charging?.let { parts += if (it) "charging" else "not charging" }
+    status.caseBatteryPercent?.let { parts += "case ${it}%" }
+    return if (parts.isEmpty()) {
+        "No telemetry yet"
+    } else {
+        parts.joinToString(separator = " • ")
     }
 }
 
