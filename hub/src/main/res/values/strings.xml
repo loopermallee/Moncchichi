@@ -178,7 +178,7 @@
     <string name="voice_audio_toggle_audible_summary">Hear spoken replies from the assistant.</string>
     <string name="voice_audio_toggle_phone_mic">Prefer phone microphone</string>
     <string name="voice_audio_toggle_phone_mic_summary">
-        Automatically switch to your phone&apos;s mic when available.
+        Automatically switch to your phone’s mic when available.
     </string>
     <string name="voice_audio_permission_needed">Microphone permission required for phone input.</string>
     <string name="voice_audio_permission_granted">Microphone permission granted.</string>
