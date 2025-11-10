@@ -5,6 +5,7 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_BATTERY
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_DEVICE_STATUS
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ENV_RANGE_END
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ENV_RANGE_START
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_GESTURE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_SYSTEM_STATUS
