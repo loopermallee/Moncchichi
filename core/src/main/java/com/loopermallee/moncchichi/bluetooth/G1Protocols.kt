@@ -18,6 +18,7 @@ object G1Protocols {
     const val OPC_ENV_RANGE_START = 0x32
     const val OPC_ENV_RANGE_END = 0x36
     const val OPC_GESTURE = 0xF5
+    const val OPC_SYSTEM_STATUS = 0x39
     const val OPC_DEBUG_REBOOT = 0x23
     const val SUBCMD_DEBUG = 0x72
     const val SUBCMD_SAFE_REBOOT = 0x6C
@@ -58,6 +59,7 @@ object G1Protocols {
         OPC_BATTERY -> "OPC_BATTERY"
         OPC_UPTIME -> "OPC_UPTIME"
         OPC_GESTURE -> "OPC_GESTURE"
+        OPC_SYSTEM_STATUS -> "OPC_SYSTEM_STATUS"
         else -> "0x%02X".format(opcode and 0xFF)
     }
 
@@ -77,7 +79,8 @@ object G1Protocols {
         val telemetryTailStart = OPC_ENV_RANGE_END + 1
         return (normalized in OPC_DEVICE_STATUS..telemetryHeadEnd) ||
             (normalized in OPC_ENV_RANGE_START..OPC_ENV_RANGE_END) ||
-            (normalized in telemetryTailStart..0x39) ||
-            normalized == OPC_GESTURE
+            (normalized in telemetryTailStart..OPC_SYSTEM_STATUS) ||
+            normalized == OPC_GESTURE ||
+            normalized == CMD_KEEPALIVE
     }
 }

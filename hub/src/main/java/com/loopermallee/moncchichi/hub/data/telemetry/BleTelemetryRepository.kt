@@ -3,6 +3,10 @@ package com.loopermallee.moncchichi.hub.data.telemetry
 import android.bluetooth.BluetoothDevice
 import android.os.SystemClock
 import com.loopermallee.moncchichi.bluetooth.BondResult
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_FAIL
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.hub.audio.MicStreamManager
@@ -464,7 +468,7 @@ class BleTelemetryRepository(
 
     private fun handleTelemetryEvent(event: BleTelemetryParser.TelemetryEvent) {
         when (event) {
-            is BleTelemetryParser.TelemetryEvent.StateEvent -> {
+            is BleTelemetryParser.TelemetryEvent.DeviceStatusEvent -> {
                 val hex = event.rawFrame.toHex()
                 applyStateFlags(event.lens, event.flags, event.timestampMs, hex)
             }
@@ -484,8 +488,14 @@ class BleTelemetryRepository(
                     handleBattery(event.lens, event.rawFrame)
                 }
             }
+            is BleTelemetryParser.TelemetryEvent.EnvironmentSnapshotEvent -> {
+                handleEnvironmentSnapshot(event)
+            }
             is BleTelemetryParser.TelemetryEvent.UptimeEvent -> {
                 applyUptimeEvent(event)
+            }
+            is BleTelemetryParser.TelemetryEvent.AckEvent -> {
+                handleAckEvent(event)
             }
             is BleTelemetryParser.TelemetryEvent.GestureEvent -> {
                 _gestures.tryEmit(event.gesture)
@@ -503,6 +513,56 @@ class BleTelemetryRepository(
             is BleTelemetryParser.TelemetryEvent.F5Event -> {
                 handleF5Event(event)
             }
+        }
+    }
+
+    private fun handleEnvironmentSnapshot(event: BleTelemetryParser.TelemetryEvent.EnvironmentSnapshotEvent) {
+        val components = buildList {
+            event.textValue?.takeIf { it.isNotBlank() }?.let { add(it) }
+            event.numericValue?.let { add(it.toString()) }
+            if (isEmpty() && event.payload.isNotEmpty()) {
+                add(event.payload.toHex())
+            }
+        }
+        val message = buildString {
+            append(event.key)
+            append('=')
+            append(components.joinToString(separator = ", "))
+        }
+        emitConsole("ENV", event.lens, message, event.timestampMs)
+    }
+
+    private fun handleAckEvent(event: BleTelemetryParser.TelemetryEvent.AckEvent) {
+        val statusLabel = event.ackCode?.let { describeAckCode(it) } ?: "unknown"
+        val outcome = when (event.success) {
+            true -> "success"
+            false -> "error"
+            null -> "pending"
+        }
+        val payloadHex = event.payload.takeIf { it.isNotEmpty() }?.toHex()
+        val message = buildString {
+            append(statusLabel)
+            append(' ')
+            append(outcome)
+            event.sequence?.let { seq ->
+                append(" seq=")
+                append(seq)
+            }
+            payloadHex?.let { hex ->
+                append(" payload=")
+                append(hex)
+            }
+        }
+        emitConsole("ACK", event.lens, message.trim(), event.timestampMs)
+    }
+
+    private fun describeAckCode(code: Int): String {
+        return when (code) {
+            STATUS_OK -> "ok"
+            STATUS_FAIL -> "fail"
+            OPC_ACK_CONTINUE -> "continue"
+            OPC_ACK_COMPLETE -> "complete"
+            else -> "0x%02X".format(Locale.US, code and 0xFF)
         }
     }
 
