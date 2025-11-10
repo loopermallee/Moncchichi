@@ -1,14 +1,111 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="24dp">
+    android:background="#272033">
 
-    <TextView
-        android:id="@+id/text_voice_audio_stub"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/voice_audio_stub"
-        android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+        android:orientation="vertical"
+        android:padding="@dimen/assistant_spacing">
 
-</FrameLayout>
+        <com.loopermallee.moncchichi.core.ui.components.StatusBarView
+            android:id="@+id/status_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/text_voice_audio_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/assistant_spacing"
+            android:text="@string/voice_audio_title"
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6"
+            android:textColor="#A691F2" />
+
+        <TextView
+            android:id="@+id/text_voice_audio_description"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/voice_audio_description"
+            android:textColor="#B0AFC8"
+            android:textSize="14sp" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switch_audible_responses"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/voice_audio_toggle_audible"
+            android:textColor="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/text_audible_summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/voice_audio_toggle_audible_summary"
+            android:textColor="#B0AFC8"
+            android:textSize="14sp" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switch_prefer_phone_mic"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/voice_audio_toggle_phone_mic"
+            android:textColor="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/text_phone_mic_summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/voice_audio_toggle_phone_mic_summary"
+            android:textColor="#B0AFC8"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/text_phone_mic_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/voice_audio_permission_needed"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/layout_audio_output"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:hint="@string/voice_audio_output_label"
+            app:boxStrokeColor="#A691F2"
+            app:boxStrokeWidth="2dp">
+
+            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                android:id="@+id/dropdown_audio_output"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:dropDownHeight="wrap_content"
+                android:focusable="false"
+                android:inputType="none"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#B0AFC8" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView
+            android:id="@+id/text_audio_output_summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/voice_audio_output_summary"
+            android:textColor="#B0AFC8"
+            android:textSize="14sp" />
+
+    </LinearLayout>
+</ScrollView>

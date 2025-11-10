@@ -28,6 +28,8 @@ private const val KEY_MIC_ENABLED = "mic_enabled"
 private const val KEY_VOICE_WAKE_ON_LIFT = "voice_wake_on_lift"
 private const val KEY_MIC_SOURCE = "audio:mic_source"
 private const val KEY_AUDIO_SINK = "audio:audio_sink"
+private const val KEY_AUDIBLE_RESPONSES = "audio:audible_responses"
+private const val KEY_PREFER_PHONE_MIC = "audio:prefer_phone_mic"
 private const val DEFAULT_SPEED = 48
 
 object SettingsRepository {
@@ -58,6 +60,20 @@ object SettingsRepository {
         .filter { it == null || it == KEY_AUDIO_SINK }
         .map { getAudioSink() }
         .onStart { emit(getAudioSink()) }
+        .distinctUntilChanged()
+        .shareIn(scope, SharingStarted.Eagerly, replay = 1)
+
+    val audibleResponsesFlow: Flow<Boolean> = preferenceChanges
+        .filter { it == null || it == KEY_AUDIBLE_RESPONSES }
+        .map { isAudibleResponsesEnabled() }
+        .onStart { emit(isAudibleResponsesEnabled()) }
+        .distinctUntilChanged()
+        .shareIn(scope, SharingStarted.Eagerly, replay = 1)
+
+    val preferPhoneMicFlow: Flow<Boolean> = preferenceChanges
+        .filter { it == null || it == KEY_PREFER_PHONE_MIC }
+        .map { isPreferPhoneMicEnabled() }
+        .onStart { emit(isPreferPhoneMicEnabled()) }
         .distinctUntilChanged()
         .shareIn(scope, SharingStarted.Eagerly, replay = 1)
 
@@ -92,6 +108,18 @@ object SettingsRepository {
 
     fun setVoiceWakeOnLiftEnabled(value: Boolean) {
         prefs.edit().putBoolean(KEY_VOICE_WAKE_ON_LIFT, value).apply()
+    }
+
+    fun isAudibleResponsesEnabled(): Boolean = prefs.getBoolean(KEY_AUDIBLE_RESPONSES, true)
+
+    fun setAudibleResponsesEnabled(value: Boolean) {
+        prefs.edit().putBoolean(KEY_AUDIBLE_RESPONSES, value).apply()
+    }
+
+    fun isPreferPhoneMicEnabled(): Boolean = prefs.getBoolean(KEY_PREFER_PHONE_MIC, false)
+
+    fun setPreferPhoneMicEnabled(value: Boolean) {
+        prefs.edit().putBoolean(KEY_PREFER_PHONE_MIC, value).apply()
     }
 
     fun getMicSource(): MicSource {

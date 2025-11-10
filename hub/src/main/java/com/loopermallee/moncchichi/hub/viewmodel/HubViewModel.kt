@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.hub.viewmodel
 
 import android.content.SharedPreferences
+import com.loopermallee.moncchichi.hub.audio.AudioSink
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
@@ -38,12 +39,16 @@ import com.loopermallee.moncchichi.hub.ui.scanner.LensConnectionPhase
 import com.loopermallee.moncchichi.hub.ui.scanner.PairingProgress
 import com.loopermallee.moncchichi.hub.ui.scanner.ScanBannerState
 import com.loopermallee.moncchichi.hub.ui.scanner.ScanStage
+import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -86,6 +91,9 @@ class HubViewModel(
 
     private val _uiError = MutableStateFlow<UiError?>(null)
     val uiError: StateFlow<UiError?> = _uiError.asStateFlow()
+
+    private val _permissionRequests = MutableSharedFlow<PermissionRequest>(extraBufferCapacity = 1)
+    val permissionRequests: SharedFlow<PermissionRequest> = _permissionRequests.asSharedFlow()
 
     private val offlineQueue = ArrayDeque<String>()
     private var offlineAnnouncementShown = false
@@ -185,6 +193,32 @@ class HubViewModel(
 
     fun refreshPermissionsState() {
         _state.update { it.copy(permissionsOk = perms.areAllGranted()) }
+    }
+
+    fun requestAudioPermission() {
+        viewModelScope.launch {
+            _permissionRequests.emit(PermissionRequest.RecordAudio)
+        }
+    }
+
+    fun onAudioPermissionResult(granted: Boolean) {
+        val status = if (granted) "granted" else "denied"
+        hubAddLog("[PERMS] RECORD_AUDIO $status")
+    }
+
+    fun setAudibleResponsesEnabled(enabled: Boolean) {
+        SettingsRepository.setAudibleResponsesEnabled(enabled)
+        hubAddLog("[VOICE] Audible responses ${if (enabled) "enabled" else "disabled"}")
+    }
+
+    fun setPreferPhoneMicEnabled(enabled: Boolean) {
+        SettingsRepository.setPreferPhoneMicEnabled(enabled)
+        hubAddLog("[VOICE] Prefer phone mic ${if (enabled) "enabled" else "disabled"}")
+    }
+
+    fun setAudioSink(sink: AudioSink) {
+        SettingsRepository.setAudioSink(sink)
+        hubAddLog("[VOICE] Output sink → ${sink.name}")
     }
 
     private suspend fun clearConsole() {
@@ -1232,5 +1266,9 @@ class HubViewModel(
 
     companion object {
         private const val KEY_VOICE_ENABLED = "assistant_voice_enabled"
+    }
+
+    sealed interface PermissionRequest {
+        data object RecordAudio : PermissionRequest
     }
 }

@@ -7,9 +7,11 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.slider.Slider
 import com.google.android.material.textfield.TextInputEditText
@@ -65,6 +67,7 @@ class SettingsFragment : Fragment() {
         val temperatureSlider = view.findViewById<Slider>(R.id.temperatureSlider)
         val saveButton = view.findViewById<MaterialButton>(R.id.button_save)
         val resetButton = view.findViewById<MaterialButton>(R.id.button_reset)
+        val voiceAudioButton = view.findViewById<MaterialButton>(R.id.button_voice_audio)
         val statusText = view.findViewById<TextView>(R.id.text_status)
         val modelLabel = view.findViewById<TextView>(R.id.text_model_label)
         val temperatureHint = view.findViewById<TextView>(R.id.text_temperature_hint)
@@ -166,6 +169,10 @@ class SettingsFragment : Fragment() {
             showToast("Defaults restored")
         }
 
+        voiceAudioButton.setOnClickListener {
+            openVoiceAudioSettings()
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 combine(vm.assistantConn, vm.deviceConn) { assistant: AssistantConnInfo, device: DeviceConnInfo ->
@@ -197,6 +204,19 @@ class SettingsFragment : Fragment() {
         v <= 0.5f -> "Balanced ⚖️"
         v <= 0.8f -> "Adaptive ✨"
         else -> "Creative 🌈"
+    }
+
+    private fun openVoiceAudioSettings() {
+        val host = activity as? AppCompatActivity ?: return
+        host.supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, VoiceAudioSettingsFragment())
+            .addToBackStack(null)
+            .commit()
+        host.supportFragmentManager.executePendingTransactions()
+        val toolbar = host.findViewById<MaterialToolbar>(R.id.titleBar)
+        toolbar.menu.clear()
+        toolbar.inflateMenu(R.menu.menu_overflow)
+        toolbar.title = getString(R.string.voice_audio_title)
     }
 
     private fun showToast(message: String) {
