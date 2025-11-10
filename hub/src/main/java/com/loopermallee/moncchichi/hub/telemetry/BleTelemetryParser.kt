@@ -1,14 +1,28 @@
 package com.loopermallee.moncchichi.hub.telemetry
 
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_KEEPALIVE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_BATTERY
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_DEVICE_STATUS
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ENV_RANGE_END
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ENV_RANGE_START
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_GESTURE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_SYSTEM_STATUS
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_UPTIME
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_FAIL
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.isTelemetry
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
+import java.util.Locale
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlin.text.Charsets
 
 class BleTelemetryParser(
-    private val protocolMap: ProtocolMap = ProtocolMap,
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
     private val _events = MutableSharedFlow<TelemetryEvent>(
@@ -30,7 +44,7 @@ class BleTelemetryParser(
         val timestampMs: Long
         val rawFrame: ByteArray
 
-        data class StateEvent(
+        data class DeviceStatusEvent(
             override val lens: MoncchichiBleService.Lens,
             override val timestampMs: Long,
             val opcode: Int,
@@ -45,6 +59,17 @@ class BleTelemetryParser(
             val batteryPercent: Int?,
             val caseBatteryPercent: Int?,
             val info: G1ReplyParser.BatteryInfo?,
+            override val rawFrame: ByteArray,
+        ) : TelemetryEvent
+
+        data class EnvironmentSnapshotEvent(
+            override val lens: MoncchichiBleService.Lens,
+            override val timestampMs: Long,
+            val opcode: Int,
+            val key: String,
+            val textValue: String?,
+            val numericValue: Long?,
+            val payload: ByteArray,
             override val rawFrame: ByteArray,
         ) : TelemetryEvent
 
@@ -68,6 +93,19 @@ class BleTelemetryParser(
             override val lens: MoncchichiBleService.Lens,
             override val timestampMs: Long,
             val opcode: Int,
+            val sequence: Int?,
+            val channel: Int?,
+            val declaredLength: Int?,
+            val payload: ByteArray,
+            override val rawFrame: ByteArray,
+        ) : TelemetryEvent
+
+        data class AckEvent(
+            override val lens: MoncchichiBleService.Lens,
+            override val timestampMs: Long,
+            val opcode: Int,
+            val ackCode: Int?,
+            val success: Boolean?,
             val sequence: Int?,
             val payload: ByteArray,
             override val rawFrame: ByteArray,
@@ -95,16 +133,297 @@ class BleTelemetryParser(
         }
         val frame = G1ReplyParser.decodeFrame(frameBytes)
             ?: return Result(handlerFound = false, eventsEmitted = false)
-        val subOpcode = frame.payload.firstOrNull()?.toUnsignedInt()
-        val handler = protocolMap.handlerFor(frame.opcode, subOpcode)
-            ?: return Result(handlerFound = false, eventsEmitted = false)
-        val events = handler.invoke(lens, frame, timestampMs)
+        val opcode = frame.opcode
+        val telemetryOpcode = isTelemetry(opcode)
+        if (!telemetryOpcode) {
+            return Result(handlerFound = false, eventsEmitted = false)
+        }
+
+        val events = when {
+            opcode == OPC_DEVICE_STATUS -> parseDeviceStatus(lens, frame, timestampMs)
+            opcode == OPC_BATTERY -> parseBattery(lens, frame, timestampMs)
+            opcode in OPC_ENV_RANGE_START..OPC_ENV_RANGE_END -> parseEnvironmentSnapshot(lens, frame, timestampMs)
+            opcode == OPC_UPTIME -> parseUptime(lens, frame, timestampMs)
+            opcode == OPC_SYSTEM_STATUS -> parseAck(lens, frame, timestampMs)
+            opcode == OPC_GESTURE -> parseF5(lens, frame, timestampMs)
+            opcode == CMD_KEEPALIVE -> parseAudio(lens, frame, timestampMs)
+            else -> emptyList()
+        }
+
         events.forEach { event ->
             onEvent?.invoke(event)
             _events.tryEmit(event)
         }
+
         return Result(handlerFound = true, eventsEmitted = events.isNotEmpty())
     }
 
+    private fun parseDeviceStatus(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val flags = G1ReplyParser.parseState(frame) ?: return emptyList()
+        return listOf(
+            TelemetryEvent.DeviceStatusEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                flags = flags,
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseBattery(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val status = G1ReplyParser.parseBattery(frame)
+        val infoPayload = frame.payload.dropBatterySubcommand()
+        val info = infoPayload?.let { payload ->
+            runCatching { G1ReplyParser.parseBattery(payload) }.getOrNull()
+        }
+        if (status == null && info == null) {
+            return emptyList()
+        }
+        return listOf(
+            TelemetryEvent.BatteryEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                batteryPercent = status?.batteryPercent,
+                caseBatteryPercent = status?.caseBatteryPercent,
+                info = info,
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseEnvironmentSnapshot(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val snapshot = frame.toEnvironmentSnapshot() ?: return emptyList()
+        return listOf(
+            TelemetryEvent.EnvironmentSnapshotEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                key = snapshot.key,
+                textValue = snapshot.textValue,
+                numericValue = snapshot.numericValue,
+                payload = snapshot.payload,
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseUptime(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val uptime = G1ReplyParser.parseUptime(frame) ?: return emptyList()
+        return listOf(
+            TelemetryEvent.UptimeEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                uptimeSeconds = uptime,
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseAck(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val ackCode = frame.resolveAckCode()
+        val success = when (ackCode) {
+            STATUS_OK, OPC_ACK_COMPLETE, OPC_ACK_CONTINUE -> true
+            STATUS_FAIL -> false
+            else -> null
+        }
+        return listOf(
+            TelemetryEvent.AckEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                ackCode = ackCode,
+                success = success,
+                sequence = frame.sequence,
+                payload = frame.payload.copyOf(),
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseAudio(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val payload = frame.payload
+        if (payload.size < 3) {
+            return emptyList()
+        }
+        val declaredLength = payload.readLittleEndianUInt(0, 2)
+        val channel = payload.getOrNull(2)?.toUnsignedInt()
+        val audioStart = 3
+        val available = (payload.size - audioStart).coerceAtLeast(0)
+        val length = when {
+            declaredLength == null -> available
+            declaredLength <= available -> declaredLength
+            else -> available
+        }
+        val audioPayload = if (length > 0) {
+            payload.copyOfRange(audioStart, audioStart + length)
+        } else {
+            ByteArray(0)
+        }
+        return listOf(
+            TelemetryEvent.AudioPacketEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                sequence = frame.sequence,
+                channel = channel,
+                declaredLength = declaredLength,
+                payload = audioPayload,
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseF5(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val parsed = G1ReplyParser.parseF5Payload(frame)
+        val gesture = if (frame.payload.isNotEmpty()) {
+            runCatching { G1ReplyParser.parseGesture(frame.payload) }.getOrNull()
+        } else {
+            null
+        }
+        if (parsed == null && gesture == null) {
+            return emptyList()
+        }
+        val events = mutableListOf<TelemetryEvent>()
+        parsed?.let { payload ->
+            if (payload.vitals != null || payload.evenAiEvent != null) {
+                events += TelemetryEvent.F5Event(
+                    lens = lens,
+                    timestampMs = timestampMs,
+                    opcode = frame.opcode,
+                    subcommand = payload.subcommand,
+                    vitals = payload.vitals,
+                    evenAiEvent = payload.evenAiEvent,
+                    rawFrame = frame.raw.copyOf(),
+                )
+            }
+        }
+        gesture?.let { gestureEvent ->
+            events += TelemetryEvent.GestureEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                gesture = gestureEvent,
+                rawFrame = frame.raw.copyOf(),
+            )
+        }
+        return events
+    }
+
+    private fun G1ReplyParser.NotifyFrame.toEnvironmentSnapshot(): EnvironmentSnapshot? {
+        val payloadCopy = payload.copyOf()
+        val key = environmentLabels[opcode] ?: "opcode_%02X".format(Locale.US, opcode and 0xFF)
+        val text = payloadCopy.decodeAsciiOrNull()
+        val numeric = payloadCopy.toTelemetryNumber(text != null)
+        return EnvironmentSnapshot(
+            key = key,
+            payload = payloadCopy,
+            textValue = text,
+            numericValue = numeric,
+        )
+    }
+
+    private fun ByteArray.dropBatterySubcommand(): ByteArray? {
+        if (isEmpty()) return null
+        val hasSubcommand = first().toUnsignedInt() in 0x01..0x02
+        val startIndex = if (hasSubcommand) 1 else 0
+        if (size <= startIndex) return null
+        return copyOfRange(startIndex, size)
+    }
+
+    private fun G1ReplyParser.NotifyFrame.resolveAckCode(): Int? {
+        status?.toUnsignedInt()?.let { statusByte ->
+            if (statusByte.isAckCode()) {
+                return statusByte
+            }
+        }
+        return payload.lastOrNull { it.toUnsignedInt().isAckCode() }?.toUnsignedInt()
+    }
+
+    private fun Int.isAckCode(): Boolean {
+        return this == STATUS_OK || this == STATUS_FAIL || this == OPC_ACK_COMPLETE || this == OPC_ACK_CONTINUE
+    }
+
+    private fun ByteArray.readLittleEndianUInt(start: Int, length: Int): Int? {
+        if (start < 0 || length <= 0) return null
+        if (start + length > size) return null
+        var value = 0
+        for (index in 0 until length) {
+            val byte = getOrNull(start + index)?.toUnsignedInt() ?: return null
+            value = value or (byte shl (index * 8))
+        }
+        return value
+    }
+
+    private fun ByteArray.decodeAsciiOrNull(): String? {
+        if (isEmpty()) return null
+        if (!all { it.toInt().isPrintableTelemetryChar() }) {
+            return null
+        }
+        return toString(Charsets.UTF_8)
+            .trim { it <= ' ' || it == '\u0000' }
+            .ifEmpty { null }
+    }
+
+    private fun ByteArray.toTelemetryNumber(hasText: Boolean): Long? {
+        if (hasText) return null
+        if (isEmpty() || size > 4) return null
+        var value = 0L
+        forEachIndexed { index, byte ->
+            value = value or ((byte.toUnsignedInt().toLong() and 0xFF) shl (index * 8))
+        }
+        return value
+    }
+
+    private fun Int.isPrintableTelemetryChar(): Boolean {
+        val value = this and 0xFF
+        return value == 0x0A || value == 0x0D || value in 0x20..0x7E
+    }
+
     private fun Byte.toUnsignedInt(): Int = toUByte().toInt()
+
+    private data class EnvironmentSnapshot(
+        val key: String,
+        val payload: ByteArray,
+        val textValue: String?,
+        val numericValue: Long?,
+    )
+
+    private val environmentLabels = mapOf(
+        OPC_ENV_RANGE_START to "activation_angle",
+        (OPC_ENV_RANGE_START + 1) to "lens_serial",
+        (OPC_ENV_RANGE_START + 2) to "device_serial",
+        (OPC_ENV_RANGE_START + 3) to "esb_channel",
+        (OPC_ENV_RANGE_START + 4) to "esb_notification_count",
+    )
 }
