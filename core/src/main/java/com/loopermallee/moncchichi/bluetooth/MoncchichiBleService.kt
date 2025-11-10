@@ -1158,7 +1158,7 @@ class MoncchichiBleService(
     }
 
     private fun incrementRebondCounter(lens: Lens?, timestamp: Long) {
-        val targets = lens?.let { listOf(it) } ?: ALL_LENSES
+        val targets: Iterable<Lens> = lens?.let { listOf(it) } ?: ALL_LENSES.asIterable()
         targets.forEach { target: Lens ->
             updateStabilityMetrics(target, timestamp) { metrics ->
                 metrics.copy(rebondEvents = metrics.rebondEvents + 1)
