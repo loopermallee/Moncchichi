@@ -1,127 +1,112 @@
 CONTEXT_ENGINEERING.md v1.8
 
-BLE Parity + Telemetry + UI Realignment (Even Reality v1.6.6)
+Title: BLE Stability & Case Telemetry Realignment (Even Reality v1.6.6 Alignment)
 
 ⸻
 
 1. CURRENT STATE
-	•	Dual-lens BLE architecture operational and stable across > 1 min sessions.
-	•	ACK continuation (0xCB), completion (0xC0), and textual “OK” handled correctly.
-	•	Heartbeat loop active but still locked by shared BLE write mutex.
-	•	Gestures detected from both lenses but lens metadata dropped in shared flow.
-	•	Battery telemetry now voltage-based (mV), not %; case data only when docked.
-	•	Firmware telemetry reports full version + build via 0x11/0x2B frames.
-	•	UI still assumes percentage-based display; must be updated to new voltage logic.
-	•	Build passes; runtime validation pending for case telemetry and gesture parity.
+	•	The BLE connection between Moncchichi Hub and G1 glasses suffers from:
+	•	False “gesture left unknown” events.
+	•	Missing case battery and lid-open telemetry.
+	•	Random disconnects after 25–35 s.
+	•	Logs confirm both lenses transmit 0xF5 notifications (case/gesture/state) correctly, but the app mislabels them as gestures.
+	•	ACKs and heartbeats are partially implemented; the 0x25 keepalive is not reliably sent to both sides.
+	•	Case telemetry (from 0x2B / 0x2C / 0xF5) isn’t parsed or surfaced to UI.
+	•	Dual-lens reconnects fail after the first disconnect sequence.
 
 ⸻
 
 2. GOALS
-	1.	Eliminate false “PING ERR” caused by 0xCA misclassification.
-	2.	Decouple heartbeat writes from BLE write mutex (stop false misses).
-	3.	Preserve lens metadata in gesture telemetry.
-	4.	Add proper voltage-based battery + firmware UI.
-	5.	Complete parity validation for all 0x2B–0x39, 0xF5 telemetry events.
+	1.	Achieve full BLE stability and parity with Even Reality v1.6.6.
+	2.	Ensure heartbeat, ACK, and reconnect logic are robust and compliant.
+	3.	Accurately surface case status, battery %, charging state, and lid position.
+	4.	Correctly separate gesture vs. system events (wear, charging, case).
+	5.	Prepare groundwork for Phase 4.0 r2 audio routing and voice-wake integration.
 
 ⸻
 
-3. BLE CORE FIXES (Phase 4.0 r1g)
+3. ROOT CAUSES
 
-ACK Layer
-	•	Map 0xCA → BUSY/RETRY, not FAIL.
-	•	Continue to treat 0xC9/“OK” → Success, 0xCB → Continuation, 0xC0 → Complete.
-	•	Add BUSY classification in parseAckOutcome() and suppress redundant console errors.
-
-Heartbeat
-	•	Run heartbeat writes on separate non-blocking channel (no shared mutex).
-	•	Keep 28–30 s interval; rebond after 3 misses.
-	•	Log [HB][Lens][OK] and only mark misses per offending lens.
-
-⸻
-
-4. TELEMETRY + GESTURE (Phase 4.0 r2)
-	•	Extend BleTelemetryRepository to carry lens in _gesture emissions:
-
-data class LensGestureEvent(val lens: Lens, val gesture: GestureEvent)
-
-
-	•	Update downstream consumers (Developer ViewModel, console).
-	•	Verify 0xF5 (1 = single, 2 = double, 4 = hold) from each lens.
-
-⸻
-
-5. TELEMETRY PERSISTENCE (Phase 4.0 r3)
-	•	Persist per-lens DeviceTelemetrySnapshot (Voltage / Charging / Uptime / ACK).
-	•	Handle case battery (0x2E, 0x30) when docked.
-	•	Emit unified Flow .
-	•	Add 30 s refresh validation.
-
-⸻
-
-6. UI / UX REALIGNMENT (v1.6.6 Visual Parity) — Phase 4.0 r4
-
-Battery Display
-
-Element	Old	New
-Value	%	Voltage (V / mV)
-Case data	Always visible	Only when docked
-Label	“Battery %”	“Battery Voltage (V)”
-Tooltip	none	“Firmware v1.6.6 reports voltage instead of percentage.”
-Visual	flat text	colored bar by voltage range (4.2 → 3.6 V)
-
-Firmware Info
-	•	Display “Firmware v1.6.6 (Even Reality)” + build time + Device ID.
-	•	Add “Dual-Lens Mode Active” indicator when both lenses connected.
-	•	Show “Protocol Parity 100%” status line.
-
-Developer Console
-
-[TELEMETRY][L] batt=3.92 V chg=true up=185 s ack=OK
-[TELEMETRY][R] batt=3.85 V chg=false up=183 s ack=OK
-
-	•	Prefix lens label; 30 s update divider; “—” for missing case values.
-
-⸻
-
-7. EXECUTION PLAN (Incremental Patch Sequence)
-
-Phase	Focus	Priority
-Task 1	0xCA → BUSY/RETRY mapping + suppress false ERR logs	🔴 Critical
-Task 2	Heartbeat write decoupling (fix false misses)	🔴 Critical
-Task 3	Gesture parity (add LensGestureEvent)	🟠 High
-Task 4	Battery + Firmware UI/UX realignment (v1.6.6 spec)	🟡 Medium
-Task 5	Full telemetry persistence validation > 1 min run	🟢 Final Check
+Category	Problem	Cause
+Gesture Flood	“Gesture Left Unknown” repeating when idle	All 0xF5 events treated as gestures; firmware sends multiple non-gesture events via 0xF5 (wear, charging, case)
+Missing Case Telemetry	No case battery %, lid, or silent mode in UI	0x2B/0x2C not parsed; 0xF5 0E/0F ignored
+Disconnects Every ≈30 s	Heartbeat not reaching both BLE sides	App sends incomplete or unsynchronized 0x25; no dual-timer per lens
+ACK Confusion	False “→ PING ← ERR” or lost commands	0xCA misclassified as failure; 0xCB continuations ignored
+Reconnect Failure	1 attempt, 0 success	No retry loop or bonding check for per-lens reconnects
 
 
 ⸻
 
-✅ SUCCESS CRITERIA
-	•	No “→ PING ← ERR” for > 2 minutes runtime.
-	•	Heartbeat OK per lens without cross-contamination.
-	•	Gestures log with [L]/[R] prefix.
-	•	Battery panel shows voltage + charging state accurately.
-	•	Firmware v1.6.6 values visible in About / Diagnostics UI.
-	•	MCP / Voice phases resume after parity confirmed.
+4. FIX STRATEGY
+
+A. Event Parsing & Gesture Reclassification
+	•	Implement full 0xF5 event map per G1 v1.6.6:
+	•	0x00–0x05, 0x12, 0x17, 0x18, 0x1E, 0x1F → true gestures
+	•	0x06–0x0B → wear / case / charging
+	•	0x0E, 0x0F → case charging & battery
+	•	Add a new model SystemEvent (wearing, charging, caseOpen, caseBattery%).
+	•	Route to BleTelemetryRepository.handleSystemEvent() instead of gesture flow.
+
+B. Case & Silent Mode Telemetry
+	•	On connect:
+	1.	Send 0x2B (“Get Silent Mode & State”) to both lenses.
+	2.	Parse state byte → wearing, inCase, lidOpen, silentMode.
+	3.	Send 0x2C (“Get Battery Info”) for caseBattery%.
+	•	Subscribe to 0xF5 notifications for live updates (0x0E, 0x0F).
+	•	Extend DeviceTelemetrySnapshot → include caseBatteryPercent, caseOpen, silentMode.
+
+C. Heartbeat & ACK Layer
+	•	Send 0x25 heartbeat every 28–30 s to each lens individually.
+	•	Maintain per-lens timers and failure counters.
+	•	Treat 0xCA as BUSY (not failure); retry once before degradation.
+	•	Handle 0xCB (continue) → accumulate, then 0xC9 (complete).
+	•	Remove all references to 0xC0.
+
+D. Connection Stability & Reconnect
+	•	On disconnect:
+	•	Retry ×3 with 2 s back-off.
+	•	Preserve bonded keys; skip new pairing if already trusted.
+	•	Handle independent reconnects (left/right) gracefully.
+	•	Confirm stable link > 60 s without “PING ERR”.
+
+E. UI / UX Integration
+	•	Update Developer screen & Compose HUD:
+	•	Display Case Battery (color-coded), Case Open status, Silent Mode flag.
+	•	Replace unknown gesture lines with proper [CASE]/[WEAR]/[CHG] labels.
+	•	Continue using [GESTURE][L/R] for real taps only.
 
 ⸻
 
-🧠 Prompt for Codex (Task 1 — ACK Busy/Retry Correction)
+5. EXECUTION PLAN
 
-TASK 1 — ACK BUSY / RETRY RECLASSIFICATION (v1.6.6 Alignment)
+Phase	Task	Output
+r1	Gesture/Event separation (fix 0xF5)	Eliminates false “unknown gesture”
+r2	Case telemetry parsing (0x2B/0x2C + UI binds)	UI shows case battery & lid
+r3	Heartbeat + ACK rework	Stable > 60 s connections
+r4	Reconnect resilience + bond check	Reliable auto-recovery
+r5	Validation / Burn-in (> 5 min link test)	Confirm steady telemetry flow
 
-Objective:
-Fix false "→ PING ← ERR" logs by treating opcode 0xCA as BUSY / RETRY instead of FAILURE.
 
-Instructions:
-1. In G1Protocols or AckOutcome parser, map 0xCA → BUSY state.
-2. Update parseAckOutcome() to return AckOutcome.Busy for 0xCA.
-3. Suppress console error lines for BUSY ACKs; log them as:
-   `[ACK][Lens][BUSY] opcode=<code> retrying`
-4. Do not trigger reconnect / rebond on BUSY responses.
-5. Verify that PING and telemetry ACKs no longer emit "ERR" when 0xCA is seen.
-6. Maintain existing continuation (0xCB) and completion (0xC0) behavior.
+⸻
 
-POST-VALIDATION:
-Confirm in logs:
-- `[ACK][L][BUSY]` appears occasionally under load (no ERR).
-- Heartbeat continues normally without false rebond.
+6. VALIDATION CHECKLIST
+
+✅ No repeated “unknown gesture” lines.
+✅ Case Battery %, Charging Status, Lid state visible.
+✅ Silent Mode flag accurate.
+✅ Heartbeat stable > 60 s.
+✅ No false “→ PING ← ERR”.
+✅ Reconnects succeed ≤ 2 attempts.
+
+⸻
+
+7. EXIT CRITERIA
+	•	BLE link stable > 5 min continuous runtime.
+	•	Case telemetry refresh ≤ 30 s interval.
+	•	Zero false gesture or ERR messages during test loop.
+	•	Developer console shows synchronized left/right state changes.
+
+⸻
+
+Commit Tag:
+phase4_r1h_ble_case_fix_v166
