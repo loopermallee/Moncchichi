@@ -16,6 +16,7 @@ import com.loopermallee.moncchichi.hub.audio.MicStreamManager
 import com.loopermallee.moncchichi.hub.audio.MicMetrics
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
+import com.loopermallee.moncchichi.hub.data.telemetry.LensGestureEvent
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperViewModel.DeveloperEvent
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
@@ -92,7 +93,7 @@ class DeveloperViewModel(
 
     val battery: StateFlow<G1ReplyParser.BatteryInfo?> = telemetry.battery
 
-    val gestures: SharedFlow<G1ReplyParser.GestureEvent> = telemetry.gesture
+    val gestures: SharedFlow<LensGestureEvent> = telemetry.gesture
 
     private val _events = MutableSharedFlow<DeveloperEvent>(extraBufferCapacity = 1)
     val events: SharedFlow<DeveloperEvent> = _events.asSharedFlow()
