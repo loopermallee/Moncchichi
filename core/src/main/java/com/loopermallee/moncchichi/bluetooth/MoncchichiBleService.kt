@@ -1073,7 +1073,7 @@ class MoncchichiBleService(
         }
         val packet = nextHostHeartbeatPayload(lens)
         val attemptStart = System.currentTimeMillis()
-        val queued = record.client.enqueueHeartbeat(packet.payload)
+        val queued = record.client.enqueueHeartbeat(packet.sequence, packet.payload)
         val timestamp = System.currentTimeMillis()
         if (!queued) {
             return HeartbeatResult(

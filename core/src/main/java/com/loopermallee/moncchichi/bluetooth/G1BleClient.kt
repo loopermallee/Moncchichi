@@ -918,8 +918,13 @@ class G1BleClient(
         }
     }
 
-    fun enqueueHeartbeat(payload: ByteArray): Boolean {
-        return uartClient.write(payload, withResponse = false)
+    fun enqueueHeartbeat(sequence: Int, payload: ByteArray): Boolean {
+        val ok = uartClient.write(payload, withResponse = false)
+        logger.i(
+            label,
+            "${tt()} [BLE][PING] queued seq=${sequence.toByteHex()} ok=$ok",
+        )
+        return ok
     }
 
     private suspend fun sendCommandLocked(
