@@ -133,6 +133,7 @@ class MoncchichiBleService(
         val opcode: Int?,
         val status: Int?,
         val success: Boolean,
+        val busy: Boolean,
         val timestampMs: Long,
         val warmup: Boolean,
     )
@@ -646,6 +647,7 @@ class MoncchichiBleService(
                             opcode = null,
                             status = STATUS_OK,
                             success = true,
+                            busy = false,
                             timestampMs = now,
                             warmup = false,
                         )
@@ -682,6 +684,7 @@ class MoncchichiBleService(
                     opcode = event.opcode,
                     status = event.status,
                     success = event.success,
+                    busy = event.busy,
                     timestampMs = event.timestampMs,
                     warmup = event.warmup,
                 )
@@ -1146,14 +1149,25 @@ class MoncchichiBleService(
                 opcode = outcome.opcode,
                 status = outcome.status,
                 success = true,
+                busy = false,
                 timestampMs = timestamp,
                 warmup = outcome.warmupPrompt,
+            )
+            is AckOutcome.Busy -> AckEvent(
+                lens = lens,
+                opcode = outcome.opcode,
+                status = outcome.status,
+                success = false,
+                busy = true,
+                timestampMs = timestamp,
+                warmup = false,
             )
             is AckOutcome.Failure -> AckEvent(
                 lens = lens,
                 opcode = outcome.opcode,
                 status = outcome.status,
                 success = false,
+                busy = false,
                 timestampMs = timestamp,
                 warmup = false,
             )
@@ -1169,6 +1183,14 @@ class MoncchichiBleService(
         if (event.success) {
             markAckSuccess(lens, event.timestampMs)
             emitConsole("ACK", lens, "opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}", event.timestampMs)
+        } else if (event.busy) {
+            emitConsole(
+                "ACK",
+                lens,
+                "[BUSY] opcode=${event.opcode.toOpcodeLabel()} retrying",
+                event.timestampMs,
+            )
+            log("[ACK][${lens.shortLabel()}][BUSY] opcode=${event.opcode.toOpcodeLabel()} retrying")
         } else {
             failPendingCommand(lens)
             val suppressed = shouldSuppressAckFailure(lens, event)

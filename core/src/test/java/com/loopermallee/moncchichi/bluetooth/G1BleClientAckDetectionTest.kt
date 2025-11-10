@@ -17,12 +17,12 @@ class G1BleClientAckDetectionTest {
     }
 
     @Test
-    fun `parseAckOutcome returns failure for status 0xCA`() {
+    fun `parseAckOutcome returns busy for status 0xCA`() {
         val payload = byteArrayOf(0x1E, 0xCA.toByte())
 
         val result = payload.parseAckOutcome()
 
-        assertIs<AckOutcome.Failure>(result)
+        assertIs<AckOutcome.Busy>(result)
     }
 
     @Test
@@ -35,12 +35,12 @@ class G1BleClientAckDetectionTest {
     }
 
     @Test
-    fun `parseAckOutcome detects nack byte within framed payload`() {
+    fun `parseAckOutcome detects busy byte within framed payload`() {
         val payload = byteArrayOf(0x26, 0x06, 0x00, 0x01, 0x08, 0xCA.toByte(), 0x01, 0x00)
 
         val result = payload.parseAckOutcome()
 
-        assertIs<AckOutcome.Failure>(result)
+        assertIs<AckOutcome.Busy>(result)
     }
 
     @Test

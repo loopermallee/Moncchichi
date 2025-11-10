@@ -5,8 +5,8 @@ import android.os.SystemClock
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
-import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_FAIL
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_BUSY
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.hub.audio.MicStreamManager
@@ -756,10 +756,11 @@ class BleTelemetryRepository(
 
     private fun handleAckEvent(event: BleTelemetryParser.TelemetryEvent.AckEvent) {
         val statusLabel = event.ackCode?.let { describeAckCode(it) } ?: "unknown"
-        val outcome = when (event.success) {
-            true -> "success"
-            false -> "error"
-            null -> "pending"
+        val outcome = when {
+            event.busy -> "busy"
+            event.success == true -> "success"
+            event.success == false -> "error"
+            else -> "pending"
         }
         val payloadHex = event.payload.takeIf { it.isNotEmpty() }?.toHex()
         val message = buildString {
@@ -777,10 +778,11 @@ class BleTelemetryRepository(
         }
         emitConsole("ACK", event.lens, message.trim(), event.timestampMs)
         val ackStatus = event.ackCode?.let { describeAckCode(it).uppercase(Locale.US) }
-            ?: when (event.success) {
-                true -> "SUCCESS"
-                false -> "FAIL"
-                null -> "PENDING"
+            ?: when {
+                event.busy -> "BUSY"
+                event.success == true -> "SUCCESS"
+                event.success == false -> "FAIL"
+                else -> "PENDING"
             }
         updateDeviceTelemetry(event.lens, event.timestampMs) { snapshot ->
             snapshot.copy(
@@ -793,7 +795,7 @@ class BleTelemetryRepository(
     private fun describeAckCode(code: Int): String {
         return when (code) {
             STATUS_OK -> "ok"
-            STATUS_FAIL -> "fail"
+            STATUS_BUSY -> "busy"
             OPC_ACK_CONTINUE -> "continue"
             OPC_ACK_COMPLETE -> "complete"
             else -> "0x%02X".format(Locale.US, code and 0xFF)
