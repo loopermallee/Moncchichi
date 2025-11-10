@@ -45,6 +45,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.regex.Pattern
 import kotlin.collections.buildList
+import kotlin.collections.ArrayDeque
 import kotlin.math.max
 import kotlin.text.Charsets
 import java.util.concurrent.atomic.AtomicLong
@@ -349,6 +350,7 @@ class BleTelemetryRepository(
     private var frameJob: Job? = null
     private var stateJob: Job? = null
     private var ackJob: Job? = null
+    private var stabilityJob: Job? = null
     private var dashboardStatusJob: Job? = null
     private var dashboardEncoder: DashboardDataEncoder? = null
     private var boundService: MoncchichiBleService? = null
@@ -367,12 +369,14 @@ class BleTelemetryRepository(
         var ackTimeouts: Int = 0,
     )
     private val keepAliveSnapshots = mutableMapOf<Lens, KeepAliveSnapshot>()
+    private val stabilityHistory = ArrayDeque<String>()
 
     fun reset() {
         _snapshot.value = Snapshot()
         emitConsole("DIAG", null, "telemetry reset")
         clearBuffers()
         keepAliveSnapshots.clear()
+        synchronized(stabilityHistory) { stabilityHistory.clear() }
         _micAvailability.value = false
         _battery.value = null
         _uptime.value = null
@@ -452,12 +456,18 @@ class BleTelemetryRepository(
                 onAck(event)
             }
         }
+        stabilityJob = scope.launch {
+            service.stabilityMetrics.collect { metrics ->
+                onStabilityMetrics(metrics)
+            }
+        }
     }
 
     fun unbind() {
         frameJob?.cancel(); frameJob = null
         stateJob?.cancel(); stateJob = null
         ackJob?.cancel(); ackJob = null
+        stabilityJob?.cancel(); stabilityJob = null
         dashboardStatusJob?.cancel(); dashboardStatusJob = null
         dashboardEncoder?.dispose(); dashboardEncoder = null
         micWatchdogJob?.cancel(); micWatchdogJob = null
@@ -469,6 +479,7 @@ class BleTelemetryRepository(
         lastConnected = false
         clearBuffers()
         keepAliveSnapshots.clear()
+        synchronized(stabilityHistory) { stabilityHistory.clear() }
     }
 
     suspend fun sendMicToggle(enabled: Boolean, lens: Lens = Lens.RIGHT): Boolean {
@@ -503,6 +514,30 @@ class BleTelemetryRepository(
             timestamp,
         )
         encoder.enqueue(subcommand, payload, target)
+    }
+
+    private fun onStabilityMetrics(metrics: MoncchichiBleService.BleStabilityMetrics) {
+        val lens = metrics.lens
+        val rssiLabel = metrics.avgRssi?.toString() ?: "n/a"
+        val ackLabel = metrics.lastAckDeltaMs?.let { "${it} ms" } ?: "n/a"
+        val reconnectLabel = metrics.reconnectLatencyMs?.let { "${it} ms" } ?: "n/a"
+        val message =
+            "HB=${metrics.heartbeatCount} MISS=${metrics.missedHeartbeats} " +
+                "REBOND=${metrics.rebondEvents} RSSI=$rssiLabel ΔACK=$ackLabel RECON=$reconnectLabel"
+        emitConsole("STABILITY", lens, message, metrics.timestamp)
+        val historyEntry = buildString {
+            lens?.let { append(if (it == Lens.LEFT) "[L] " else "[R] ") }
+            append(message)
+        }
+        synchronized(stabilityHistory) {
+            if (stabilityHistory.size >= 5) {
+                stabilityHistory.removeFirst()
+            }
+            stabilityHistory.addLast(historyEntry)
+        }
+        persistenceScope.launch {
+            memory.addConsoleLine("[STABILITY] $historyEntry")
+        }
     }
 
     fun onFrame(lens: Lens, frame: ByteArray) {
