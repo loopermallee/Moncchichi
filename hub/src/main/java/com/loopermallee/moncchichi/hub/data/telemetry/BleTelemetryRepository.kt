@@ -281,16 +281,49 @@ class BleTelemetryRepository(
     ) {
         val state = lensTelemetrySnapshots.getValue(lens)
         val previous = state.value
-        val updated = transform(previous).copy(timestamp = eventTimestamp)
-        if (updated != previous) {
-            state.value = updated
-            if (logUpdate) {
-                logDeviceTelemetry(updated)
-            }
-            if (persist) {
-                persistDeviceTelemetrySnapshots(eventTimestamp)
-            }
+        val candidate = transform(previous)
+        val reset = candidate.uptimeSeconds != null && previous.uptimeSeconds != null &&
+            candidate.uptimeSeconds < previous.uptimeSeconds
+        val merged = candidate.mergeFrom(previous, allowNullReset = reset)
+        val changed = merged.withoutTimestamp() != previous.withoutTimestamp()
+        if (!changed) {
+            return
         }
+        val updated = merged.copy(timestamp = eventTimestamp)
+        state.value = updated
+        if (logUpdate) {
+            logDeviceTelemetry(updated)
+        }
+        if (persist) {
+            persistDeviceTelemetrySnapshots(eventTimestamp)
+        }
+    }
+
+    private fun <T> mergeNonNull(previous: T?, candidate: T?, allowNullReset: Boolean): T? {
+        return candidate ?: if (allowNullReset) null else previous
+    }
+
+    private fun DeviceTelemetrySnapshot.mergeFrom(
+        previous: DeviceTelemetrySnapshot,
+        allowNullReset: Boolean,
+    ): DeviceTelemetrySnapshot {
+        return copy(
+            timestamp = previous.timestamp,
+            batteryVoltageMv = mergeNonNull(previous.batteryVoltageMv, batteryVoltageMv, allowNullReset),
+            isCharging = mergeNonNull(previous.isCharging, isCharging, allowNullReset),
+            caseBatteryPercent = mergeNonNull(previous.caseBatteryPercent, caseBatteryPercent, allowNullReset),
+            caseOpen = mergeNonNull(previous.caseOpen, caseOpen, allowNullReset),
+            uptimeSeconds = mergeNonNull(previous.uptimeSeconds, uptimeSeconds, allowNullReset),
+            firmwareVersion = mergeNonNull(previous.firmwareVersion, firmwareVersion, allowNullReset),
+            environment = mergeNonNull(previous.environment, environment, allowNullReset),
+            lastAckStatus = mergeNonNull(previous.lastAckStatus, lastAckStatus, allowNullReset),
+            lastAckTimestamp = mergeNonNull(previous.lastAckTimestamp, lastAckTimestamp, allowNullReset),
+            lastGesture = mergeNonNull(previous.lastGesture, lastGesture, allowNullReset),
+        )
+    }
+
+    private fun DeviceTelemetrySnapshot.withoutTimestamp(): DeviceTelemetrySnapshot {
+        return copy(timestamp = 0L)
     }
 
     private fun logDeviceTelemetry(snapshot: DeviceTelemetrySnapshot) {
@@ -806,6 +839,16 @@ class BleTelemetryRepository(
                 handleAckEvent(event)
             }
             is BleTelemetryParser.TelemetryEvent.GestureEvent -> {
+                val inCase = _inCaseStatus.value.valueFor(event.lens)
+                val lidOpen = _caseStatus.value.lidOpen
+                if (inCase == true || lidOpen == false) {
+                    return
+                }
+                val wearing = _wearingStatus.value.valueFor(event.lens)
+                val caseOpen = lidOpen == true
+                if (wearing != true && !caseOpen) {
+                    return
+                }
                 val lensGesture = LensGestureEvent(event.lens, event.gesture)
                 _gesture.tryEmit(lensGesture)
                 val label = gestureLabel(event.gesture)

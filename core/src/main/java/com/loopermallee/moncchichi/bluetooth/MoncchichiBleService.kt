@@ -1213,7 +1213,9 @@ class MoncchichiBleService(
                 timestampMs = timestamp,
                 warmup = false,
             )
-        }
+            is AckOutcome.Continue -> null
+            is AckOutcome.Complete -> null
+        } ?: return
         handleAckEvent(lens, ackEvent)
     }
 
