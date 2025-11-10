@@ -38,6 +38,7 @@ import java.util.EnumMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import java.text.SimpleDateFormat
+import kotlin.coroutines.coroutineContext
 import java.util.Date
 import kotlin.collections.ArrayDeque
 import kotlin.text.Charsets
@@ -211,6 +212,11 @@ class MoncchichiBleService(
     private var rightBondRetryJob: Job? = null
     private var totalBondResetEvents = 0
 
+    private val heartbeatSupervisor = SupervisorJob(scope.coroutineContext[Job])
+    private val heartbeatScope = CoroutineScope(scope.coroutineContext + heartbeatSupervisor)
+    private val heartbeatMissCounters =
+        EnumMap<Lens, Int>(Lens::class.java).apply { Lens.values().forEach { put(it, 0) } }
+    private val heartbeatLastSentAt = EnumMap<Lens, Long>(Lens::class.java)
     private var heartbeatJob: Job? = null
     private var rebondJob: Job? = null
     private var consecutiveConnectionFailures = 0
@@ -565,6 +571,8 @@ class MoncchichiBleService(
         pendingCommandAcks.values.forEach { it.clear() }
         lastAckSuccessMs.clear()
         lastAckSignature.clear()
+        heartbeatLastSentAt.clear()
+        heartbeatMissCounters.replaceAll { _, _ -> 0 }
         ALL_LENSES.forEach { updateLens(it) { LensStatus() } }
         if (connectionOrder.isNotEmpty()) {
             connectionOrder.clear()
@@ -955,10 +963,12 @@ class MoncchichiBleService(
         if (!anyConnected) {
             heartbeatJob?.cancel()
             heartbeatJob = null
+            heartbeatLastSentAt.clear()
+            heartbeatMissCounters.replaceAll { _, _ -> 0 }
             return
         }
         if (heartbeatJob?.isActive == true) return
-        heartbeatJob = startHeartbeatMonitor(scope)
+        heartbeatJob = startHeartbeatMonitor()
     }
 
     private fun nextHostHeartbeatPayload(lens: Lens): ByteArray {
@@ -971,68 +981,104 @@ class MoncchichiBleService(
         )
     }
 
-    private fun startHeartbeatMonitor(scope: CoroutineScope): Job {
-        return scope.launch(Dispatchers.IO) {
-            var missCount = 0
+    private fun startHeartbeatMonitor(): Job {
+        return heartbeatScope.launch(Dispatchers.IO) {
             while (isActive) {
-                delay(HEARTBEAT_INTERVAL_MS)
-                sendHeartbeatToAll()
-                val ackLens = waitForAckWithin(HEARTBEAT_ACK_WINDOW_MS)
                 val now = System.currentTimeMillis()
-                var snapshotEmitted = false
-                if (ackLens != null) {
-                    missCount = 0
-                     recordHeartbeatSuccess(ackLens, now)
-                    emitConsole("HB", ackLens, "[OK]", now)
-                } else {
-                    missCount += 1
-                     recordHeartbeatMiss(now)
-                    emitConsole("HB", null, "[MISS $missCount]", now)
-                    if (missCount >= HEARTBEAT_REBOND_THRESHOLD) {
-                        emitConsole("HB", null, "[REBONDED]", now)
-                        performRebond()
-                        snapshotEmitted = true
-                        missCount = 0
+                var nextDelay = HEARTBEAT_INTERVAL_MS
+                var dispatched = false
+                ALL_LENSES.forEach { lens ->
+                    val status = currentLensStatus(lens)
+                    if (!status.isConnected) {
+                        heartbeatLastSentAt.remove(lens)
+                        heartbeatMissCounters[lens] = 0
+                        return@forEach
+                    }
+                    val lastSent = heartbeatLastSentAt[lens]
+                    val due = lastSent == null || now - lastSent >= HEARTBEAT_INTERVAL_MS
+                    if (due) {
+                        dispatched = true
+                        transmitHeartbeat(lens)
+                    } else {
+                        val remaining = lastSent?.let { HEARTBEAT_INTERVAL_MS - (now - it) }
+                            ?: HEARTBEAT_INTERVAL_MS
+                        if (remaining < nextDelay) {
+                            nextDelay = remaining
+                        }
                     }
                 }
-                if (!snapshotEmitted) {
-                    emitStabilitySnapshot(now)
+                if (!dispatched) {
+                    delay(nextDelay.coerceAtLeast(HEARTBEAT_IDLE_POLL_MS))
                 }
             }
         }
     }
 
-    private suspend fun sendHeartbeatToAll() {
-        val records = ALL_LENSES.mapNotNull { lens ->
-            clientRecords[lens]?.takeIf { it.clientState().isConnected }
-        }
-        if (records.isEmpty()) {
+    private suspend fun transmitHeartbeat(lens: Lens) {
+        if (clientRecords[lens] == null) {
             return
         }
-        records.forEachIndexed { index, record ->
-            val payload = nextHostHeartbeatPayload(record.lens)
-            val ok = record.client.sendCommand(
-                payload = payload,
-                ackTimeoutMs = 0L,
-                retries = 1,
-                retryDelayMs = 0L,
-                expectAck = false,
-            )
-            if (!ok) {
-                logWarn("${G1Protocols.opcodeName(CMD_PING)} send failed on ${record.lens}")
-            }
-            if (index < records.lastIndex) {
-                delay(CHANNEL_STAGGER_DELAY_MS)
-            }
+        val busyDeadline = System.currentTimeMillis() + HEARTBEAT_BUSY_DEFER_MS
+        while (coroutineContext.isActive && System.currentTimeMillis() < busyDeadline && isLensBusy(lens)) {
+            delay(HEARTBEAT_BUSY_POLL_MS)
+        }
+        if (!currentLensStatus(lens).isConnected) {
+            return
+        }
+        val client = clientRecords[lens]?.client ?: return
+        val payload = nextHostHeartbeatPayload(lens)
+        val attemptStart = System.currentTimeMillis()
+        val queued = client.enqueueHeartbeat(payload)
+        val timestamp = System.currentTimeMillis()
+        heartbeatLastSentAt[lens] = timestamp
+        if (!queued) {
+            handleHeartbeatMiss(lens, timestamp)
+            return
+        }
+        val acknowledged = waitForHeartbeatAck(lens, attemptStart, HEARTBEAT_ACK_WINDOW_MS)
+        if (acknowledged) {
+            handleHeartbeatSuccess(lens, timestamp)
+        } else {
+            handleHeartbeatMiss(lens, timestamp)
         }
     }
 
-    private suspend fun waitForAckWithin(timeoutMs: Long): Lens? {
-        val start = System.currentTimeMillis()
+    private suspend fun waitForHeartbeatAck(lens: Lens, since: Long, timeoutMs: Long): Boolean {
         val signal = withTimeoutOrNull(timeoutMs) {
-            ackSignalFlow.filter { it.timestamp >= start }.first()
+            ackSignalFlow.filter { signal ->
+                signal.lens == lens && signal.timestamp >= since
+            }.first()
         }
-        return signal?.lens
+        return signal != null
+    }
+
+    private fun isLensBusy(lens: Lens): Boolean {
+        return synchronized(pendingCommandAcks) {
+            pendingCommandAcks[lens]?.isNotEmpty() == true
+        }
+    }
+
+    private fun handleHeartbeatSuccess(lens: Lens, timestamp: Long) {
+        heartbeatMissCounters[lens] = 0
+        recordHeartbeatSuccess(lens, timestamp)
+        emitConsole("HB", lens, "[OK]", timestamp)
+        log("[HB][${lens.shortLabel()}][OK]")
+        emitStabilitySnapshot(timestamp)
+    }
+
+    private fun handleHeartbeatMiss(lens: Lens, timestamp: Long) {
+        val previous = heartbeatMissCounters[lens] ?: 0
+        val next = (previous + 1).coerceAtMost(HEARTBEAT_REBOND_THRESHOLD)
+        heartbeatMissCounters[lens] = next
+        recordHeartbeatMiss(lens, timestamp)
+        emitConsole("HB", lens, "[MISS $next]", timestamp)
+        log("[HB][${lens.shortLabel()}][MISS $next]")
+        emitStabilitySnapshot(timestamp)
+        if (next >= HEARTBEAT_REBOND_THRESHOLD && rebondJob?.isActive != true) {
+            log("[HB][REBOUND]")
+            emitConsole("HB", lens, "[REBOUND]", timestamp)
+            performRebond(lens)
+        }
     }
 
     private fun Lens.shortLabel(): String = if (this == Lens.LEFT) "L" else "R"
@@ -1091,13 +1137,12 @@ class MoncchichiBleService(
     }
 
     private fun formatStabilityMessage(metrics: BleStabilityMetrics, timeLabel: String): String {
-        val heartbeatLabel = metrics.heartbeatCount
-        val missLabel = metrics.missedHeartbeats
+        val heartbeatLabel = "${metrics.heartbeatCount}/${metrics.missedHeartbeats}"
         val rebondLabel = metrics.rebondEvents
         val rssiLabel = metrics.avgRssi?.toString() ?: "n/a"
         val ackLabel = metrics.lastAckDeltaMs?.let { "${it} ms" } ?: "n/a"
         val reconnectLabel = metrics.reconnectLatencyMs?.let { "${it} ms" } ?: "n/a"
-        return "$timeLabel HB=$heartbeatLabel MISS=$missLabel REBOND=$rebondLabel RSSI=$rssiLabel ΔACK=$ackLabel RECON=$reconnectLabel"
+        return "$timeLabel HB/MISS=$heartbeatLabel REBOND=$rebondLabel RSSI=$rssiLabel ΔACK=$ackLabel RECON=$reconnectLabel"
     }
 
     private fun recordHeartbeatSuccess(lens: Lens, timestamp: Long) {
@@ -1106,19 +1151,16 @@ class MoncchichiBleService(
         }
     }
 
-    private fun recordHeartbeatMiss(timestamp: Long) {
-        ALL_LENSES.forEach { lens ->
-            if (currentLensStatus(lens).isConnected) {
-                updateStabilityMetrics(lens, timestamp) { metrics ->
-                    metrics.copy(missedHeartbeats = metrics.missedHeartbeats + 1)
-                }
-            }
+    private fun recordHeartbeatMiss(lens: Lens, timestamp: Long) {
+        updateStabilityMetrics(lens, timestamp) { metrics ->
+            metrics.copy(missedHeartbeats = metrics.missedHeartbeats + 1)
         }
     }
 
-    private fun incrementRebondCounter(timestamp: Long) {
-        ALL_LENSES.forEach { lens ->
-            updateStabilityMetrics(lens, timestamp) { metrics ->
+    private fun incrementRebondCounter(lens: Lens?, timestamp: Long) {
+        val targets: Iterable<Lens> = lens?.let { listOf(it) } ?: ALL_LENSES.asIterable()
+        targets.forEach { target: Lens ->
+            updateStabilityMetrics(target, timestamp) { metrics ->
                 metrics.copy(rebondEvents = metrics.rebondEvents + 1)
             }
         }
@@ -1280,6 +1322,7 @@ class MoncchichiBleService(
     }
 
     private fun notifyHeartbeatSignal(lens: Lens?, timestamp: Long) {
+        lens?.let { heartbeatMissCounters[it] = 0 }
         ackSignalFlow.tryEmit(AckSignal(lens, timestamp))
     }
 
@@ -1296,7 +1339,7 @@ class MoncchichiBleService(
     private fun ByteArray.isTextualOk(): Boolean =
         toString(Charsets.UTF_8).trim().equals("OK", ignoreCase = true)
 
-    private fun performRebond() {
+    private fun performRebond(triggerLens: Lens? = null) {
         if (rebondJob?.isActive == true) {
             return
         }
@@ -1305,7 +1348,7 @@ class MoncchichiBleService(
             return
         }
         val timestamp = System.currentTimeMillis()
-        incrementRebondCounter(timestamp)
+        incrementRebondCounter(triggerLens, timestamp)
         rebondJob = scope.launch(Dispatchers.IO) {
             log("[HB][-] rebond sequence start")
             disconnectAll()
@@ -1507,6 +1550,9 @@ class MoncchichiBleService(
         private const val HEARTBEAT_INTERVAL_MS = 28_000L
         private const val HEARTBEAT_ACK_WINDOW_MS = 1_500L
         private const val HEARTBEAT_REBOND_THRESHOLD = 3
+        private const val HEARTBEAT_IDLE_POLL_MS = 1_000L
+        private const val HEARTBEAT_BUSY_DEFER_MS = 3_000L
+        private const val HEARTBEAT_BUSY_POLL_MS = 150L
         private const val PING_ACK_SUPPRESS_WINDOW_MS = 150L
         private const val ACK_DUPLICATE_WINDOW_MS = 50L
         private const val REBOND_DELAY_MS = 500L

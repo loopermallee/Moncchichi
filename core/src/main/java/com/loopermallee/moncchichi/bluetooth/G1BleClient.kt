@@ -889,6 +889,10 @@ class G1BleClient(
         }
     }
 
+    fun enqueueHeartbeat(payload: ByteArray): Boolean {
+        return uartClient.write(payload, withResponse = false)
+    }
+
     private suspend fun sendCommandLocked(
         payload: ByteArray,
         ackTimeoutMs: Long,
