@@ -194,6 +194,7 @@ class BleTelemetryRepository(
         val batteryVoltageMv: Int?,
         val isCharging: Boolean?,
         val uptimeSeconds: Long?,
+        val firmwareVersion: String?,
         val environment: Map<String, String>?,
         val lastAckStatus: String?,
         val lastAckTimestamp: Long?,
@@ -224,6 +225,7 @@ class BleTelemetryRepository(
             batteryVoltageMv = null,
             isCharging = null,
             uptimeSeconds = null,
+            firmwareVersion = null,
             environment = null,
             lastAckStatus = null,
             lastAckTimestamp = null,
@@ -266,6 +268,11 @@ class BleTelemetryRepository(
             append(' ')
             append("up=")
             append(snapshot.uptimeSeconds?.let { "${it} s" } ?: "?")
+            snapshot.firmwareVersion?.let { version ->
+                append(' ')
+                append("fw=")
+                append(version)
+            }
             envSummary?.let { summary ->
                 append(' ')
                 append(summary)
@@ -302,6 +309,7 @@ class BleTelemetryRepository(
             batteryVoltageMv?.let { add("battMv=$it") }
             isCharging?.let { add("charging=$it") }
             uptimeSeconds?.let { add("uptime=$it") }
+            firmwareVersion?.let { add("fw=$it") }
             lastAckStatus?.let { status ->
                 val ackPart = buildString {
                     append("ack=")
@@ -326,7 +334,7 @@ class BleTelemetryRepository(
             caseBatteryPercent = null,
             lastUpdated = timestamp,
             rssi = null,
-            firmwareVersion = null,
+            firmwareVersion = firmwareVersion,
             notes = notes,
         )
     }
@@ -699,7 +707,7 @@ class BleTelemetryRepository(
                     emitConsole(
                         "VITALS",
                         event.lens,
-                        "battery=${info.voltage}mV charging=${info.isCharging}",
+                        "${info.voltage} mV charging=${info.isCharging}",
                         event.timestampMs,
                     )
                 }
@@ -1122,6 +1130,12 @@ class BleTelemetryRepository(
             }
         }
 
+        firmwareBanner?.let { banner ->
+            updateDeviceTelemetry(lens, timestamp) { snapshot ->
+                if (snapshot.firmwareVersion == banner) snapshot else snapshot.copy(firmwareVersion = banner)
+            }
+        }
+
         val parts = mutableListOf<String>()
         if (batteryChanged) {
             trustedBattery?.let { percent ->
@@ -1220,6 +1234,9 @@ class BleTelemetryRepository(
             } else {
                 current.withFrame(lens, hex)
             }
+        }
+        updateDeviceTelemetry(lens, eventTimestamp) { snapshot ->
+            if (snapshot.firmwareVersion == version) snapshot else snapshot.copy(firmwareVersion = version)
         }
         if (firmwareChanged) {
             emitConsole("VITALS", lens, "fw=${version} (${FIRMWARE_OPCODE.toHexLabel()})", eventTimestamp)
@@ -1652,14 +1669,24 @@ class BleTelemetryRepository(
     }
 
     private fun parseTextMetadata(lens: Lens, line: String) {
+        var parsedFirmware: String? = null
+        var parsedDeviceId: String? = null
+        var firmwareChanged = false
         updateSnapshot { current ->
             val existing = current.lens(lens)
             var firmware = existing.firmwareVersion
             var notes = existing.notes
             val versionMatch = versionRegex.matcher(line)
             if (versionMatch.find()) {
-                firmware = versionMatch.group(1)
-                notes = "DeviceID ${versionMatch.group(3)}"
+                val version = versionMatch.group(1)
+                val deviceId = versionMatch.group(3)
+                if (firmware != version) {
+                    firmwareChanged = true
+                }
+                firmware = version
+                notes = "DeviceID $deviceId"
+                parsedFirmware = version
+                parsedDeviceId = deviceId
             } else {
                 val buildMatch = buildRegex.matcher(line)
                 if (buildMatch.find()) {
@@ -1671,6 +1698,28 @@ class BleTelemetryRepository(
                 current.updateLens(lens, updated)
             } else {
                 current
+            }
+        }
+        val now = System.currentTimeMillis()
+        parsedFirmware?.let { version ->
+            updateDeviceTelemetry(lens, now, logUpdate = false, persist = false) { snapshot ->
+                if (snapshot.firmwareVersion == version) snapshot else snapshot.copy(firmwareVersion = version)
+            }
+            if (firmwareChanged) {
+                val formatted = if (version.startsWith("v", ignoreCase = true) || !version.first().isDigit()) {
+                    version
+                } else {
+                    "v$version"
+                }
+                val message = buildString {
+                    append("Firmware ")
+                    append(formatted)
+                    parsedDeviceId?.let { id ->
+                        append(" DeviceID ")
+                        append(id)
+                    }
+                }
+                emitConsole("INFO", lens, message, now)
             }
         }
     }

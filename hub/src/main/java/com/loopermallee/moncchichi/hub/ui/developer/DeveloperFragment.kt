@@ -1,9 +1,14 @@
 package com.loopermallee.moncchichi.hub.ui.developer
 
+import android.animation.AnimatorListenerAdapter
+import android.animation.ArgbEvaluator
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.view.LayoutInflater
@@ -14,6 +19,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.isVisible
 import androidx.core.widget.NestedScrollView
 import androidx.fragment.app.Fragment
@@ -24,9 +30,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.DeviceTelemetrySnapshot
+import com.loopermallee.moncchichi.hub.data.telemetry.LensGestureEvent
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.handlers.SystemEventHandler
 import com.loopermallee.moncchichi.hub.util.LogFormatter
@@ -65,6 +75,7 @@ class DeveloperFragment : Fragment() {
     }
 
     private var currentMode: DeveloperMode = DeveloperMode.CONSOLE
+    private var lensCards: List<LensCardController> = emptyList()
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
@@ -95,10 +106,6 @@ class DeveloperFragment : Fragment() {
         val autoReconnectView = view.findViewById<TextView>(R.id.text_overview_reconnect)
         val pairingView = view.findViewById<TextView>(R.id.text_overview_pairing)
         val resetView = view.findViewById<TextView>(R.id.text_overview_resets)
-        val leftSummary = view.findViewById<TextView>(R.id.text_glasses_left_summary)
-        val leftSources = view.findViewById<TextView>(R.id.text_glasses_left_sources)
-        val rightSummary = view.findViewById<TextView>(R.id.text_glasses_right_summary)
-        val rightSources = view.findViewById<TextView>(R.id.text_glasses_right_sources)
         val leftPowerButton = view.findViewById<MaterialButton>(R.id.button_left_power_history)
         val rightPowerButton = view.findViewById<MaterialButton>(R.id.button_right_power_history)
         val micSwitch = view.findViewById<MaterialSwitch>(R.id.switch_mic_enabled)
@@ -107,9 +114,30 @@ class DeveloperFragment : Fragment() {
         val audioGapsView = view.findViewById<TextView>(R.id.text_audio_gaps)
         val audioSeqView = view.findViewById<TextView>(R.id.text_audio_last_seq)
         val dashboardStatusView = view.findViewById<TextView>(R.id.text_dashboard_status)
-        val firmwareLeftView = view.findViewById<TextView>(R.id.text_firmware_left)
-        val firmwareRightView = view.findViewById<TextView>(R.id.text_firmware_right)
-        val firmwareNotesView = view.findViewById<TextView>(R.id.text_firmware_notes)
+
+        val leftCardController = LensCardController(
+            lens = MoncchichiBleService.Lens.LEFT,
+            card = view.findViewById<MaterialCardView>(R.id.card_lens_left),
+            voltageView = view.findViewById(R.id.text_lens_left_voltage_value),
+            chargingIcon = view.findViewById(R.id.text_lens_left_charging_icon),
+            chargingValue = view.findViewById(R.id.text_lens_left_charging_value),
+            uptimeView = view.findViewById(R.id.text_lens_left_uptime_value),
+            firmwareView = view.findViewById(R.id.text_lens_left_firmware_value),
+            gestureRow = view.findViewById(R.id.row_lens_left_gesture),
+            gestureValue = view.findViewById(R.id.text_lens_left_gesture_value),
+        )
+        val rightCardController = LensCardController(
+            lens = MoncchichiBleService.Lens.RIGHT,
+            card = view.findViewById<MaterialCardView>(R.id.card_lens_right),
+            voltageView = view.findViewById(R.id.text_lens_right_voltage_value),
+            chargingIcon = view.findViewById(R.id.text_lens_right_charging_icon),
+            chargingValue = view.findViewById(R.id.text_lens_right_charging_value),
+            uptimeView = view.findViewById(R.id.text_lens_right_uptime_value),
+            firmwareView = view.findViewById(R.id.text_lens_right_firmware_value),
+            gestureRow = view.findViewById(R.id.row_lens_right_gesture),
+            gestureValue = view.findViewById(R.id.text_lens_right_gesture_value),
+        )
+        lensCards = listOf(leftCardController, rightCardController)
 
         var autoScrollEnabled = true
         var latestSnapshot: BleTelemetryRepository.Snapshot? = null
@@ -223,20 +251,24 @@ class DeveloperFragment : Fragment() {
                         snapshot.bondResetEvents,
                     )
 
-                    leftSummary.text = buildLensSummary(snapshot.left)
-                    leftSources.text = buildLensSources(snapshot.left)
-                    rightSummary.text = buildLensSummary(snapshot.right)
-                    rightSources.text = buildLensSources(snapshot.right)
+                }
+            }
+        }
 
-                    val firmwareLeft = snapshot.left.firmwareVersion ?: getString(R.string.developer_firmware_placeholder)
-                    val firmwareRight = snapshot.right.firmwareVersion ?: getString(R.string.developer_firmware_placeholder)
-                    val firmwareNotes = snapshot.left.notes ?: snapshot.right.notes
-                    firmwareLeftView.text = getString(R.string.developer_firmware_left, firmwareLeft)
-                    firmwareRightView.text = getString(R.string.developer_firmware_right, firmwareRight)
-                    firmwareNotesView.text = getString(
-                        R.string.developer_firmware_notes,
-                        firmwareNotes ?: getString(R.string.developer_firmware_placeholder),
-                    )
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.deviceTelemetry.collectLatest { telemetry ->
+                    lensCards.forEach { controller ->
+                        controller.bind(telemetry[controller.lens])
+                    }
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.gestures.collectLatest { event ->
+                    lensCards.firstOrNull { it.lens == event.lens }?.handleGesture(event)
                 }
             }
         }
@@ -363,6 +395,210 @@ class DeveloperFragment : Fragment() {
         systemHandler.unregister()
     }
 
+    override fun onDestroyView() {
+        super.onDestroyView()
+        lensCards.forEach { it.clear() }
+        lensCards = emptyList()
+    }
+
+    private inner class LensCardController(
+        val lens: MoncchichiBleService.Lens,
+        private val card: MaterialCardView,
+        private val voltageView: TextView,
+        private val chargingIcon: TextView,
+        private val chargingValue: TextView,
+        private val uptimeView: TextView,
+        private val firmwareView: TextView,
+        private val gestureRow: View,
+        private val gestureValue: TextView,
+    ) {
+        private val context = card.context
+        private val placeholder = context.getString(R.string.developer_value_missing)
+        private val yesLabel = context.getString(R.string.developer_value_yes).replaceFirstChar { it.titlecase(Locale.getDefault()) }
+        private val noLabel = context.getString(R.string.developer_value_no).replaceFirstChar { it.titlecase(Locale.getDefault()) }
+        private val defaultTextColor = ContextCompat.getColor(context, R.color.er_text_primary)
+        private val batteryNormalColor = ContextCompat.getColor(context, R.color.batteryNormal)
+        private val batteryLowColor = ContextCompat.getColor(context, R.color.batteryLow)
+        private val chargingActiveColor = ContextCompat.getColor(context, R.color.chargingActive)
+        private val chargingInactiveColor = ContextCompat.getColor(context, R.color.chargingInactive)
+        private val firmwareHighlightColor = ContextCompat.getColor(context, R.color.firmwareHighlight)
+        private val uptimeStartColor = ContextCompat.getColor(context, R.color.uptimeStart)
+        private val uptimeEndColor = ContextCompat.getColor(context, R.color.uptimeEnd)
+        private val evaluator = ArgbEvaluator()
+        private val glowStrokeWidth = context.resources.getDimensionPixelSize(R.dimen.lens_card_glow_stroke)
+
+        private var chargingAnimator: ObjectAnimator? = null
+        private var firmwareAnimator: ValueAnimator? = null
+        private var glowAnimator: ValueAnimator? = null
+        private var lastFirmware: String? = null
+
+        init {
+            card.setStrokeColor(Color.TRANSPARENT)
+            card.strokeWidth = 0
+        }
+
+        fun bind(snapshot: DeviceTelemetrySnapshot?) {
+            val voltage = snapshot?.batteryVoltageMv
+            if (voltage != null) {
+                voltageView.text = String.format(Locale.US, "%d mV", voltage)
+                val color = when {
+                    voltage < 3500 -> batteryLowColor
+                    voltage > 3600 -> batteryNormalColor
+                    else -> defaultTextColor
+                }
+                voltageView.setTextColor(color)
+            } else {
+                voltageView.text = placeholder
+                voltageView.setTextColor(defaultTextColor)
+            }
+
+            updateCharging(snapshot?.isCharging)
+
+            val uptime = snapshot?.uptimeSeconds
+            if (uptime != null) {
+                uptimeView.text = formatDuration(uptime)
+                val ratio = (uptime.coerceIn(0L, 600L).toFloat() / 600f)
+                val color = evaluator.evaluate(ratio, uptimeStartColor, uptimeEndColor) as Int
+                uptimeView.setTextColor(color)
+            } else {
+                uptimeView.text = placeholder
+                uptimeView.setTextColor(defaultTextColor)
+            }
+
+            val firmware = snapshot?.firmwareVersion?.let(::formatFirmware)
+            if (firmware != null) {
+                firmwareView.text = firmware
+                animateFirmwareIfNeeded(firmware)
+            } else {
+                firmwareAnimator?.cancel()
+                firmwareAnimator = null
+                firmwareView.text = placeholder
+                firmwareView.setTextColor(defaultTextColor)
+                lastFirmware = null
+            }
+
+            val gestureLabel = snapshot?.lastGesture?.let { labelForGesture(it) }
+            gestureRow.isVisible = gestureLabel != null
+            gestureLabel?.let { label ->
+                gestureValue.text = label
+            }
+        }
+
+        fun handleGesture(event: LensGestureEvent) {
+            if (event.lens != lens) return
+            val label = labelForGesture(event)
+            gestureRow.isVisible = true
+            gestureValue.text = label
+            triggerGlow()
+        }
+
+        fun clear() {
+            chargingAnimator?.cancel()
+            chargingAnimator = null
+            firmwareAnimator?.cancel()
+            firmwareAnimator = null
+            glowAnimator?.cancel()
+            glowAnimator = null
+            card.setStrokeColor(Color.TRANSPARENT)
+            card.strokeWidth = 0
+            chargingIcon.alpha = 1f
+            firmwareView.setTextColor(defaultTextColor)
+        }
+
+        private fun updateCharging(value: Boolean?) {
+            chargingAnimator?.cancel()
+            chargingAnimator = null
+            chargingValue.text = when (value) {
+                true -> yesLabel
+                false -> noLabel
+                null -> placeholder
+            }
+            if (value == true) {
+                chargingIcon.setTextColor(chargingActiveColor)
+                chargingAnimator = ObjectAnimator.ofFloat(chargingIcon, View.ALPHA, 1f, 0.3f).apply {
+                    duration = 1000L
+                    repeatMode = ValueAnimator.REVERSE
+                    repeatCount = ValueAnimator.INFINITE
+                    start()
+                }
+            } else {
+                chargingIcon.setTextColor(chargingInactiveColor)
+                chargingIcon.alpha = 1f
+            }
+        }
+
+        private fun animateFirmwareIfNeeded(version: String) {
+            if (version == lastFirmware) {
+                firmwareView.setTextColor(defaultTextColor)
+                return
+            }
+            lastFirmware = version
+            firmwareAnimator?.cancel()
+            firmwareAnimator = ValueAnimator.ofArgb(defaultTextColor, firmwareHighlightColor, defaultTextColor).apply {
+                duration = 1200L
+                addUpdateListener { animator ->
+                    firmwareView.setTextColor(animator.animatedValue as Int)
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        firmwareView.setTextColor(defaultTextColor)
+                        firmwareAnimator = null
+                    }
+
+                    override fun onAnimationCancel(animation: android.animation.Animator) {
+                        firmwareView.setTextColor(defaultTextColor)
+                    }
+                })
+                start()
+            }
+        }
+
+        private fun triggerGlow() {
+            glowAnimator?.cancel()
+            card.strokeWidth = glowStrokeWidth
+            glowAnimator = ValueAnimator.ofInt(255, 0).apply {
+                duration = 600L
+                addUpdateListener { animator ->
+                    val alpha = animator.animatedValue as Int
+                    card.setStrokeColor(ColorUtils.setAlphaComponent(Color.WHITE, alpha))
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        card.setStrokeColor(Color.TRANSPARENT)
+                        card.strokeWidth = 0
+                        glowAnimator = null
+                    }
+
+                    override fun onAnimationCancel(animation: android.animation.Animator) {
+                        card.setStrokeColor(Color.TRANSPARENT)
+                        card.strokeWidth = 0
+                    }
+                })
+                start()
+            }
+        }
+
+        private fun formatFirmware(raw: String?): String? {
+            val cleaned = raw?.trim().orEmpty()
+            if (cleaned.isEmpty()) return null
+            return if (cleaned.startsWith("v", ignoreCase = true) || !cleaned.first().isDigit()) {
+                cleaned
+            } else {
+                "v$cleaned"
+            }
+        }
+
+        private fun labelForGesture(event: LensGestureEvent): String {
+            return when (event.gesture.code) {
+                0x01 -> "single"
+                0x02 -> "double"
+                0x03 -> "triple"
+                0x04 -> "hold"
+                else -> event.gesture.name.lowercase(Locale.US).replace('_', ' ')
+            }
+        }
+    }
+
     private fun copyToClipboard(content: String) {
         val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.developer_clipboard_label), content))
@@ -402,91 +638,6 @@ class DeveloperFragment : Fragment() {
         }
     }
 
-    private fun buildLensSummary(lens: BleTelemetryRepository.LensTelemetry): String {
-        if (lens.lastPowerUpdatedAt == null && lens.batteryPercent == null && lens.caseBatteryPercent == null) {
-            return getString(R.string.developer_value_waiting_battery)
-        }
-        val battery = formatPercent(lens.batteryPercent)
-        val case = formatPercent(lens.caseBatteryPercent)
-        val charging = formatCharging(lens.charging)
-        val rssi = formatRssi(lens.rssi)
-        val firmware = lens.firmwareVersion ?: getString(R.string.developer_value_missing)
-        val bonded = if (lens.bonded) getString(R.string.developer_value_yes) else getString(R.string.developer_value_no)
-        val reconnect = getString(
-            R.string.developer_label_reconnect_stats,
-            lens.reconnectAttempts,
-            lens.reconnectSuccesses,
-            if (lens.reconnecting) getString(R.string.developer_value_yes) else getString(R.string.developer_value_no),
-        )
-        val ackCounts = getString(
-            R.string.developer_label_ack_counts,
-            lens.ackSuccessCount,
-            lens.ackFailureCount,
-            lens.ackWarmupCount,
-        )
-        val lastAck = formatAckTimestamp(lens.lastAckAt)
-        val latency = formatLatency(lens.lastAckLatencyMs)
-        val updated = lens.lastUpdatedAt?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_waiting)
-        val powerSource = formatOpcode(lens.lastPowerOpcode)
-        val powerTime = lens.lastPowerUpdatedAt?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_waiting)
-        val stateTime = lens.lastStateUpdatedAt?.let { formatTimestamp(it) } ?: getString(R.string.developer_value_waiting)
-        return buildString {
-            append("Battery $battery / Case $case • Charging $charging")
-            append('\n')
-            append(
-                "State ${formatCaseState(lens.inCase)} • Door ${formatCaseDoor(lens.caseOpen)} • " +
-                    "Wearing ${formatWearing(lens.wearing)} • Silent ${formatSilent(lens.silentMode)}"
-            )
-            append('\n')
-            append("RSSI $rssi • Firmware $firmware")
-            append('\n')
-            append("Bonded $bonded")
-            append(" • ")
-            append(reconnect)
-            append('\n')
-            append(ackCounts)
-            append(" • Latency $latency • Last $lastAck")
-            append('\n')
-            append("Updated $updated • Power $powerSource @ $powerTime • State @ $stateTime")
-        }
-    }
-
-    private fun buildLensSources(lens: BleTelemetryRepository.LensTelemetry): String {
-        val batterySource = describeSource(lens.batterySourceOpcode, lens.batteryUpdatedAt)
-        val chargingSource = describeSource(lens.chargingSourceOpcode, lens.chargingUpdatedAt)
-        val firmwareSource = describeSource(lens.firmwareSourceOpcode, lens.firmwareUpdatedAt)
-        val powerSource = describeSource(lens.lastPowerOpcode, lens.lastPowerUpdatedAt)
-        val stateSource = lens.lastStateUpdatedAt?.let { formatTimeOfDay(it) } ?: getString(R.string.developer_value_waiting)
-        val header = buildString {
-            append("Battery $batterySource • Charging $chargingSource • Firmware $firmwareSource")
-            append('\n')
-            append("Power $powerSource • State @ $stateSource")
-        }
-        val history = lens.powerHistory.takeLast(POWER_HISTORY_PREVIEW).asReversed()
-        if (history.isEmpty()) {
-            return header
-        }
-        val frames = history.joinToString(separator = "\n") { frame ->
-            val opcode = formatOpcode(frame.opcode)
-            val timestamp = formatTimeOfDay(frame.timestampMs)
-            "$opcode @ $timestamp  ${formatPowerHex(frame.hex)}"
-        }
-        return buildString {
-            append(header)
-            append('\n')
-            append(frames)
-        }
-    }
-
-    private fun describeSource(opcode: Int?, timestamp: Long?): String {
-        if (opcode == null || timestamp == null) {
-            return getString(R.string.developer_value_missing)
-        }
-        val code = formatOpcode(opcode)
-        val time = formatTimeOfDay(timestamp)
-        return "$code @ $time"
-    }
-
     private fun showPowerHistoryDialog(
         lensLabel: String,
         frames: List<BleTelemetryRepository.PowerFrame>,
@@ -505,18 +656,6 @@ class DeveloperFragment : Fragment() {
             .setMessage(message)
             .setPositiveButton(android.R.string.ok, null)
             .show()
-    }
-
-    private fun formatPercent(value: Int?): String = value?.let { "$it%" } ?: getString(R.string.developer_value_missing)
-
-    private fun formatRssi(value: Int?): String =
-        value?.let { getString(R.string.developer_value_rssi, it) }
-            ?: getString(R.string.developer_value_missing)
-
-    private fun formatCharging(value: Boolean?): String = when (value) {
-        true -> getString(R.string.developer_value_yes)
-        false -> getString(R.string.developer_value_no)
-        null -> getString(R.string.developer_value_missing)
     }
 
     private fun formatWearing(value: Boolean?): String = when (value) {
