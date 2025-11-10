@@ -54,7 +54,10 @@ class MoncchichiBleService(
     private val logger: MoncchichiLogger = MoncchichiLogger(context),
 ) {
 
-    enum class Lens { LEFT, RIGHT }
+    enum class Lens(val shortLabel: String) {
+        LEFT("L"),
+        RIGHT("R"),
+    }
 
     enum class ConnectionStage {
         Idle,
@@ -213,7 +216,7 @@ class MoncchichiBleService(
             } else {
                 String.format(Locale.US, "%.1fs", delayMs / 1_000.0)
             }
-            log("[BLE][RECONNECT][${lens.shortLabel()}] attempt=$attempt delay=$delayLabel reason=$reason")
+            log("[BLE][RECONNECT][${lens.shortLabel}] attempt=$attempt delay=$delayLabel reason=$reason")
         },
         attempt = { lens, attempt, reason ->
             val device = knownDevices[lens] ?: return@ReconnectCoordinator false
@@ -310,7 +313,7 @@ class MoncchichiBleService(
 
             if (shouldForceGattRefresh(lens)) {
                 val failureCount = reconnectFailureTimestamps.getValue(lens).size
-                log("[GATT][${lens.shortLabel()}] Refreshing cache before connect (failures=$failureCount)")
+                log("[GATT][${lens.shortLabel}] Refreshing cache before connect (failures=$failureCount)")
                 record.client.requestGattRefreshOnConnect()
             }
 
@@ -595,9 +598,9 @@ class MoncchichiBleService(
         bytes.copyInto(payload, destinationOffset = 3)
         val ok = runBlocking { send(payload, lens.toTarget()) }
         if (ok) {
-            log("[HUD][${lens.shortLabel()}] Text sent (${bytes.size} bytes)")
+            log("[HUD][${lens.shortLabel}] Text sent (${bytes.size} bytes)")
         } else {
-            logWarn("[HUD][${lens.shortLabel()}] Text send failed")
+            logWarn("[HUD][${lens.shortLabel}] Text send failed")
         }
         return ok
     }
@@ -606,9 +609,9 @@ class MoncchichiBleService(
         val payload = byteArrayOf(G1Protocols.CMD_CLEAR.toByte(), 0x00)
         val ok = runBlocking { send(payload, lens.toTarget()) }
         if (ok) {
-            log("[HUD][${lens.shortLabel()}] Cleared display")
+            log("[HUD][${lens.shortLabel}] Cleared display")
         } else {
-            logWarn("[HUD][${lens.shortLabel()}] Clear failed")
+            logWarn("[HUD][${lens.shortLabel}] Clear failed")
         }
         return ok
     }
@@ -1073,7 +1076,13 @@ class MoncchichiBleService(
         val queued = record.client.enqueueHeartbeat(packet.payload)
         val timestamp = System.currentTimeMillis()
         if (!queued) {
-            return HeartbeatResult(timestamp = timestamp, success = false, ackType = null, latencyMs = null)
+            return HeartbeatResult(
+                sequence = packet.sequence,
+                timestamp = timestamp,
+                success = false,
+                ackType = null,
+                latencyMs = null,
+            )
         }
         val ack = waitForHeartbeatAck(lens, attemptStart, HEARTBEAT_ACK_WINDOW_MS)
         val success = ack != null
@@ -1106,7 +1115,7 @@ class MoncchichiBleService(
         val latencyLabel = latencyMs?.let { "$it ms" } ?: "n/a"
         val modeLabel = ackType.name.lowercase(Locale.US)
         emitConsole("PING", lens, "seq=$sequence elapsed=$elapsedLabel ack=$latencyLabel mode=$modeLabel", timestamp)
-        log("[BLE][PING][${lens.shortLabel()}] seq=$sequence elapsed=$elapsedLabel ok")
+        log("[BLE][PING][${lens.shortLabel}] seq=$sequence elapsed=$elapsedLabel ok")
         updateLens(lens) {
             it.copy(heartbeatLatencyMs = latencyMs, heartbeatAckType = ackType)
         }
@@ -1117,15 +1126,13 @@ class MoncchichiBleService(
     private fun handleHeartbeatMiss(lens: Lens, timestamp: Long, missCount: Int) {
         recordHeartbeatMiss(lens, timestamp)
         emitConsole("PING", lens, "miss=$missCount", timestamp)
-        logWarn("[BLE][PING][${lens.shortLabel()}] miss $missCount")
+        logWarn("[BLE][PING][${lens.shortLabel}] miss $missCount")
         emitStabilitySnapshot(timestamp)
         if (missCount >= HEARTBEAT_REBOND_THRESHOLD && rebondJob?.isActive != true) {
             emitConsole("PING", lens, "rebound", timestamp)
             performRebond(lens)
         }
     }
-
-private fun Lens.shortLabel(): String = if (this == Lens.LEFT) "L" else "R"
 
 private class HeartbeatSupervisor(
     parentScope: CoroutineScope,
@@ -1297,7 +1304,7 @@ private class HeartbeatSupervisor(
             GateReason.InCase -> "skipped (in case)"
         }
         emitConsole("PING", lens, message, timestamp)
-        log("[BLE][PING][${lens.shortLabel()}] $message")
+        log("[BLE][PING][${lens.shortLabel}] $message")
     }
 
     private fun computeNextDue(base: Long): Long {
@@ -1473,7 +1480,7 @@ private class HeartbeatSupervisor(
                 "[BUSY] opcode=${event.opcode.toOpcodeLabel()} retrying",
                 event.timestampMs,
             )
-            log("[ACK][${lens.shortLabel()}][BUSY] opcode=${event.opcode.toOpcodeLabel()} retrying")
+            log("[ACK][${lens.shortLabel}][BUSY] opcode=${event.opcode.toOpcodeLabel()} retrying")
         } else {
             failPendingCommand(lens)
             val suppressed = shouldSuppressAckFailure(lens, event)
@@ -1486,7 +1493,7 @@ private class HeartbeatSupervisor(
                     event.timestampMs,
                 )
                 logWarn(
-                    "[ACK][${lens.shortLabel()}] failure opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}"
+                    "[ACK][${lens.shortLabel}] failure opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}"
                 )
             } else {
                 emitConsole(
@@ -1573,7 +1580,7 @@ private class HeartbeatSupervisor(
         message: String,
         @Suppress("UNUSED_PARAMETER") timestamp: Long,
     ) {
-        val lensLabel = lens?.shortLabel() ?: "-"
+        val lensLabel = lens?.shortLabel ?: "-"
         log("[$tag][$lensLabel] $message")
     }
 
