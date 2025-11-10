@@ -131,8 +131,10 @@ class BleTelemetryRepositoryUtf8Test {
                 opcode = 0x25,
                 status = 0xC9,
                 success = true,
+                busy = false,
                 timestampMs = 10L,
                 warmup = false,
+                type = MoncchichiBleService.AckType.BINARY,
             )
         )
         repository.onAck(
@@ -141,8 +143,10 @@ class BleTelemetryRepositoryUtf8Test {
                 opcode = 0x25,
                 status = 0xCA,
                 success = false,
+                busy = false,
                 timestampMs = 20L,
                 warmup = false,
+                type = MoncchichiBleService.AckType.BINARY,
             )
         )
         repository.onAck(
@@ -151,8 +155,10 @@ class BleTelemetryRepositoryUtf8Test {
                 opcode = null,
                 status = 0xC9,
                 success = true,
+                busy = false,
                 timestampMs = 30L,
                 warmup = true,
+                type = MoncchichiBleService.AckType.TEXTUAL,
             )
         )
         repository.onAck(
@@ -161,8 +167,10 @@ class BleTelemetryRepositoryUtf8Test {
                 opcode = 0x2C,
                 status = 0xC9,
                 success = true,
+                busy = false,
                 timestampMs = 45L,
                 warmup = false,
+                type = MoncchichiBleService.AckType.BINARY,
             )
         )
 

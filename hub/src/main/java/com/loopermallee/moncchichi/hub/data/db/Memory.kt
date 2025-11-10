@@ -42,6 +42,9 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "left_rssi") val leftRssi: Int?,
     @ColumnInfo(name = "left_firmware_version") val leftFirmwareVersion: String?,
     @ColumnInfo(name = "left_notes") val leftNotes: String?,
+    @ColumnInfo(name = "left_reconnect_attempts") val leftReconnectAttempts: Int?,
+    @ColumnInfo(name = "left_heartbeat_latency_ms") val leftHeartbeatLatencyMs: Int?,
+    @ColumnInfo(name = "left_last_ack_mode") val leftLastAckMode: String?,
     @ColumnInfo(name = "right_battery_percent") val rightBatteryPercent: Int?,
     @ColumnInfo(name = "right_case_battery_percent") val rightCaseBatteryPercent: Int?,
     @ColumnInfo(name = "right_case_open") val rightCaseOpen: Boolean?,
@@ -49,6 +52,9 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "right_rssi") val rightRssi: Int?,
     @ColumnInfo(name = "right_firmware_version") val rightFirmwareVersion: String?,
     @ColumnInfo(name = "right_notes") val rightNotes: String?,
+    @ColumnInfo(name = "right_reconnect_attempts") val rightReconnectAttempts: Int?,
+    @ColumnInfo(name = "right_heartbeat_latency_ms") val rightHeartbeatLatencyMs: Int?,
+    @ColumnInfo(name = "right_last_ack_mode") val rightLastAckMode: String?,
 )
 
 @Dao
@@ -77,7 +83,7 @@ interface MemoryDao {
 
 @Database(
     entities = [ConsoleLine::class, AssistantEntry::class, TelemetrySnapshot::class],
-    version = 5,
+    version = 6,
 )
 abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao
@@ -92,6 +98,9 @@ class MemoryRepository(private val dao: MemoryDao) {
         val rssi: Int?,
         val firmwareVersion: String?,
         val notes: String?,
+        val reconnectAttempts: Int?,
+        val heartbeatLatencyMs: Int?,
+        val lastAckMode: String?,
     )
 
     data class TelemetrySnapshotRecord(
@@ -165,6 +174,9 @@ class MemoryRepository(private val dao: MemoryDao) {
             leftRssi = left.rssi,
             leftFirmwareVersion = left.firmwareVersion,
             leftNotes = left.notes,
+            leftReconnectAttempts = left.reconnectAttempts,
+            leftHeartbeatLatencyMs = left.heartbeatLatencyMs,
+            leftLastAckMode = left.lastAckMode,
             rightBatteryPercent = right.batteryPercent,
             rightCaseBatteryPercent = right.caseBatteryPercent,
             rightCaseOpen = right.caseOpen,
@@ -172,6 +184,9 @@ class MemoryRepository(private val dao: MemoryDao) {
             rightRssi = right.rssi,
             rightFirmwareVersion = right.firmwareVersion,
             rightNotes = right.notes,
+            rightReconnectAttempts = right.reconnectAttempts,
+            rightHeartbeatLatencyMs = right.heartbeatLatencyMs,
+            rightLastAckMode = right.lastAckMode,
         )
     }
 
@@ -187,6 +202,9 @@ class MemoryRepository(private val dao: MemoryDao) {
                 rssi = leftRssi,
                 firmwareVersion = leftFirmwareVersion,
                 notes = leftNotes,
+                reconnectAttempts = leftReconnectAttempts,
+                heartbeatLatencyMs = leftHeartbeatLatencyMs,
+                lastAckMode = leftLastAckMode,
             ),
             right = LensSnapshot(
                 batteryPercent = rightBatteryPercent,
@@ -196,6 +214,9 @@ class MemoryRepository(private val dao: MemoryDao) {
                 rssi = rightRssi,
                 firmwareVersion = rightFirmwareVersion,
                 notes = rightNotes,
+                reconnectAttempts = rightReconnectAttempts,
+                heartbeatLatencyMs = rightHeartbeatLatencyMs,
+                lastAckMode = rightLastAckMode,
             ),
         )
     }

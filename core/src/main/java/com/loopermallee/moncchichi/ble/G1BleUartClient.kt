@@ -88,6 +88,7 @@ class G1BleUartClient(
 
     private val notifyArmed = AtomicBoolean(false)
     private val connecting = AtomicBoolean(false)
+    var onConnectAction: ((BluetoothGatt) -> Unit)? = null
 
     fun connect() {
         if (connecting.getAndSet(true)) return
@@ -181,8 +182,13 @@ class G1BleUartClient(
                 BluetoothProfile.STATE_CONNECTED -> {
                     connecting.set(false)
                     _connectionState.value = ConnectionState.CONNECTED
-                    logger("[SERVICE] Connected; discovering services…")
-                    g.discoverServices()
+                    val action = onConnectAction
+                    if (action != null) {
+                        action(g)
+                    } else {
+                        logger("[SERVICE] Connected; discovering services…")
+                        g.discoverServices()
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     logger("[SERVICE] Disconnected with status=$status")

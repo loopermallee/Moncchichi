@@ -110,6 +110,9 @@ class BleTelemetryRepository(
         val ackWarmupCount: Int = 0,
         val ackDropCount: Int = 0,
         val powerHistory: List<PowerFrame> = emptyList(),
+        val reconnectAttemptsSnapshot: Int? = null,
+        val heartbeatLatencySnapshotMs: Int? = null,
+        val ackMode: MoncchichiBleService.AckType? = null,
     )
 
     data class CaseStatus(
@@ -236,6 +239,9 @@ class BleTelemetryRepository(
         val lastAckStatus: String?,
         val lastAckTimestamp: Long?,
         val lastGesture: LensGestureEvent?,
+        val reconnectAttempts: Int? = null,
+        val heartbeatLatencyMs: Int? = null,
+        val lastAckMode: MoncchichiBleService.AckType? = null,
     )
 
     private val deviceTelemetryScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -269,6 +275,9 @@ class BleTelemetryRepository(
             lastAckStatus = null,
             lastAckTimestamp = null,
             lastGesture = null,
+            reconnectAttempts = null,
+            heartbeatLatencyMs = null,
+            lastAckMode = null,
         )
     }
 
@@ -319,6 +328,9 @@ class BleTelemetryRepository(
             lastAckStatus = mergeNonNull(previous.lastAckStatus, lastAckStatus, allowNullReset),
             lastAckTimestamp = mergeNonNull(previous.lastAckTimestamp, lastAckTimestamp, allowNullReset),
             lastGesture = mergeNonNull(previous.lastGesture, lastGesture, allowNullReset),
+            reconnectAttempts = mergeNonNull(previous.reconnectAttempts, reconnectAttempts, allowNullReset),
+            heartbeatLatencyMs = mergeNonNull(previous.heartbeatLatencyMs, heartbeatLatencyMs, allowNullReset),
+            lastAckMode = mergeNonNull(previous.lastAckMode, lastAckMode, allowNullReset),
         )
     }
 
@@ -352,6 +364,20 @@ class BleTelemetryRepository(
             append(' ')
             append("ack=")
             append(snapshot.lastAckStatus ?: "?")
+            snapshot.lastAckMode?.let { mode ->
+                append(" mode=")
+                append(mode.name)
+            }
+            snapshot.heartbeatLatencyMs?.let { latency ->
+                append(' ')
+                append("heartbeat=")
+                append("${latency} ms")
+            }
+            snapshot.reconnectAttempts?.let { attempts ->
+                append(' ')
+                append("reconnect=")
+                append(attempts)
+            }
         }
         emitConsole("TELEMETRY", snapshot.lens, message.trim(), snapshot.timestamp)
     }
@@ -398,6 +424,9 @@ class BleTelemetryRepository(
             }
             caseBatteryPercent?.let { add("casePct=$it") }
             caseOpen?.let { add("caseOpen=$it") }
+            reconnectAttempts?.let { add("reconnect=$it") }
+            heartbeatLatencyMs?.let { add("heartbeat=${it}ms") }
+            lastAckMode?.let { add("ackMode=${it.name}") }
             environment?.takeIf { it.isNotEmpty() }?.let { map ->
                 add(map.entries.joinToString(prefix = "env{", postfix = "}") { (key, value) -> "$key=$value" })
             }
@@ -411,6 +440,9 @@ class BleTelemetryRepository(
             rssi = null,
             firmwareVersion = firmwareVersion,
             notes = notes,
+            reconnectAttempts = reconnectAttempts,
+            heartbeatLatencyMs = heartbeatLatencyMs,
+            lastAckMode = lastAckMode?.name,
         )
     }
 
@@ -938,6 +970,7 @@ class BleTelemetryRepository(
             snapshot.copy(
                 lastAckStatus = ackStatus,
                 lastAckTimestamp = event.timestampMs,
+                lastAckMode = event.type,
             )
         }
     }
@@ -1834,6 +1867,29 @@ class BleTelemetryRepository(
             if (existing.bondResets != status.bondResetCount) {
                 updated = updated.copy(bondResets = status.bondResetCount)
                 emitConsole("PAIRING", lens, "bond reset events=${status.bondResetCount}")
+                changed = true
+            }
+
+            val heartbeatLatency = status.heartbeatLatencyMs?.toInt()
+            val heartbeatChanged = existing.heartbeatLatencySnapshotMs != heartbeatLatency
+            val reconnectSnapshot = status.reconnectAttempts
+            val reconnectChanged = existing.reconnectAttemptsSnapshot != reconnectSnapshot
+            if (heartbeatChanged || reconnectChanged || existing.ackMode != status.heartbeatAckType) {
+                updated = updated.copy(
+                    heartbeatLatencySnapshotMs = heartbeatLatency,
+                    reconnectAttemptsSnapshot = reconnectSnapshot,
+                    ackMode = status.heartbeatAckType,
+                )
+                val hbLabel = heartbeatLatency?.let { "${it} ms" } ?: "n/a"
+                val reconnectLabel = reconnectSnapshot ?: 0
+                emitConsole("STABILITY", lens, "heartbeat=$hbLabel reconnect=$reconnectLabel", System.currentTimeMillis())
+                updateDeviceTelemetry(lens, System.currentTimeMillis(), logUpdate = false, persist = false) { snapshot ->
+                    snapshot.copy(
+                        heartbeatLatencyMs = heartbeatLatency,
+                        reconnectAttempts = reconnectSnapshot,
+                        lastAckMode = status.heartbeatAckType ?: snapshot.lastAckMode,
+                    )
+                }
                 changed = true
             }
 

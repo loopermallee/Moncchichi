@@ -21,12 +21,14 @@ class ReconnectCoordinatorTest {
         var successInvoked = false
         val coordinator = ReconnectCoordinator(
             scope = scope,
-            backoffMs = longArrayOf(10, 20, 40),
             shouldContinue = { true },
-            onAttempt = { _, attempt, _ -> attempts += attempt },
+            onAttempt = { _, attempt, _, _ -> attempts += attempt },
             attempt = { _, attempt, _ -> attempt == 3 },
             onSuccess = { successInvoked = true },
-            onStop = { }
+            onStop = { },
+            updateState = { _, _ -> },
+            baseDelayMs = 10L,
+            maxDelayMs = 40L,
         )
 
         coordinator.schedule(MoncchichiBleService.Lens.LEFT, "test")
@@ -49,12 +51,14 @@ class ReconnectCoordinatorTest {
         val attempts = mutableListOf<Int>()
         val coordinator = ReconnectCoordinator(
             scope = scope,
-            backoffMs = longArrayOf(10, 20, 40),
             shouldContinue = { true },
-            onAttempt = { _, attempt, _ -> attempts += attempt },
+            onAttempt = { _, attempt, _, _ -> attempts += attempt },
             attempt = { _, _, _ -> false },
             onSuccess = { },
-            onStop = { }
+            onStop = { },
+            updateState = { _, _ -> },
+            baseDelayMs = 10L,
+            maxDelayMs = 40L,
         )
 
         coordinator.schedule(MoncchichiBleService.Lens.LEFT, "drop")
