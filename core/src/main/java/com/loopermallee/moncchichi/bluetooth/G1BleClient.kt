@@ -82,6 +82,11 @@ internal sealed interface AckOutcome {
         override val opcode: Int?,
         override val status: Int?,
     ) : AckOutcome
+
+    data class Busy(
+        override val opcode: Int?,
+        override val status: Int?,
+    ) : AckOutcome
 }
 
 enum class BondResult {
@@ -196,7 +201,7 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
     val statusByteFromHeader = getOrNull(1)?.toInt()?.and(0xFF)
     when (statusByteFromHeader) {
         G1Protocols.STATUS_OK -> return AckOutcome.Success(opcode, statusByteFromHeader)
-        G1Protocols.STATUS_FAIL -> return AckOutcome.Failure(opcode, statusByteFromHeader)
+        G1Protocols.STATUS_BUSY -> return AckOutcome.Busy(opcode, statusByteFromHeader)
     }
 
     statusByteFromHeader
@@ -213,7 +218,7 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
             for (index in (payloadEndExclusive - 1) downTo payloadStart) {
                 when (this[index]) {
                     G1Protocols.STATUS_OK.toByte() -> return AckOutcome.Success(opcode, G1Protocols.STATUS_OK)
-                    G1Protocols.STATUS_FAIL.toByte() -> return AckOutcome.Failure(opcode, G1Protocols.STATUS_FAIL)
+                    G1Protocols.STATUS_BUSY.toByte() -> return AckOutcome.Busy(opcode, G1Protocols.STATUS_BUSY)
                 }
             }
         }
@@ -222,7 +227,7 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
         for (index in (size - 1) downTo 1) {
             when (this[index]) {
                 G1Protocols.STATUS_OK.toByte() -> return AckOutcome.Success(opcode, G1Protocols.STATUS_OK)
-                G1Protocols.STATUS_FAIL.toByte() -> return AckOutcome.Failure(opcode, G1Protocols.STATUS_FAIL)
+                G1Protocols.STATUS_BUSY.toByte() -> return AckOutcome.Busy(opcode, G1Protocols.STATUS_BUSY)
             }
         }
     }
@@ -401,6 +406,7 @@ class G1BleClient(
         val opcode: Int?,
         val status: Int?,
         val success: Boolean,
+        val busy: Boolean,
         val warmup: Boolean,
     )
     private val _ackEvents = MutableSharedFlow<AckEvent>(extraBufferCapacity = 8)
@@ -664,6 +670,15 @@ class G1BleClient(
                                 }
                             }
                         }
+                    } else if (ack is AckOutcome.Busy && ack.opcode == KEEP_ALIVE_OPCODE) {
+                        onAckEvent(now, AckState.Delayed, evaluateDelay = false)
+                        val previous = decrementKeepAliveInFlight()
+                        if (previous <= 0) {
+                            keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
+                            deliverAck = false
+                        }
+                    } else if (ack is AckOutcome.Busy) {
+                        onAckEvent(now, AckState.Delayed, evaluateDelay = false)
                     } else if (ack is AckOutcome.Failure && ack.opcode == KEEP_ALIVE_OPCODE) {
                         onAckEvent(now, AckState.Delayed, evaluateDelay = false)
                         val previous = decrementKeepAliveInFlight()
@@ -679,6 +694,7 @@ class G1BleClient(
                         opcode = ack.opcode,
                         status = ack.status,
                         success = ack is AckOutcome.Success,
+                        busy = ack is AckOutcome.Busy,
                         warmup = warmupAck,
                     )
                     _ackEvents.tryEmit(event)
@@ -821,6 +837,7 @@ class G1BleClient(
                 opcode = current.attMtu?.let { G1Protocols.CMD_HELLO },
                 status = null,
                 success = true,
+                busy = false,
                 warmup = current.warmupOk || current.attMtu != null,
             )
         }
@@ -932,6 +949,13 @@ class G1BleClient(
                                     "while awaiting ${opcode.toLabel()}",
                             )
                         }
+                        is AckOutcome.Busy -> {
+                            logger.i(
+                                label,
+                                "${tt()} Ignoring ACK busy opcode=${ack.opcode.toLabel()} " +
+                                    "status=${ack.status.toHexString()} while awaiting ${opcode.toLabel()}",
+                            )
+                        }
                         is AckOutcome.Failure -> {
                             logger.w(
                                 label,
@@ -954,6 +978,22 @@ class G1BleClient(
                         )
                     )
                     return true
+                }
+                is AckOutcome.Busy -> {
+                    logger.i(
+                        label,
+                        "${tt()} ACK busy opcode=${ackResult.opcode.toLabel()} " +
+                            "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
+                    )
+                    onAttemptResult?.invoke(
+                        CommandAttemptTelemetry(
+                            attemptIndex = attempt + 1,
+                            success = false,
+                            ackTimedOut = false,
+                            ackFailed = true,
+                            queueFailed = false,
+                        )
+                    )
                 }
                 is AckOutcome.Failure -> {
                     logger.w(

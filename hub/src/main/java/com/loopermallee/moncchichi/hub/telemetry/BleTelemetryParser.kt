@@ -10,8 +10,8 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ENV_RANGE_START
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_GESTURE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_SYSTEM_STATUS
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_UPTIME
-import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_FAIL
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_BUSY
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.isTelemetry
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
@@ -106,6 +106,7 @@ class BleTelemetryParser(
             val opcode: Int,
             val ackCode: Int?,
             val success: Boolean?,
+            val busy: Boolean,
             val sequence: Int?,
             val payload: ByteArray,
             override val rawFrame: ByteArray,
@@ -244,9 +245,10 @@ class BleTelemetryParser(
         timestampMs: Long,
     ): List<TelemetryEvent> {
         val ackCode = frame.resolveAckCode()
+        val busy = ackCode == STATUS_BUSY
         val success = when (ackCode) {
             STATUS_OK, OPC_ACK_COMPLETE, OPC_ACK_CONTINUE -> true
-            STATUS_FAIL -> false
+            STATUS_BUSY -> null
             else -> null
         }
         return listOf(
@@ -256,6 +258,7 @@ class BleTelemetryParser(
                 opcode = frame.opcode,
                 ackCode = ackCode,
                 success = success,
+                busy = busy,
                 sequence = frame.sequence,
                 payload = frame.payload.copyOf(),
                 rawFrame = frame.raw.copyOf(),
@@ -371,7 +374,7 @@ class BleTelemetryParser(
     }
 
     private fun Int.isAckCode(): Boolean {
-        return this == STATUS_OK || this == STATUS_FAIL || this == OPC_ACK_COMPLETE || this == OPC_ACK_CONTINUE
+        return this == STATUS_OK || this == STATUS_BUSY || this == OPC_ACK_COMPLETE || this == OPC_ACK_CONTINUE
     }
 
     private fun ByteArray.readLittleEndianUInt(start: Int, length: Int): Int? {

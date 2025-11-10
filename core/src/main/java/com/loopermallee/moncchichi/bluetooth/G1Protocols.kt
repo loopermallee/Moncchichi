@@ -25,7 +25,7 @@ object G1Protocols {
 
     // Status codes
     const val STATUS_OK = 0xC9
-    const val STATUS_FAIL = 0xCA
+    const val STATUS_BUSY = 0xCA
 
     // Timing / retry policy
     const val DEVICE_KEEPALIVE_INTERVAL_MS = 1_000L
