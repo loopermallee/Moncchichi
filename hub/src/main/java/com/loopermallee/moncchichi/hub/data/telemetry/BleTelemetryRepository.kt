@@ -19,15 +19,23 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
@@ -40,6 +48,7 @@ import kotlin.collections.buildList
 import kotlin.math.max
 import kotlin.text.Charsets
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Aggregates BLE telemetry packets (battery %, uptime, firmware, RSSI) emitted by [MoncchichiBleService].
@@ -160,12 +169,67 @@ class BleTelemetryRepository(
     private val _battery = MutableStateFlow<G1ReplyParser.BatteryInfo?>(null)
     val battery: StateFlow<G1ReplyParser.BatteryInfo?> = _battery.asStateFlow()
 
-    private val _gestures = MutableSharedFlow<G1ReplyParser.GestureEvent>(
+    private val _uptime = MutableStateFlow<Long?>(null)
+    val uptime: StateFlow<Long?> = _uptime.asStateFlow()
+
+    private val _gesture = MutableSharedFlow<G1ReplyParser.GestureEvent>(
         replay = 0,
         extraBufferCapacity = 32,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val gesture: SharedFlow<G1ReplyParser.GestureEvent> = _gestures.asSharedFlow()
+    val gesture: SharedFlow<G1ReplyParser.GestureEvent> = _gesture.asSharedFlow()
+
+    data class DeviceStatus(
+        val wearing: Boolean?,
+        val inCase: Boolean?,
+        val silentMode: Boolean?,
+        val caseOpen: Boolean?,
+    )
+
+    private val _deviceStatus = MutableStateFlow<DeviceStatus?>(null)
+    val deviceStatus: StateFlow<DeviceStatus?> = _deviceStatus.asStateFlow()
+
+    data class DeviceTelemetrySnapshot(
+        val timestamp: Long,
+        val battery: G1ReplyParser.BatteryInfo?,
+        val uptime: Long?,
+        val gesture: G1ReplyParser.GestureEvent?,
+        val status: DeviceStatus?,
+    )
+
+    private val deviceTelemetryScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val lastDeviceTelemetry = AtomicReference<DeviceTelemetrySnapshot?>(null)
+
+    val deviceTelemetryFlow: Flow<DeviceTelemetrySnapshot> =
+        combine(
+            _battery,
+            _uptime,
+            _gesture
+                .map { it as G1ReplyParser.GestureEvent? }
+                .onStart { emit(null) },
+            _deviceStatus,
+        ) { batteryInfo, uptimeSeconds, gestureEvent, deviceStatus ->
+            val previous = lastDeviceTelemetry.get()
+            if (previous != null && previous.contentEquals(batteryInfo, uptimeSeconds, gestureEvent, deviceStatus)) {
+                previous
+            } else {
+                DeviceTelemetrySnapshot(
+                    timestamp = System.currentTimeMillis(),
+                    battery = batteryInfo,
+                    uptime = uptimeSeconds,
+                    gesture = gestureEvent,
+                    status = deviceStatus,
+                ).also { snapshot ->
+                    lastDeviceTelemetry.set(snapshot)
+                }
+            }
+        }
+            .distinctUntilChanged()
+            .shareIn(
+                scope = deviceTelemetryScope,
+                started = SharingStarted.Eagerly,
+                replay = 1,
+            )
 
     data class UartLine(val lens: Lens, val text: String)
 
@@ -193,6 +257,18 @@ class BleTelemetryRepository(
                 handleTelemetryEvent(event)
             }
         }
+    }
+
+    private fun DeviceTelemetrySnapshot.contentEquals(
+        batteryInfo: G1ReplyParser.BatteryInfo?,
+        uptimeSeconds: Long?,
+        gestureEvent: G1ReplyParser.GestureEvent?,
+        deviceStatus: DeviceStatus?,
+    ): Boolean {
+        return battery == batteryInfo &&
+            uptime == uptimeSeconds &&
+            gesture == gestureEvent &&
+            status == deviceStatus
     }
 
     private fun emitConsole(tag: String, lens: Lens?, message: String, timestamp: Long = System.currentTimeMillis()) {
@@ -299,6 +375,9 @@ class BleTelemetryRepository(
         keepAliveSnapshots.clear()
         _micAvailability.value = false
         _battery.value = null
+        _uptime.value = null
+        _deviceStatus.value = null
+        lastDeviceTelemetry.set(null)
         micWatchdogJob?.cancel()
         micWatchdogJob = null
         lastAudioFrameTime.set(0L)
@@ -471,6 +550,18 @@ class BleTelemetryRepository(
             is BleTelemetryParser.TelemetryEvent.DeviceStatusEvent -> {
                 val hex = event.rawFrame.toHex()
                 applyStateFlags(event.lens, event.flags, event.timestampMs, hex)
+                _deviceStatus.value = DeviceStatus(
+                    wearing = event.flags.wearing,
+                    inCase = event.flags.inCradle,
+                    silentMode = event.flags.silentMode,
+                    caseOpen = event.flags.caseOpen,
+                )
+                emitConsole(
+                    "STATUS",
+                    event.lens,
+                    "caseOpen=${event.flags.caseOpen}",
+                    event.timestampMs,
+                )
             }
             is BleTelemetryParser.TelemetryEvent.BatteryEvent -> {
                 event.info?.let { info ->
@@ -498,12 +589,11 @@ class BleTelemetryRepository(
                 handleAckEvent(event)
             }
             is BleTelemetryParser.TelemetryEvent.GestureEvent -> {
-                _gestures.tryEmit(event.gesture)
+                _gesture.tryEmit(event.gesture)
                 val label = String.format(
                     Locale.US,
-                    "%s (0x%02X)",
+                    "%s detected",
                     event.gesture.name,
-                    event.gesture.code and 0xFF,
                 )
                 emitConsole("GESTURE", event.lens, label, event.timestampMs)
             }
@@ -703,6 +793,7 @@ class BleTelemetryRepository(
         val timestamp = event.timestampMs
         val hex = event.rawFrame.toHex()
         val uptime = event.uptimeSeconds
+        _uptime.value = uptime
         updateSnapshot(eventTimestamp = timestamp) { current ->
             if (current.uptimeSeconds == uptime && current.lastLens == lens && current.lastFrameHex == hex) {
                 current
@@ -710,7 +801,7 @@ class BleTelemetryRepository(
                 current.copy(uptimeSeconds = uptime).withFrame(lens, hex)
             }
         }
-        emitConsole("VITALS", lens, "uptime=${uptime}s", timestamp)
+        emitConsole("UPTIME", lens, "secs=${uptime}", timestamp)
     }
 
     private fun handleAudioPacket(event: BleTelemetryParser.TelemetryEvent.AudioPacketEvent) {
