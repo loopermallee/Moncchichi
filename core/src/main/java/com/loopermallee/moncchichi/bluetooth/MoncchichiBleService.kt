@@ -38,6 +38,7 @@ import java.util.EnumMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import java.text.SimpleDateFormat
+import kotlin.coroutines.coroutineContext
 import java.util.Date
 import kotlin.collections.ArrayDeque
 import kotlin.text.Charsets
@@ -999,7 +1000,8 @@ class MoncchichiBleService(
                         dispatched = true
                         transmitHeartbeat(lens)
                     } else {
-                        val remaining = HEARTBEAT_INTERVAL_MS - (now - lastSent)
+                        val remaining = lastSent?.let { HEARTBEAT_INTERVAL_MS - (now - it) }
+                            ?: HEARTBEAT_INTERVAL_MS
                         if (remaining < nextDelay) {
                             nextDelay = remaining
                         }
@@ -1017,7 +1019,7 @@ class MoncchichiBleService(
             return
         }
         val busyDeadline = System.currentTimeMillis() + HEARTBEAT_BUSY_DEFER_MS
-        while (isActive && System.currentTimeMillis() < busyDeadline && isLensBusy(lens)) {
+        while (coroutineContext.isActive && System.currentTimeMillis() < busyDeadline && isLensBusy(lens)) {
             delay(HEARTBEAT_BUSY_POLL_MS)
         }
         if (!currentLensStatus(lens).isConnected) {
@@ -1157,7 +1159,7 @@ class MoncchichiBleService(
 
     private fun incrementRebondCounter(lens: Lens?, timestamp: Long) {
         val targets = lens?.let { listOf(it) } ?: ALL_LENSES
-        targets.forEach { target ->
+        targets.forEach { target: Lens ->
             updateStabilityMetrics(target, timestamp) { metrics ->
                 metrics.copy(rebondEvents = metrics.rebondEvents + 1)
             }
