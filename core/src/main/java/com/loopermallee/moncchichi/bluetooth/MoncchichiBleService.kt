@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -29,12 +31,14 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.io.ByteArrayOutputStream
 import java.util.EnumMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
+import java.text.SimpleDateFormat
+import java.util.Date
 import kotlin.collections.ArrayDeque
 import kotlin.text.Charsets
 
@@ -91,6 +95,17 @@ class MoncchichiBleService(
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
+
+    data class BleStabilityMetrics(
+        val lens: Lens?,
+        val timestamp: Long,
+        val heartbeatCount: Int,
+        val missedHeartbeats: Int,
+        val rebondEvents: Int,
+        val lastAckDeltaMs: Long?,
+        val avgRssi: Int?,
+        val reconnectLatencyMs: Long?,
+    )
 
     data class ServiceState(
         val left: LensStatus = LensStatus(),
@@ -154,6 +169,12 @@ class MoncchichiBleService(
     val ackEvents: SharedFlow<AckEvent> = _ackEvents.asSharedFlow()
     private val _events = MutableSharedFlow<MoncchichiEvent>(extraBufferCapacity = 8)
     val events: SharedFlow<MoncchichiEvent> = _events.asSharedFlow()
+    private val _stabilityMetrics = MutableSharedFlow<BleStabilityMetrics>(
+        replay = 0,
+        extraBufferCapacity = 16,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val stabilityMetrics: SharedFlow<BleStabilityMetrics> = _stabilityMetrics.asSharedFlow()
 
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
     private val keepAliveWriteTimestamps = mutableMapOf<Lens, Long>()
@@ -204,6 +225,16 @@ class MoncchichiBleService(
         }
     private val lastAckSuccessMs = EnumMap<Lens, Long>(Lens::class.java)
     private val lastAckSignature = EnumMap<Lens, AckSignature>(Lens::class.java)
+    private val stabilityState = EnumMap<Lens, AtomicReference<BleStabilityMetrics>>(Lens::class.java).apply {
+        Lens.values().forEach { lens ->
+            put(lens, AtomicReference(initialStabilityMetrics(lens)))
+        }
+    }
+    private val rssiWindows = EnumMap<Lens, ArrayDeque<Int>>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, ArrayDeque()) }
+    }
+    private val lastDisconnectTimestamp = EnumMap<Lens, Long>(Lens::class.java)
+    private val stabilityTimeFormatter = ThreadLocal.withInitial { SimpleDateFormat("HH:mm:ss", Locale.US) }
 
     suspend fun connect(device: BluetoothDevice, lensOverride: Lens? = null): Boolean =
         withContext(Dispatchers.IO) {
@@ -325,6 +356,13 @@ class MoncchichiBleService(
                 setStage(ConnectionStage.Connected)
             }
             ensureHeartbeatLoop()
+            val connectedAt = System.currentTimeMillis()
+            lastDisconnectTimestamp.remove(lens)?.let { previous ->
+                val latency = (connectedAt - previous).coerceAtLeast(0L)
+                updateStabilityMetrics(lens, connectedAt) { metrics ->
+                    metrics.copy(reconnectLatencyMs = latency)
+                }
+            }
             log("Connected ${device.address} on $lens")
             true
         }
@@ -381,6 +419,8 @@ class MoncchichiBleService(
         lastAckSuccessMs.remove(lens)
         lastAckSignature.remove(lens)
         cancelReconnect(lens)
+        lastDisconnectTimestamp[lens] = System.currentTimeMillis()
+        resetStabilityMetrics(lens)
         updateLens(lens) { LensStatus() }
         if (connectionOrder.remove(lens)) {
             refreshConnectionOrderState()
@@ -568,6 +608,7 @@ class MoncchichiBleService(
                 }
                 handleBondTransitions(lens, previousStatus, state)
                 handleReconnectStateChange(lens, previousStatus.state, state)
+                updateRssiAverage(lens, state.rssi)
             }
         }
         jobs += scope.launch {
@@ -935,17 +976,24 @@ class MoncchichiBleService(
                 sendHeartbeatToAll()
                 val ackLens = waitForAckWithin(HEARTBEAT_ACK_WINDOW_MS)
                 val now = System.currentTimeMillis()
+                var snapshotEmitted = false
                 if (ackLens != null) {
                     missCount = 0
+                     recordHeartbeatSuccess(ackLens, now)
                     emitConsole("HB", ackLens, "[OK]", now)
                 } else {
                     missCount += 1
+                     recordHeartbeatMiss(now)
                     emitConsole("HB", null, "[MISS $missCount]", now)
                     if (missCount >= HEARTBEAT_REBOND_THRESHOLD) {
                         emitConsole("HB", null, "[REBONDED]", now)
                         performRebond()
+                        snapshotEmitted = true
                         missCount = 0
                     }
+                }
+                if (!snapshotEmitted) {
+                    emitStabilitySnapshot(now)
                 }
             }
         }
@@ -985,6 +1033,109 @@ class MoncchichiBleService(
     }
 
     private fun Lens.shortLabel(): String = if (this == Lens.LEFT) "L" else "R"
+
+    private fun initialStabilityMetrics(lens: Lens): BleStabilityMetrics {
+        return BleStabilityMetrics(
+            lens = lens,
+            timestamp = System.currentTimeMillis(),
+            heartbeatCount = 0,
+            missedHeartbeats = 0,
+            rebondEvents = 0,
+            lastAckDeltaMs = null,
+            avgRssi = null,
+            reconnectLatencyMs = null,
+        )
+    }
+
+    private fun resetStabilityMetrics(lens: Lens) {
+        stabilityState[lens]?.set(initialStabilityMetrics(lens))
+        rssiWindows[lens]?.clear()
+    }
+
+    private fun updateStabilityMetrics(
+        lens: Lens,
+        timestamp: Long,
+        reducer: (BleStabilityMetrics) -> BleStabilityMetrics,
+    ): BleStabilityMetrics {
+        val ref = stabilityState[lens] ?: AtomicReference(initialStabilityMetrics(lens)).also { stabilityState[lens] = it }
+        val updated = ref.updateAndGet { current ->
+            val base = current ?: initialStabilityMetrics(lens)
+            reducer(base).copy(lens = lens, timestamp = timestamp)
+        }
+        return updated
+    }
+
+    private fun emitStabilitySnapshot(timestamp: Long) {
+        ALL_LENSES.forEach { lens ->
+            val status = currentLensStatus(lens)
+            val metrics = updateStabilityMetrics(lens, timestamp) { it }
+            val hasData =
+                status.isConnected ||
+                    metrics.heartbeatCount > 0 ||
+                    metrics.missedHeartbeats > 0 ||
+                    metrics.rebondEvents > 0 ||
+                    metrics.lastAckDeltaMs != null ||
+                    metrics.avgRssi != null ||
+                    metrics.reconnectLatencyMs != null
+            if (!hasData) {
+                return@forEach
+            }
+            val formattedTime = stabilityTimeFormatter.get().format(Date(timestamp))
+            val message = formatStabilityMessage(metrics, formattedTime)
+            emitConsole("STABILITY", lens, message, timestamp)
+            _stabilityMetrics.tryEmit(metrics)
+        }
+    }
+
+    private fun formatStabilityMessage(metrics: BleStabilityMetrics, timeLabel: String): String {
+        val heartbeatLabel = metrics.heartbeatCount
+        val missLabel = metrics.missedHeartbeats
+        val rebondLabel = metrics.rebondEvents
+        val rssiLabel = metrics.avgRssi?.toString() ?: "n/a"
+        val ackLabel = metrics.lastAckDeltaMs?.let { "${it} ms" } ?: "n/a"
+        val reconnectLabel = metrics.reconnectLatencyMs?.let { "${it} ms" } ?: "n/a"
+        return "$timeLabel HB=$heartbeatLabel MISS=$missLabel REBOND=$rebondLabel RSSI=$rssiLabel ΔACK=$ackLabel RECON=$reconnectLabel"
+    }
+
+    private fun recordHeartbeatSuccess(lens: Lens, timestamp: Long) {
+        updateStabilityMetrics(lens, timestamp) { metrics ->
+            metrics.copy(heartbeatCount = metrics.heartbeatCount + 1)
+        }
+    }
+
+    private fun recordHeartbeatMiss(timestamp: Long) {
+        ALL_LENSES.forEach { lens ->
+            if (currentLensStatus(lens).isConnected) {
+                updateStabilityMetrics(lens, timestamp) { metrics ->
+                    metrics.copy(missedHeartbeats = metrics.missedHeartbeats + 1)
+                }
+            }
+        }
+    }
+
+    private fun incrementRebondCounter(timestamp: Long) {
+        ALL_LENSES.forEach { lens ->
+            updateStabilityMetrics(lens, timestamp) { metrics ->
+                metrics.copy(rebondEvents = metrics.rebondEvents + 1)
+            }
+        }
+        emitStabilitySnapshot(timestamp)
+    }
+
+    private fun updateRssiAverage(lens: Lens, rssi: Int?) {
+        if (rssi == null) {
+            return
+        }
+        val samples = rssiWindows[lens] ?: return
+        samples.addLast(rssi)
+        while (samples.size > RSSI_WINDOW_SIZE) {
+            samples.removeFirst()
+        }
+        val average = samples.sum() / samples.size
+        updateStabilityMetrics(lens, System.currentTimeMillis()) { metrics ->
+            metrics.copy(avgRssi = average)
+        }
+    }
 
     private fun emitAckFrame(lens: Lens, payload: ByteArray) {
         val outcome = payload.parseAckOutcome() ?: return
@@ -1046,9 +1197,14 @@ class MoncchichiBleService(
 
     private fun markAckSuccess(lens: Lens, timestamp: Long) {
         completePendingCommand(lens)
+        val previous = lastAckSuccessMs[lens]
         lastAckSuccessMs[lens] = timestamp
         updateLens(lens) {
             it.copy(lastAckAt = timestamp, degraded = false)
+        }
+        val delta = previous?.let { timestamp - it }?.takeIf { it >= 0 }
+        updateStabilityMetrics(lens, timestamp) { metrics ->
+            metrics.copy(lastAckDeltaMs = delta)
         }
         notifyHeartbeatSignal(lens, timestamp)
     }
@@ -1126,6 +1282,8 @@ class MoncchichiBleService(
         if (devices.isEmpty()) {
             return
         }
+        val timestamp = System.currentTimeMillis()
+        incrementRebondCounter(timestamp)
         rebondJob = scope.launch(Dispatchers.IO) {
             log("[HB][-] rebond sequence start")
             disconnectAll()
@@ -1189,6 +1347,8 @@ class MoncchichiBleService(
         clientRecords.remove(lens)
         keepAliveWriteTimestamps.remove(lens)
         cancelReconnect(lens)
+        lastDisconnectTimestamp[lens] = System.currentTimeMillis()
+        resetStabilityMetrics(lens)
         updateLens(lens) { LensStatus() }
         if (connectionOrder.remove(lens)) {
             refreshConnectionOrderState()
@@ -1328,6 +1488,7 @@ class MoncchichiBleService(
         private const val PING_ACK_SUPPRESS_WINDOW_MS = 150L
         private const val ACK_DUPLICATE_WINDOW_MS = 50L
         private const val REBOND_DELAY_MS = 500L
+        private const val RSSI_WINDOW_SIZE = 8
     }
 }
 
