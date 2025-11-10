@@ -94,7 +94,31 @@ class BleTelemetryRepositoryUtf8Test {
 
         val snapshot = repository.snapshot.value
         assertEquals(100, snapshot.left.batteryPercent)
-        assertEquals(50, snapshot.left.caseBatteryPercent)
+
+        val caseStatus = repository.caseStatus.value
+        assertEquals(50, caseStatus.batteryPercent)
+    }
+
+    @Test
+    fun `case status aggregates case telemetry globally`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x0F, 0x46))
+        repository.onFrame(Lens.RIGHT, byteArrayOf(0xF5.toByte(), 0x0E, 0x01))
+        repository.onFrame(Lens.RIGHT, byteArrayOf(0xF5.toByte(), 0x08))
+
+        val status = repository.caseStatus.value
+        assertEquals(70, status.batteryPercent)
+        assertEquals(true, status.charging)
+        assertEquals(true, status.lidOpen)
+
+        val updatedAt = status.updatedAt
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x0F, 0x46))
+
+        val afterDuplicate = repository.caseStatus.value
+        assertEquals(70, afterDuplicate.batteryPercent)
+        assertEquals(updatedAt, afterDuplicate.updatedAt)
     }
 
     @Test

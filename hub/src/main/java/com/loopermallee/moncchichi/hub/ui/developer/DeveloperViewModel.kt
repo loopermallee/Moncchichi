@@ -64,6 +64,8 @@ class DeveloperViewModel(
     private val _snapshot = MutableStateFlow(telemetry.snapshot.value)
     val snapshot: StateFlow<BleTelemetryRepository.Snapshot> = _snapshot.asStateFlow()
 
+    val caseStatus: StateFlow<BleTelemetryRepository.CaseStatus> = telemetry.caseStatus
+
     private val _micStats = MutableStateFlow(
         MicMetrics(
             source = SettingsRepository.getMicSource(),
@@ -240,6 +242,11 @@ class DeveloperViewModel(
             appendLine("Last lens: ${snapshot.lastLens?.name ?: "–"}")
             appendLine("Connection sequence: ${snapshot.connectionSequence ?: "–"}")
             appendLine("Last frame: ${snapshot.lastFrameHex ?: "–"}")
+            val case = caseStatus.value
+            appendLine("Case battery: ${case.batteryPercent?.let { "$it%" } ?: "–"}")
+            appendLine("Case charging: ${case.charging?.let { if (it) "yes" else "no" } ?: "–"}")
+            appendLine("Case lid: ${formatCaseDoor(case.lidOpen)}")
+            appendLine("Silent mode: ${formatSilent(case.silentMode)}")
             appendLine()
             appendLensBlock("Left", snapshot.left)
             appendLine()
@@ -254,12 +261,9 @@ class DeveloperViewModel(
     private fun StringBuilder.appendLensBlock(label: String, lens: BleTelemetryRepository.LensTelemetry) {
         appendLine("$label lens:")
         appendLine("  Battery: ${lens.batteryPercent?.let { "$it%" } ?: "–"}")
-        appendLine("  Case battery: ${lens.caseBatteryPercent?.let { "$it%" } ?: "–"}")
         appendLine("  Charging: ${lens.charging?.let { if (it) "yes" else "no" } ?: "–"}")
         appendLine("  Wearing: ${formatPresence(lens.wearing)}")
         appendLine("  Case state: ${formatCaseState(lens.inCase)}")
-        appendLine("  Case door: ${formatCaseDoor(lens.caseOpen)}")
-        appendLine("  Silent mode: ${formatSilent(lens.silentMode)}")
         appendLine("  RSSI: ${lens.rssi?.let { "${it} dBm" } ?: "–"}")
         appendLine("  Firmware: ${lens.firmwareVersion ?: "–"}")
         appendLine("  Bonded: ${if (lens.bonded) "yes" else "no"}")

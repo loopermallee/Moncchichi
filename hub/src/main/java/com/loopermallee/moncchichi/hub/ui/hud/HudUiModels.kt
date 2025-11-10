@@ -79,6 +79,7 @@ data class HudUiState(
     val notificationListenerEnabled: Boolean = false,
     val postNotificationPermissionGranted: Boolean = false,
     val lensStatus: List<HudLensStatus> = emptyList(),
+    val caseStatus: HudCaseStatus? = null,
 )
 
 @Immutable
@@ -87,7 +88,13 @@ data class HudLensStatus(
     val label: String,
     val wearing: Boolean? = null,
     val inCase: Boolean? = null,
-    val caseOpen: Boolean? = null,
     val charging: Boolean? = null,
-    val caseBatteryPercent: Int? = null,
+)
+
+@Immutable
+data class HudCaseStatus(
+    val batteryPercent: Int? = null,
+    val charging: Boolean? = null,
+    val lidOpen: Boolean? = null,
+    val silentMode: Boolean? = null,
 )

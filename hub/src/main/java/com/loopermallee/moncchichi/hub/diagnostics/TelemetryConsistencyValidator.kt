@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.hub.diagnostics
 
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.CaseStatus
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.DeviceTelemetrySnapshot
 import java.util.ArrayDeque
 import kotlinx.coroutines.CoroutineScope
@@ -18,13 +19,15 @@ import kotlin.math.abs
 class TelemetryConsistencyValidator(
     scope: CoroutineScope,
     telemetry: Flow<List<DeviceTelemetrySnapshot>>,
+    caseStatusFlow: Flow<CaseStatus>,
     private val emitConsole: (tag: String, MoncchichiBleService.Lens?, String, Long) -> Unit,
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
 
     private val latestTelemetry = MutableStateFlow(emptyList<DeviceTelemetrySnapshot>())
-    private val caseToggleHistory = mutableMapOf<MoncchichiBleService.Lens, ArrayDeque<Long>>()
-    private val lastCaseState = mutableMapOf<MoncchichiBleService.Lens, Boolean?>()
+    private val latestCaseStatus = MutableStateFlow(CaseStatus())
+    private val caseToggleHistory = ArrayDeque<Long>()
+    private var lastCaseState: Boolean? = null
     private val lastUptime = mutableMapOf<MoncchichiBleService.Lens, Long?>()
     private val uptimeRegressionActive = mutableMapOf<MoncchichiBleService.Lens, Boolean>()
     private var voltageDriftStart: Long? = null
@@ -36,6 +39,11 @@ class TelemetryConsistencyValidator(
         scope.launch {
             telemetry.collect { snapshots ->
                 latestTelemetry.value = snapshots
+            }
+        }
+        scope.launch {
+            caseStatusFlow.collect { status ->
+                latestCaseStatus.value = status
             }
         }
         scope.launch {
@@ -51,20 +59,22 @@ class TelemetryConsistencyValidator(
         voltageWarned = false
         casePercentWarned = false
         caseFlapWarned = false
-        caseToggleHistory.values.forEach { it.clear() }
-        lastCaseState.clear()
+        caseToggleHistory.clear()
+        lastCaseState = null
         lastUptime.clear()
         uptimeRegressionActive.clear()
+        latestCaseStatus.value = CaseStatus()
     }
 
     private fun validate(snapshots: List<DeviceTelemetrySnapshot>) {
         if (snapshots.isEmpty()) return
         val now = clock()
         val lensSnapshots = snapshots.associateBy { it.lens }
+        val caseStatus = latestCaseStatus.value
 
         checkVoltageDrift(now, lensSnapshots)
-        checkCasePercent(now, snapshots)
-        checkCaseFlapping(now, lensSnapshots)
+        checkCasePercent(now, caseStatus)
+        checkCaseFlapping(now, caseStatus)
         checkUptime(now, snapshots)
     }
 
@@ -95,13 +105,9 @@ class TelemetryConsistencyValidator(
         }
     }
 
-    private fun checkCasePercent(now: Long, snapshots: List<DeviceTelemetrySnapshot>) {
-        val hasTimestamps = snapshots.any { it.timestamp > 0L }
-        if (!hasTimestamps) return
-        val invalidPercent = snapshots.any { snapshot ->
-            val percent = snapshot.caseBatteryPercent
-            percent == null || percent < 0 || percent > 100
-        }
+    private fun checkCasePercent(now: Long, status: CaseStatus) {
+        val percent = status.batteryPercent
+        val invalidPercent = percent != null && (percent < 0 || percent > 100)
         if (invalidPercent) {
             if (!casePercentWarned) {
                 emitConsole("WARN", null, "[CASE] invalid percent", now)
@@ -114,34 +120,29 @@ class TelemetryConsistencyValidator(
 
     private fun checkCaseFlapping(
         now: Long,
-        lensSnapshots: Map<MoncchichiBleService.Lens, DeviceTelemetrySnapshot>,
+        status: CaseStatus,
     ) {
-        var totalTransitions = 0
-        for (lens in MoncchichiBleService.Lens.values()) {
-            val snapshot = lensSnapshots[lens]
-            val state = snapshot?.caseOpen
-            val history = caseToggleHistory.getOrPut(lens) { ArrayDeque() }
-            val lastState = lastCaseState[lens]
-            if (state == null) {
-                history.clear()
-                lastCaseState.remove(lens)
-            } else {
-                if (lastState != null && lastState != state) {
-                    history.addLast(now)
-                }
-                lastCaseState[lens] = state
-            }
-            while (history.isNotEmpty() && now - history.first() > FLAP_WINDOW_MS) {
-                history.removeFirst()
-            }
-            totalTransitions += history.size
+        val state = status.lidOpen
+        if (state == null) {
+            caseToggleHistory.clear()
+            lastCaseState = null
+            caseFlapWarned = false
+            return
         }
-        if (totalTransitions > FLAP_THRESHOLD) {
+        val last = lastCaseState
+        if (last != null && last != state) {
+            caseToggleHistory.addLast(now)
+        }
+        lastCaseState = state
+        while (caseToggleHistory.isNotEmpty() && now - caseToggleHistory.first() > FLAP_WINDOW_MS) {
+            caseToggleHistory.removeFirst()
+        }
+        if (caseToggleHistory.size > FLAP_THRESHOLD) {
             if (!caseFlapWarned) {
                 emitConsole("WARN", null, "[CASE] unstable lid state", now)
                 caseFlapWarned = true
             }
-        } else if (totalTransitions == 0) {
+        } else if (caseToggleHistory.isEmpty()) {
             caseFlapWarned = false
         }
     }

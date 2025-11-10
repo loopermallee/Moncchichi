@@ -133,6 +133,16 @@ class BleTelemetryParser(
             val evenAiEvent: G1ReplyParser.EvenAiEvent?,
             override val rawFrame: ByteArray,
         ) : TelemetryEvent
+
+        data class CaseUpdate(
+            override val lens: MoncchichiBleService.Lens,
+            override val timestampMs: Long,
+            val opcode: Int,
+            val caseBatteryPercent: Int?,
+            val charging: Boolean?,
+            val lidOpen: Boolean?,
+            override val rawFrame: ByteArray,
+        ) : TelemetryEvent
     }
 
     fun parse(
@@ -355,14 +365,29 @@ class BleTelemetryParser(
             )
         }
         subcommand?.let { code ->
-            val systemEvent = buildSystemEvent(
+            val caseEvent = buildCaseEvent(
                 lens = lens,
                 timestampMs = timestampMs,
                 frame = frame,
                 code = code,
             )
-            if (systemEvent != null) {
-                events += systemEvent
+            var suppressSystemEvent = false
+            if (caseEvent != null) {
+                events += caseEvent
+                if (code in caseOnlySystemCodes) {
+                    suppressSystemEvent = true
+                }
+            }
+            if (!suppressSystemEvent) {
+                val systemEvent = buildSystemEvent(
+                    lens = lens,
+                    timestampMs = timestampMs,
+                    frame = frame,
+                    code = code,
+                )
+                if (systemEvent != null) {
+                    events += systemEvent
+                }
             }
         }
         return events
@@ -409,6 +434,44 @@ class BleTelemetryParser(
         )
     }
 
+    private fun buildCaseEvent(
+        lens: MoncchichiBleService.Lens,
+        timestampMs: Long,
+        frame: G1ReplyParser.NotifyFrame,
+        code: Int,
+    ): TelemetryEvent.CaseUpdate? {
+        if (code !in caseEventCodes) {
+            return null
+        }
+        val valueIndex = frame.resolveF5ValueIndex(code)
+        val rawValue = valueIndex?.let { frame.payload.getOrNull(it)?.toUnsignedInt() }
+        val lidOpen = when (code) {
+            0x08 -> true
+            0x09 -> false
+            else -> null
+        }
+        val charging = when (code) {
+            0x0E -> rawValue?.let { it == 1 }
+            else -> null
+        }
+        val caseBattery = when (code) {
+            0x0F -> rawValue?.takeIf { it in 0..100 }
+            else -> null
+        }
+        if (lidOpen == null && charging == null && caseBattery == null) {
+            return null
+        }
+        return TelemetryEvent.CaseUpdate(
+            lens = lens,
+            timestampMs = timestampMs,
+            opcode = frame.opcode,
+            caseBatteryPercent = caseBattery,
+            charging = charging,
+            lidOpen = lidOpen,
+            rawFrame = frame.raw.copyOf(),
+        )
+    }
+
     private fun G1ReplyParser.NotifyFrame.resolveF5ValueIndex(command: Int): Int? {
         return when {
             status?.toUnsignedInt() == command -> 0
@@ -432,6 +495,8 @@ class BleTelemetryParser(
 
     private val systemEventCodes = 0x06..0x0B
     private val specialSystemCodes = setOf(0x0E, 0x0F)
+    private val caseEventCodes = setOf(0x08, 0x09, 0x0E, 0x0F)
+    private val caseOnlySystemCodes = setOf(0x08, 0x09, 0x0E, 0x0F)
 
     private fun G1ReplyParser.NotifyFrame.toEnvironmentSnapshot(): EnvironmentSnapshot? {
         val payloadCopy = payload.copyOf()
