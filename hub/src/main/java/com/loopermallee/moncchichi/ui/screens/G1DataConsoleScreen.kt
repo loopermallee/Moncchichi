@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.loopermallee.moncchichi.bluetooth.G1ConnectionState
 import com.loopermallee.moncchichi.bluetooth.G1Inbound
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.CaseStatus
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.DeviceTelemetrySnapshot
 import com.loopermallee.moncchichi.hub.data.telemetry.LensGestureEvent
 import com.loopermallee.moncchichi.hub.di.AppLocator
@@ -158,6 +159,7 @@ fun DeviceConsoleBody(
     val binder = binderProvider()
 
     val deviceTelemetry by AppLocator.telemetry.deviceTelemetryFlow.collectAsState(initial = emptyList())
+    val caseStatus by AppLocator.telemetry.caseStatus.collectAsState(initial = CaseStatus())
     val telemetryByLens = remember(deviceTelemetry) { deviceTelemetry.associateBy { it.lens } }
     val leftTelemetry = telemetryByLens[MoncchichiBleService.Lens.LEFT]
     val rightTelemetry = telemetryByLens[MoncchichiBleService.Lens.RIGHT]
@@ -363,6 +365,7 @@ fun DeviceConsoleBody(
         LensVitalsCard(
             left = leftTelemetry,
             right = rightTelemetry,
+            caseStatus = caseStatus,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -532,6 +535,7 @@ fun DeviceConsoleBody(
 private fun LensVitalsCard(
     left: DeviceTelemetrySnapshot?,
     right: DeviceTelemetrySnapshot?,
+    caseStatus: CaseStatus,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -567,6 +571,8 @@ private fun LensVitalsCard(
                     modifier = Modifier.weight(1f)
                 )
             }
+            Spacer(modifier = Modifier.height(12.dp))
+            CaseStatusSection(caseStatus = caseStatus)
         }
     }
 }
@@ -603,21 +609,6 @@ private fun LensVitalsColumn(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        snapshot?.caseBatteryPercent?.let { percent ->
-            Text(
-                text = "🔋 Case: ${percent} %",
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Medium,
-                color = caseBatteryColor(percent)
-            )
-        }
-        snapshot?.caseOpen?.let { open ->
-            Text(
-                text = "📦 Open: ${caseOpenLabel(open)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
         snapshot?.lastGesture?.let {
             Text(
                 text = "✋ ${gestureLabel(it)}",
@@ -625,6 +616,44 @@ private fun LensVitalsColumn(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+@Composable
+private fun CaseStatusSection(caseStatus: CaseStatus) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "🧳 Case status",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        val battery = caseStatus.batteryPercent
+        val batteryText = battery?.let { "$it %" } ?: "—"
+        Text(
+            text = "🔋 Battery: $batteryText",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (battery != null) FontWeight.Medium else FontWeight.Normal,
+            color = battery?.let { caseBatteryColor(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val chargingText = caseStatus.charging?.let { if (it) "Yes" else "No" } ?: "—"
+        Text(
+            text = "⚡ Charging: $chargingText",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val lidText = caseStatus.lidOpen?.let { caseOpenLabel(it) } ?: "—"
+        Text(
+            text = "📦 Lid: $lidText",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val silentText = caseStatus.silentMode?.let { if (it) "On" else "Off" } ?: "—"
+        Text(
+            text = "🔇 Silent Mode: $silentText",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -659,7 +688,7 @@ private fun caseBatteryColor(percent: Int): Color = when {
     else -> Color(0xFFF44336)
 }
 
-private fun caseOpenLabel(value: Boolean): String = if (value) "Yes" else "No"
+private fun caseOpenLabel(value: Boolean): String = if (value) "Open" else "Closed"
 
 private fun gestureLabel(event: LensGestureEvent): String {
     return when (event.gesture.code) {

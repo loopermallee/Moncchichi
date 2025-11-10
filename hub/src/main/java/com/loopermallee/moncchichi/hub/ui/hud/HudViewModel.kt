@@ -232,23 +232,39 @@ class HudViewModel(
             combine(
                 telemetry.wearingStatus,
                 telemetry.inCaseStatus,
-                telemetry.caseOpenStatus,
                 telemetry.chargingStatus,
-                telemetry.caseBatteryPercentStatus,
-            ) { wearing, inCase, caseOpen, charging, caseBattery ->
+            ) { wearing, inCase, charging ->
                 MoncchichiBleService.Lens.values().map { lens ->
                     HudLensStatus(
                         id = lens.name,
                         label = lensLabel(lens),
                         wearing = wearing.valueFor(lens),
                         inCase = inCase.valueFor(lens),
-                        caseOpen = caseOpen.valueFor(lens),
                         charging = charging.valueFor(lens),
-                        caseBatteryPercent = caseBattery.valueFor(lens),
                     )
                 }
             }.collectLatest { statuses ->
                 _uiState.update { it.copy(lensStatus = statuses) }
+            }
+        }
+        viewModelScope.launch {
+            telemetry.caseStatus.collectLatest { status ->
+                val hudCase = if (
+                    status.batteryPercent == null &&
+                    status.charging == null &&
+                    status.lidOpen == null &&
+                    status.silentMode == null
+                ) {
+                    null
+                } else {
+                    HudCaseStatus(
+                        batteryPercent = status.batteryPercent,
+                        charging = status.charging,
+                        lidOpen = status.lidOpen,
+                        silentMode = status.silentMode,
+                    )
+                }
+                _uiState.update { it.copy(caseStatus = hudCase) }
             }
         }
     }

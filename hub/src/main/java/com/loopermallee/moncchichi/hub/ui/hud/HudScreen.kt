@@ -223,6 +223,10 @@ private fun MirrorCard(state: HudUiState) {
                             },
                         )
                     }
+                    state.caseStatus?.let { caseStatus ->
+                        Spacer(Modifier.height(16.dp))
+                        CaseStatusSummary(status = caseStatus)
+                    }
                     if (state.lensStatus.isNotEmpty()) {
                         Spacer(Modifier.height(16.dp))
                         LensStatusSummary(statuses = state.lensStatus)
@@ -313,13 +317,37 @@ private fun LensStatusSummary(statuses: List<HudLensStatus>) {
     }
 }
 
+@Composable
+private fun CaseStatusSummary(status: HudCaseStatus) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = "Case",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        val parts = mutableListOf<String>()
+        status.batteryPercent?.let { parts += "battery ${it}%" }
+        status.charging?.let { parts += if (it) "charging" else "not charging" }
+        status.lidOpen?.let { parts += if (it) "lid open" else "lid closed" }
+        status.silentMode?.let { parts += if (it) "silent on" else "silent off" }
+        val summary = if (parts.isEmpty()) {
+            "No case telemetry yet"
+        } else {
+            parts.joinToString(separator = " • ")
+        }
+        Text(
+            text = summary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 private fun formatLensStatus(status: HudLensStatus): String {
     val parts = mutableListOf<String>()
     status.wearing?.let { parts += if (it) "wearing" else "not wearing" }
     status.inCase?.let { parts += if (it) "in case" else "out of case" }
-    status.caseOpen?.let { parts += if (it) "case open" else "case closed" }
     status.charging?.let { parts += if (it) "charging" else "not charging" }
-    status.caseBatteryPercent?.let { parts += "case ${it}%" }
     return if (parts.isEmpty()) {
         "No telemetry yet"
     } else {

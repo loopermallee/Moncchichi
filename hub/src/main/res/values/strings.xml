@@ -57,6 +57,7 @@
     <string name="developer_mode_diagnostics">Diagnostics</string>
     <string name="developer_section_overview">System overview</string>
     <string name="developer_section_glasses">Glasses telemetry</string>
+    <string name="developer_section_case">Case telemetry</string>
     <string name="developer_section_left">Left lens</string>
     <string name="developer_section_right">Right lens</string>
     <string name="developer_lens_left_header">👓  LEFT LENS</string>
@@ -65,6 +66,11 @@
     <string name="developer_lens_charging_label">Charging:</string>
     <string name="developer_lens_case_battery_label">Case Battery:</string>
     <string name="developer_lens_case_open_label">Case Open:</string>
+    <string name="developer_case_battery_label">Battery:</string>
+    <string name="developer_case_charging_label">Charging:</string>
+    <string name="developer_case_lid_label">Lid:</string>
+    <string name="developer_case_silent_placeholder">Silent Mode: —</string>
+    <string name="developer_case_silent_label">Silent Mode: %1$s</string>
     <string name="developer_lens_uptime_label">Uptime:</string>
     <string name="developer_lens_firmware_label">Firmware:</string>
     <string name="developer_lens_gesture_label">Last Gesture:</string>
