@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -602,6 +603,21 @@ private fun LensVitalsColumn(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        snapshot?.caseBatteryPercent?.let { percent ->
+            Text(
+                text = "🔋 Case: ${percent} %",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = caseBatteryColor(percent)
+            )
+        }
+        snapshot?.caseOpen?.let { open ->
+            Text(
+                text = "📦 Open: ${caseOpenLabel(open)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         snapshot?.lastGesture?.let {
             Text(
                 text = "✋ ${gestureLabel(it)}",
@@ -636,6 +652,14 @@ private fun formatFirmwareLabel(raw: String?): String {
 private fun formatUptimeLabel(seconds: Long?): String {
     return seconds?.let { "$it s" } ?: "—"
 }
+
+private fun caseBatteryColor(percent: Int): Color = when {
+    percent > 60 -> Color(0xFF4CAF50)
+    percent >= 30 -> Color(0xFFFFC107)
+    else -> Color(0xFFF44336)
+}
+
+private fun caseOpenLabel(value: Boolean): String = if (value) "Yes" else "No"
 
 private fun gestureLabel(event: LensGestureEvent): String {
     return when (event.gesture.code) {

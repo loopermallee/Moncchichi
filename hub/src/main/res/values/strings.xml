@@ -63,6 +63,8 @@
     <string name="developer_lens_right_header">👓  RIGHT LENS</string>
     <string name="developer_lens_voltage_label">Battery Voltage:</string>
     <string name="developer_lens_charging_label">Charging:</string>
+    <string name="developer_lens_case_battery_label">Case Battery:</string>
+    <string name="developer_lens_case_open_label">Case Open:</string>
     <string name="developer_lens_uptime_label">Uptime:</string>
     <string name="developer_lens_firmware_label">Firmware:</string>
     <string name="developer_lens_gesture_label">Last Gesture:</string>

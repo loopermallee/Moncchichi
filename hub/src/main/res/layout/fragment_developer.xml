@@ -322,6 +322,74 @@
                         </LinearLayout>
 
                         <LinearLayout
+                            android:id="@+id/row_lens_left_case_battery"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="🔋"
+                                android:textSize="18sp" />
+
+                            <TextView
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_weight="1"
+                                android:text="@string/developer_lens_case_battery_label"
+                                android:textColor="@color/er_text_secondary" />
+
+                            <TextView
+                                android:id="@+id/text_lens_left_case_battery_value"
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/developer_value_missing"
+                                android:textColor="@color/er_text_primary" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/row_lens_left_case_open"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:id="@+id/text_lens_left_case_open_icon"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="📦"
+                                android:textColor="@color/er_text_primary"
+                                android:textSize="18sp" />
+
+                            <TextView
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_weight="1"
+                                android:text="@string/developer_lens_case_open_label"
+                                android:textColor="@color/er_text_secondary" />
+
+                            <TextView
+                                android:id="@+id/text_lens_left_case_open_value"
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/developer_value_missing"
+                                android:textColor="@color/er_text_primary" />
+                        </LinearLayout>
+
+                        <LinearLayout
                             android:id="@+id/row_lens_left_uptime"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -501,6 +569,74 @@
 
                             <TextView
                                 android:id="@+id/text_lens_right_charging_value"
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/developer_value_missing"
+                                android:textColor="@color/er_text_primary" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/row_lens_right_case_battery"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="🔋"
+                                android:textSize="18sp" />
+
+                            <TextView
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_weight="1"
+                                android:text="@string/developer_lens_case_battery_label"
+                                android:textColor="@color/er_text_secondary" />
+
+                            <TextView
+                                android:id="@+id/text_lens_right_case_battery_value"
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/developer_value_missing"
+                                android:textColor="@color/er_text_primary" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/row_lens_right_case_open"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:id="@+id/text_lens_right_case_open_icon"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="📦"
+                                android:textColor="@color/er_text_primary"
+                                android:textSize="18sp" />
+
+                            <TextView
+                                style="@style/TextAppearance.Material3.BodyMedium"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_weight="1"
+                                android:text="@string/developer_lens_case_open_label"
+                                android:textColor="@color/er_text_secondary" />
+
+                            <TextView
+                                android:id="@+id/text_lens_right_case_open_value"
                                 style="@style/TextAppearance.Material3.BodyMedium"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"

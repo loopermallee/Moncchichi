@@ -30,6 +30,7 @@ private const val KEY_MIC_SOURCE = "audio:mic_source"
 private const val KEY_AUDIO_SINK = "audio:audio_sink"
 private const val KEY_AUDIBLE_RESPONSES = "audio:audible_responses"
 private const val KEY_PREFER_PHONE_MIC = "audio:prefer_phone_mic"
+private const val KEY_DIAGNOSTICS_ENABLED = "diagnostics:enabled"
 private const val DEFAULT_SPEED = 48
 
 object SettingsRepository {
@@ -143,4 +144,6 @@ object SettingsRepository {
     fun setAudioSink(value: AudioSink) {
         prefs.edit().putString(KEY_AUDIO_SINK, value.name.lowercase(Locale.US)).apply()
     }
+
+    fun isDiagnosticsEnabled(): Boolean = prefs.getBoolean(KEY_DIAGNOSTICS_ENABLED, true)
 }
