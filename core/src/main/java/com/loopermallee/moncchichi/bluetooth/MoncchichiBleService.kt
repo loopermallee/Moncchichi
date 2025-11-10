@@ -1184,6 +1184,9 @@ class MoncchichiBleService(
 
     private fun emitAckFrame(lens: Lens, payload: ByteArray) {
         val outcome = payload.parseAckOutcome() ?: return
+        if (outcome is AckOutcome.Continue || outcome is AckOutcome.Complete) {
+            return
+        }
         val timestamp = System.currentTimeMillis()
         val ackEvent = when (outcome) {
             is AckOutcome.Success -> AckEvent(

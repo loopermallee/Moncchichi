@@ -26,6 +26,24 @@ class G1BleClientAckDetectionTest {
     }
 
     @Test
+    fun `parseAckOutcome returns continue for opcode 0xCB`() {
+        val payload = byteArrayOf(G1Protocols.OPC_ACK_CONTINUE.toByte(), 0x01)
+
+        val result = payload.parseAckOutcome()
+
+        assertIs<AckOutcome.Continue>(result)
+    }
+
+    @Test
+    fun `parseAckOutcome returns complete for opcode 0xC0`() {
+        val payload = byteArrayOf(G1Protocols.OPC_ACK_COMPLETE.toByte(), 0x01)
+
+        val result = payload.parseAckOutcome()
+
+        assertIs<AckOutcome.Complete>(result)
+    }
+
+    @Test
     fun `parseAckOutcome detects ack byte within framed payload`() {
         val payload = byteArrayOf(0x26, 0x06, 0x00, 0x01, 0x08, 0xC9.toByte(), 0x00, 0x00)
 

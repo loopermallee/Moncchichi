@@ -87,6 +87,16 @@ internal sealed interface AckOutcome {
         override val opcode: Int?,
         override val status: Int?,
     ) : AckOutcome
+
+    data class Continue(
+        override val opcode: Int?,
+        override val status: Int?,
+    ) : AckOutcome
+
+    data class Complete(
+        override val opcode: Int?,
+        override val status: Int?,
+    ) : AckOutcome
 }
 
 enum class BondResult {
@@ -191,6 +201,15 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
     if (isEmpty()) return null
 
     val opcode = this[0].toInt() and 0xFF
+
+    if (opcode == G1Protocols.OPC_ACK_CONTINUE) {
+        val status = getOrNull(1)?.toInt()?.and(0xFF)
+        return AckOutcome.Continue(opcode = opcode, status = status)
+    }
+    if (opcode == G1Protocols.OPC_ACK_COMPLETE) {
+        val status = getOrNull(1)?.toInt()?.and(0xFF)
+        return AckOutcome.Complete(opcode = opcode, status = status)
+    }
 
     if (size == 1 && matchesSimpleAck()) {
         val status = this[0].toInt() and 0xFF
@@ -629,6 +648,9 @@ class G1BleClient(
         scope.launch {
             uartClient.observeNotifications { payload ->
                 payload.parseAckOutcome()?.let { ack ->
+                    if (ack is AckOutcome.Continue || ack is AckOutcome.Complete) {
+                        return@let
+                    }
                     val readyBefore = _state.value.isReady()
                     val now = System.currentTimeMillis()
                     var deliverAck = true
@@ -967,6 +989,13 @@ class G1BleClient(
                                     "status=${ack.status.toHexString()} while awaiting ${opcode.toLabel()}",
                             )
                         }
+                        is AckOutcome.Continue, is AckOutcome.Complete -> {
+                            logger.i(
+                                label,
+                                "${tt()} Ignoring ACK continuation opcode=${ack.opcode.toLabel()} " +
+                                    "while awaiting ${opcode.toLabel()}",
+                            )
+                        }
                     }
                 }
             }
@@ -995,6 +1024,22 @@ class G1BleClient(
                             success = false,
                             ackTimedOut = false,
                             ackFailed = true,
+                            queueFailed = false,
+                        )
+                    )
+                }
+                is AckOutcome.Continue, is AckOutcome.Complete -> {
+                    logger.i(
+                        label,
+                        "${tt()} ACK continuation opcode=${ackResult.opcode.toLabel()} " +
+                            "status=${ackResult.status.toHexString()} (attempt ${attempt + 1})",
+                    )
+                    onAttemptResult?.invoke(
+                        CommandAttemptTelemetry(
+                            attemptIndex = attempt + 1,
+                            success = false,
+                            ackTimedOut = false,
+                            ackFailed = false,
                             queueFailed = false,
                         )
                     )
