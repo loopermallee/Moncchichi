@@ -103,6 +103,8 @@ class DeveloperViewModel(
             .map { snapshots -> snapshots.associateBy { it.lens } }
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    val validationStatus: StateFlow<BleTelemetryRepository.ValidationStatus> = telemetry.validationStatus
+
     val gestures: SharedFlow<LensGestureEvent> = telemetry.gesture
 
     private val _events = MutableSharedFlow<DeveloperEvent>(extraBufferCapacity = 1)
@@ -172,6 +174,18 @@ class DeveloperViewModel(
                 DeveloperMode.DIAGNOSTICS -> R.string.developer_toast_diagnostics_cleared
             }
             _events.emit(DeveloperEvent.Notify(appContext.getString(message)))
+        }
+    }
+
+    fun runValidationTest() {
+        val started = telemetry.startValidationTest()
+        viewModelScope.launch {
+            val message = if (started) {
+                "Validation test started"
+            } else {
+                "Validation already running"
+            }
+            _events.emit(DeveloperEvent.Notify(message))
         }
     }
 

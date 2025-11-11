@@ -5,6 +5,7 @@ import android.os.SystemClock
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.G1Packets
 import com.loopermallee.moncchichi.bluetooth.G1Protocols
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_PING
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.F5EventType
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
@@ -51,6 +53,7 @@ import java.util.regex.Pattern
 import kotlin.collections.buildList
 import kotlin.collections.ArrayDeque
 import kotlin.math.max
+import kotlin.math.roundToLong
 import kotlin.text.Charsets
 import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONObject
@@ -126,6 +129,20 @@ class BleTelemetryRepository(
         val updatedAt: Long = System.currentTimeMillis(),
     )
 
+    enum class ValidationState { Idle, Running, Passed, Failed }
+
+    data class ValidationStatus(
+        val state: ValidationState = ValidationState.Idle,
+        val startedAt: Long? = null,
+        val elapsedMs: Long = 0L,
+        val missedHeartbeats: Int = 0,
+        val reconnects: Int = 0,
+        val ackFailures: Int = 0,
+        val passCount: Int = 0,
+        val lastSummary: String? = null,
+        val message: String? = null,
+    )
+
     data class PowerFrame(
         val opcode: Int,
         val hex: String,
@@ -170,6 +187,14 @@ class BleTelemetryRepository(
 
     private val _dashboardStatus = MutableStateFlow(DashboardDataEncoder.BurstStatus())
     val dashboardStatus: StateFlow<DashboardDataEncoder.BurstStatus> = _dashboardStatus.asStateFlow()
+
+    private val validationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val validationController = ValidationController(
+        scope = validationScope,
+        logger = logger,
+        emitConsole = ::emitConsole,
+    )
+    val validationStatus: StateFlow<ValidationStatus> = validationController.status
 
     private val _micPackets = MutableSharedFlow<BleTelemetryParser.TelemetryEvent.AudioPacketEvent>(
         replay = 0,
@@ -813,6 +838,7 @@ class BleTelemetryRepository(
         emitConsole("DIAG", null, "telemetry reset")
         clearBuffers()
         keepAliveSnapshots.clear()
+        validationController.stop("telemetry reset")
         synchronized(stabilityHistory) { stabilityHistory.clear() }
         _micAvailability.value = false
         _battery.value = null
@@ -929,6 +955,27 @@ class BleTelemetryRepository(
         keepAliveSnapshots.clear()
         synchronized(stabilityHistory) { stabilityHistory.clear() }
         synchronized(snapshotPersistLock) { lastPersistedSnapshotContent = null }
+        validationController.stop("service unbound")
+    }
+
+    fun startValidationTest(): Boolean {
+        val connections = MoncchichiBleService.Lens.values().associateWith { lens ->
+            lastLensConnected[lens] == true
+        }
+        val snapshot = _snapshot.value
+        val lensUpdates = mapOf(
+            MoncchichiBleService.Lens.LEFT to snapshot.left.lastUpdatedAt,
+            MoncchichiBleService.Lens.RIGHT to snapshot.right.lastUpdatedAt,
+        )
+        return validationController.start(
+            caseStatus = _caseStatus.value,
+            connections = connections,
+            lensUpdateTimes = lensUpdates,
+        )
+    }
+
+    fun stopValidationTest(reason: String? = null) {
+        validationController.stop(reason)
     }
 
     suspend fun sendMicToggle(enabled: Boolean, lens: Lens = Lens.RIGHT): Boolean {
@@ -966,6 +1013,7 @@ class BleTelemetryRepository(
     }
 
     private fun onStabilityMetrics(metrics: MoncchichiBleService.BleStabilityMetrics) {
+        validationController.onStabilityMetrics(metrics)
         val lens = metrics.lens
         val rssiLabel = metrics.avgRssi?.toString() ?: "n/a"
         val ackLabel = metrics.lastAckDeltaMs?.let { "${it} ms" } ?: "n/a"
@@ -1226,6 +1274,7 @@ class BleTelemetryRepository(
         timestamp: Long,
         hex: String,
     ) {
+        validationController.onStateFlags(lens, timestamp, flags)
         var reasonToEmit: StateChangedEvent.Reason? = null
         var reasonValue: Boolean? = null
         updateSnapshot(eventTimestamp = timestamp) { current ->
@@ -1296,6 +1345,7 @@ class BleTelemetryRepository(
         }
         val opcode = event.opcode
         val timestamp = event.timestampMs
+        validationController.onBatteryFrame(lens, timestamp, lensBattery != null, caseBattery != null)
         val hex = event.rawFrame.toHex()
         var batteryChanged = false
         var caseChanged = false
@@ -1452,6 +1502,9 @@ class BleTelemetryRepository(
             val message = describeEvenAi(evenAi)
             emitConsole("GESTURE", lens, message, event.timestampMs)
         }
+        if (event.type == F5EventType.UNKNOWN) {
+            validationController.onUnknownF5(lens, event)
+        }
     }
 
     private fun handleSystemEvent(event: BleTelemetryParser.TelemetryEvent.SystemEvent) {
@@ -1546,6 +1599,9 @@ class BleTelemetryRepository(
         var nextCharging = current.charging
         var nextLid = current.lidOpen
         var nextSilent = current.silentMode
+        val touchedBattery = batteryPercent != null
+        val touchedLid = lidOpen != null
+        val touchedSilent = silentMode != null
 
         batteryPercent?.let { value ->
             if (value != nextBattery) {
@@ -1576,6 +1632,15 @@ class BleTelemetryRepository(
             }
         }
         if (!changed) {
+            if (touchedBattery || touchedLid || touchedSilent) {
+                validationController.onCaseStatus(
+                    status = current,
+                    timestamp = timestamp,
+                    batteryUpdated = touchedBattery,
+                    lidUpdated = touchedLid,
+                    silentUpdated = touchedSilent,
+                )
+            }
             return
         }
         val updated = CaseStatus(
@@ -1586,6 +1651,13 @@ class BleTelemetryRepository(
             updatedAt = timestamp,
         )
         _caseStatus.value = updated
+        validationController.onCaseStatus(
+            status = updated,
+            timestamp = timestamp,
+            batteryUpdated = touchedBattery,
+            lidUpdated = touchedLid,
+            silentUpdated = touchedSilent,
+        )
         emitCaseConsole(lens, updated, timestamp)
         if (lidChanged) {
             boundService?.updateHeartbeatLidOpen(updated.lidOpen)
@@ -1690,6 +1762,7 @@ class BleTelemetryRepository(
             return
         }
         lastLensConnected[lens] = connected
+        validationController.onLensConnection(lens, connected)
         if (connected) {
             requestCaseRefresh(lens)
         } else {
@@ -1746,6 +1819,7 @@ class BleTelemetryRepository(
         val timestamp = System.currentTimeMillis()
         val hex = frame.toHex()
         val opcode = frame.firstOrNull()?.toInt()?.and(0xFF) ?: 0
+        validationController.onVitals(lens, timestamp, vitals)
         val trustedBattery = when (opcode) {
             ASCII_NOTIFY_OPCODE -> vitals.batteryPercent?.takeIf { it in 0..100 }
             STATUS_OPCODE -> null
@@ -1950,6 +2024,7 @@ class BleTelemetryRepository(
     }
 
     private fun onAck(event: MoncchichiBleService.AckEvent) {
+        validationController.onAck(event)
         val opcode = event.opcode?.let { String.format("0x%02X", it) } ?: "n/a"
         val status = event.status?.let { String.format("0x%02X", it) } ?: "n/a"
         val outcome = when {
@@ -2182,6 +2257,9 @@ class BleTelemetryRepository(
             if (existing.reconnectAttempts != status.reconnectAttempts) {
                 updated = updated.copy(reconnectAttempts = status.reconnectAttempts)
                 emitConsole("STATE", lens, "auto-reconnect attempt ${status.reconnectAttempts}")
+                if (status.reconnectAttempts > existing.reconnectAttempts) {
+                    validationController.onReconnectAttempt(lens)
+                }
                 changed = true
             }
             if (existing.reconnectSuccesses != status.reconnectSuccesses) {
@@ -2526,6 +2604,498 @@ class BleTelemetryRepository(
         MoncchichiBleService.Target.Left -> Lens.LEFT
         MoncchichiBleService.Target.Right -> Lens.RIGHT
         MoncchichiBleService.Target.Both -> null
+    }
+
+    private class ValidationController(
+        private val scope: CoroutineScope,
+        private val logger: (String) -> Unit,
+        private val emitConsole: (String, MoncchichiBleService.Lens?, String, Long) -> Unit,
+    ) {
+        companion object {
+            private const val WINDOW_MS = 5 * 60 * 1000L
+            private const val SUMMARY_INTERVAL_MS = 60_000L
+            private const val GRACE_PERIOD_MS = 15_000L
+            private const val CASE_TTL_MS = 30_000L
+            private const val LENS_TTL_MS = 30_000L
+            private const val HEARTBEAT_TTL_MS = 45_000L
+            private const val HEARTBEAT_MIN_MS = 25_000L
+            private const val HEARTBEAT_MAX_MS = 35_000L
+        }
+
+        private val _status = MutableStateFlow(ValidationStatus())
+        val status: StateFlow<ValidationStatus> = _status.asStateFlow()
+
+        private var running = false
+        private var sessionStart = 0L
+        private var job: Job? = null
+        private var ackFailures = 0
+        private var reconnects = 0
+        private var missedHeartbeats = 0
+        private var passCount = 0
+        private var lastSummaryAt = 0L
+        private var lastSummary: String? = null
+        private var lastCaseStatus: CaseStatus? = null
+        private var lastCaseBatteryAt = 0L
+        private var lastCaseLidAt = 0L
+        private var lastCaseSilentAt = 0L
+        private val lastLensBatteryAt = EnumMap<MoncchichiBleService.Lens, Long>(MoncchichiBleService.Lens::class.java)
+        private val lastHeartbeatAckAt = EnumMap<MoncchichiBleService.Lens, Long>(MoncchichiBleService.Lens::class.java)
+        private val lastHeartbeatInterval = EnumMap<MoncchichiBleService.Lens, Long>(MoncchichiBleService.Lens::class.java)
+        private val lastMissCount = EnumMap<MoncchichiBleService.Lens, Int>(MoncchichiBleService.Lens::class.java)
+        private val monitoredLenses = EnumMap<MoncchichiBleService.Lens, Boolean>(MoncchichiBleService.Lens::class.java)
+
+        init {
+            MoncchichiBleService.Lens.values().forEach { lens ->
+                lastLensBatteryAt[lens] = 0L
+                lastHeartbeatAckAt[lens] = 0L
+                lastHeartbeatInterval[lens] = 0L
+                lastMissCount[lens] = 0
+                monitoredLenses[lens] = false
+            }
+        }
+
+        fun start(
+            caseStatus: CaseStatus,
+            connections: Map<MoncchichiBleService.Lens, Boolean>,
+            lensUpdateTimes: Map<MoncchichiBleService.Lens, Long?>,
+        ): Boolean {
+            if (running) return false
+            val missing = connections.filterValues { it != true }.keys
+            if (missing.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                val label = missing.joinToString(separator = ",") { it.shortLabel }
+                logger("[VALIDATION][WARN] Cannot start validation: lens offline ($label)")
+                emitConsole("VALIDATION", null, "start blocked – connect both lenses", now)
+                _status.value = ValidationStatus(
+                    state = ValidationState.Idle,
+                    message = "Connect both lenses before starting",
+                )
+                return false
+            }
+            running = true
+            passCount = 0
+            sessionStart = System.currentTimeMillis()
+            lastSummaryAt = sessionStart
+            ackFailures = 0
+            reconnects = 0
+            missedHeartbeats = 0
+            lastSummary = null
+            lastCaseStatus = caseStatus
+            lastCaseBatteryAt = if (caseStatus.batteryPercent != null) caseStatus.updatedAt else 0L
+            lastCaseLidAt = if (caseStatus.lidOpen != null) caseStatus.updatedAt else 0L
+            lastCaseSilentAt = if (caseStatus.silentMode != null) caseStatus.updatedAt else 0L
+            MoncchichiBleService.Lens.values().forEach { lens ->
+                val connected = connections[lens] == true
+                monitoredLenses[lens] = connected
+                lastLensBatteryAt[lens] = lensUpdateTimes[lens] ?: 0L
+                lastHeartbeatAckAt[lens] = 0L
+                lastHeartbeatInterval[lens] = 0L
+                lastMissCount[lens] = 0
+            }
+            _status.value = ValidationStatus(
+                state = ValidationState.Running,
+                startedAt = sessionStart,
+                elapsedMs = 0L,
+                missedHeartbeats = 0,
+                reconnects = 0,
+                ackFailures = 0,
+                passCount = passCount,
+                lastSummary = null,
+                message = "Started",
+            )
+            logger("[VALIDATION] Burn-in validation started")
+            emitConsole("VALIDATION", null, "started", sessionStart)
+            job?.cancel()
+            job = scope.launch {
+                while (isActive && running) {
+                    delay(1_000)
+                    tick()
+                }
+            }
+            return true
+        }
+
+        fun stop(reason: String? = null) {
+            if (!running) {
+                if (!reason.isNullOrBlank()) {
+                    _status.update { current ->
+                        current.copy(message = reason)
+                    }
+                }
+                return
+            }
+            running = false
+            job?.cancel()
+            job = null
+            val now = System.currentTimeMillis()
+            val message = reason ?: "stopped"
+            logger("[VALIDATION] stopped: $message")
+            emitConsole("VALIDATION", null, "stopped: $message", now)
+            _status.update {
+                ValidationStatus(
+                    state = ValidationState.Idle,
+                    message = message,
+                )
+            }
+        }
+
+        fun onAck(event: MoncchichiBleService.AckEvent) {
+            if (!running) return
+            val lens = event.lens
+            if (monitoredLenses[lens] != true) return
+            if (event.opcode == CMD_PING) {
+                if (event.success) {
+                    recordHeartbeat(lens, event.timestampMs)
+                } else if (!event.busy) {
+                    heartbeatMiss(lens)
+                }
+            } else if (!event.success && !event.busy) {
+                ackFailure(lens, event.opcode, event.status)
+            }
+        }
+
+        fun onStabilityMetrics(metrics: MoncchichiBleService.BleStabilityMetrics) {
+            if (!running) return
+            val lens = metrics.lens ?: return
+            if (monitoredLenses[lens] != true) return
+            val previous = lastMissCount[lens] ?: 0
+            val currentMiss = metrics.missedHeartbeats
+            lastMissCount[lens] = currentMiss
+            if (currentMiss > previous) {
+                heartbeatMiss(lens)
+            }
+        }
+
+        fun onVitals(
+            lens: MoncchichiBleService.Lens,
+            timestamp: Long,
+            vitals: G1ReplyParser.DeviceVitals,
+        ) {
+            if (!running) return
+            if (monitoredLenses[lens] == true && vitals.batteryPercent != null) {
+                lastLensBatteryAt[lens] = timestamp
+            }
+            vitals.caseBatteryPercent?.let { lastCaseBatteryAt = timestamp }
+            vitals.caseOpen?.let { lastCaseLidAt = timestamp }
+            vitals.silentMode?.let { lastCaseSilentAt = timestamp }
+            if (vitals.caseBatteryPercent != null || vitals.caseOpen != null || vitals.silentMode != null) {
+                lastCaseStatus = lastCaseStatus?.copy(
+                    batteryPercent = vitals.caseBatteryPercent ?: lastCaseStatus?.batteryPercent,
+                    lidOpen = vitals.caseOpen ?: lastCaseStatus?.lidOpen,
+                    silentMode = vitals.silentMode ?: lastCaseStatus?.silentMode,
+                    updatedAt = timestamp,
+                )
+            }
+        }
+
+        fun onBatteryFrame(
+            lens: MoncchichiBleService.Lens,
+            timestamp: Long,
+            hasLensBattery: Boolean,
+            hasCaseBattery: Boolean,
+        ) {
+            if (!running) return
+            if (monitoredLenses[lens] == true && hasLensBattery) {
+                lastLensBatteryAt[lens] = timestamp
+            }
+            if (hasCaseBattery) {
+                lastCaseBatteryAt = timestamp
+            }
+        }
+
+        fun onCaseStatus(
+            status: CaseStatus,
+            timestamp: Long,
+            batteryUpdated: Boolean,
+            lidUpdated: Boolean,
+            silentUpdated: Boolean,
+        ) {
+            if (!running) return
+            lastCaseStatus = status
+            if (batteryUpdated && status.batteryPercent != null) {
+                lastCaseBatteryAt = timestamp
+            }
+            if (lidUpdated && status.lidOpen != null) {
+                lastCaseLidAt = timestamp
+            }
+            if (silentUpdated && status.silentMode != null) {
+                lastCaseSilentAt = timestamp
+            }
+        }
+
+        fun onStateFlags(
+            lens: MoncchichiBleService.Lens,
+            timestamp: Long,
+            flags: G1ReplyParser.StateFlags,
+        ) {
+            if (!running) return
+            if (monitoredLenses[lens] == true) {
+                lastLensBatteryAt[lens] = lastLensBatteryAt[lens] ?: 0L
+            }
+            lastCaseLidAt = timestamp
+            lastCaseSilentAt = timestamp
+        }
+
+        fun onReconnectAttempt(lens: MoncchichiBleService.Lens) {
+            if (!running) return
+            reconnectFailure(lens)
+        }
+
+        fun onLensConnection(lens: MoncchichiBleService.Lens, connected: Boolean) {
+            if (!running) return
+            val wasMonitored = monitoredLenses[lens] == true
+            monitoredLenses[lens] = connected
+            if (wasMonitored && !connected) {
+                reconnectFailure(lens)
+            } else if (connected) {
+                lastLensBatteryAt[lens] = 0L
+                lastHeartbeatAckAt[lens] = 0L
+                lastMissCount[lens] = 0
+            }
+        }
+
+        fun onUnknownF5(
+            lens: MoncchichiBleService.Lens,
+            event: BleTelemetryParser.TelemetryEvent.F5Event,
+        ) {
+            if (!running) return
+            logger("[VALIDATION][WARN] unexpected F5 sub=${event.subcommand?.toHexLabel() ?: "n/a"}")
+            val now = System.currentTimeMillis()
+            emitConsole("VALIDATION", lens, "unexpected F5", now)
+            failInternal(now, "Unexpected F5 telemetry", lens)
+        }
+
+        private fun tick() {
+            if (!running) return
+            val now = System.currentTimeMillis()
+            val elapsed = now - sessionStart
+            if (elapsed >= SUMMARY_INTERVAL_MS && now - lastSummaryAt >= SUMMARY_INTERVAL_MS) {
+                issueSummary(now)
+            }
+            if (elapsed > GRACE_PERIOD_MS) {
+                if (checkStaleness(now)) {
+                    return
+                }
+            }
+            if (elapsed >= WINDOW_MS && ackFailures == 0 && reconnects == 0 && missedHeartbeats == 0) {
+                handlePass(now)
+                return
+            }
+            _status.update { current ->
+                current.copy(
+                    state = ValidationState.Running,
+                    startedAt = sessionStart,
+                    elapsedMs = elapsed,
+                    missedHeartbeats = missedHeartbeats,
+                    reconnects = reconnects,
+                    ackFailures = ackFailures,
+                    passCount = passCount,
+                    lastSummary = lastSummary,
+                )
+            }
+        }
+
+        private fun recordHeartbeat(lens: MoncchichiBleService.Lens, timestamp: Long) {
+            val previous = lastHeartbeatAckAt[lens] ?: 0L
+            if (previous > 0L) {
+                val interval = timestamp - previous
+                lastHeartbeatInterval[lens] = interval
+                if (interval < HEARTBEAT_MIN_MS || interval > HEARTBEAT_MAX_MS) {
+                    heartbeatDeviation(lens, interval)
+                    return
+                }
+            }
+            lastHeartbeatAckAt[lens] = timestamp
+            lastMissCount[lens] = 0
+        }
+
+        private fun heartbeatMiss(lens: MoncchichiBleService.Lens) {
+            missedHeartbeats += 1
+            val now = System.currentTimeMillis()
+            logger("[VALIDATION][WARN] missed heartbeat (${lens.shortLabel})")
+            emitConsole("VALIDATION", lens, "missed heartbeat", now)
+            failInternal(now, "Missed heartbeat (${lens.shortLabel})", lens)
+        }
+
+        private fun heartbeatDeviation(lens: MoncchichiBleService.Lens, interval: Long) {
+            val now = System.currentTimeMillis()
+            logger("[VALIDATION][WARN] heartbeat interval ${interval}ms (${lens.shortLabel})")
+            emitConsole("VALIDATION", lens, "heartbeat interval ${interval}ms", now)
+            failInternal(now, "Heartbeat interval out of range", lens)
+        }
+
+        private fun ackFailure(lens: MoncchichiBleService.Lens, opcode: Int?, status: Int?) {
+            ackFailures += 1
+            val now = System.currentTimeMillis()
+            logger("[VALIDATION][WARN] ack failure (${lens.shortLabel}) opcode=${opcode?.toHexLabel() ?: "n/a"} status=${status?.toHexLabel() ?: "n/a"}")
+            emitConsole("VALIDATION", lens, "ack failure", now)
+            failInternal(now, "ACK failure (${lens.shortLabel})", lens)
+        }
+
+        private fun reconnectFailure(lens: MoncchichiBleService.Lens) {
+            reconnects += 1
+            val now = System.currentTimeMillis()
+            logger("[ERR] reconnect (${lens.shortLabel})")
+            emitConsole("VALIDATION", lens, "reconnect", now)
+            failInternal(now, "Reconnect detected (${lens.shortLabel})", lens)
+        }
+
+        private fun checkStaleness(now: Long): Boolean {
+            monitoredLenses.filterValues { it }.forEach { (lens, _) ->
+                val heartbeatAt = lastHeartbeatAckAt[lens] ?: 0L
+                if (heartbeatAt == 0L) {
+                    heartbeatMiss(lens)
+                    return true
+                }
+                if (now - heartbeatAt > HEARTBEAT_TTL_MS) {
+                    heartbeatMiss(lens)
+                    return true
+                }
+                val batteryAt = lastLensBatteryAt[lens] ?: 0L
+                if (batteryAt == 0L || now - batteryAt > LENS_TTL_MS) {
+                    lensTelemetryFailure(lens)
+                    return true
+                }
+            }
+            if (lastCaseBatteryAt == 0L || now - lastCaseBatteryAt > CASE_TTL_MS) {
+                caseTelemetryFailure("case battery stale")
+                return true
+            }
+            if (lastCaseLidAt == 0L || now - lastCaseLidAt > CASE_TTL_MS) {
+                caseTelemetryFailure("case lid stale")
+                return true
+            }
+            if (lastCaseSilentAt == 0L || now - lastCaseSilentAt > CASE_TTL_MS) {
+                caseTelemetryFailure("silent mode stale")
+                return true
+            }
+            return false
+        }
+
+        private fun lensTelemetryFailure(lens: MoncchichiBleService.Lens) {
+            val now = System.currentTimeMillis()
+            logger("[VALIDATION][WARN] telemetry stale (${lens.shortLabel})")
+            emitConsole("VALIDATION", lens, "telemetry stale", now)
+            failInternal(now, "Lens telemetry stale (${lens.shortLabel})", lens)
+        }
+
+        private fun caseTelemetryFailure(reason: String) {
+            val now = System.currentTimeMillis()
+            logger("[VALIDATION][WARN] $reason")
+            emitConsole("VALIDATION", null, reason, now)
+            failInternal(now, reason, null)
+        }
+
+        private fun issueSummary(now: Long) {
+            val intervals = lastHeartbeatInterval.values.filter { it > 0L }
+            val hbLabel = if (intervals.isNotEmpty()) {
+                val avg = intervals.average().roundToLong().coerceAtLeast(1L)
+                "${avg / 1000}s"
+            } else {
+                "n/a"
+            }
+            val ackLabel = if (ackFailures == 0) "ACKs OK" else "ACKs $ackFailures"
+            val case = lastCaseStatus
+            val caseLabel = case?.let {
+                val battery = it.batteryPercent?.let { pct -> "$pct%" } ?: "n/a"
+                val lid = when (it.lidOpen) {
+                    true -> "open"
+                    false -> "closed"
+                    else -> "unknown"
+                }
+                val silent = when (it.silentMode) {
+                    true -> "silent on"
+                    false -> "silent off"
+                    null -> null
+                }
+                buildString {
+                    append("Case $battery ($lid)")
+                    silent?.let { state ->
+                        append(" • ")
+                        append(state)
+                    }
+                }
+            } ?: "Case n/a"
+            val link = if (ackFailures == 0 && reconnects == 0 && missedHeartbeats == 0) {
+                "Link OK"
+            } else {
+                "Link check"
+            }
+            val summary = listOf(link, "HB=$hbLabel", ackLabel, caseLabel).joinToString(separator = " • ")
+            lastSummary = summary
+            lastSummaryAt = now
+            logger("[VALIDATION] $summary")
+            emitConsole("VALIDATION", null, summary, now)
+            _status.update { current -> current.copy(lastSummary = summary) }
+        }
+
+        private fun handlePass(now: Long) {
+            passCount += 1
+            val label = "PASS 5m stable (#$passCount)"
+            logger("[VALIDATION] $label")
+            emitConsole("VALIDATION", null, label, now)
+            val elapsed = now - sessionStart
+            _status.update {
+                it.copy(
+                    state = ValidationState.Passed,
+                    startedAt = sessionStart,
+                    elapsedMs = elapsed,
+                    missedHeartbeats = missedHeartbeats,
+                    reconnects = reconnects,
+                    ackFailures = ackFailures,
+                    passCount = passCount,
+                    lastSummary = lastSummary,
+                    message = label,
+                )
+            }
+            sessionStart = now
+            lastSummaryAt = now
+            ackFailures = 0
+            reconnects = 0
+            missedHeartbeats = 0
+            MoncchichiBleService.Lens.values().forEach { lens -> lastMissCount[lens] = 0 }
+            scope.launch {
+                delay(1_000)
+                if (running) {
+                    _status.update {
+                        it.copy(
+                            state = ValidationState.Running,
+                            startedAt = sessionStart,
+                            elapsedMs = 0L,
+                            missedHeartbeats = missedHeartbeats,
+                            reconnects = reconnects,
+                            ackFailures = ackFailures,
+                            passCount = passCount,
+                            message = "Cycle reset",
+                        )
+                    }
+                }
+            }
+        }
+
+        private fun failInternal(
+            now: Long,
+            message: String,
+            lens: MoncchichiBleService.Lens?,
+        ) {
+            if (!running) return
+            running = false
+            job?.cancel()
+            job = null
+            _status.update {
+                it.copy(
+                    state = ValidationState.Failed,
+                    startedAt = sessionStart,
+                    elapsedMs = now - sessionStart,
+                    missedHeartbeats = missedHeartbeats,
+                    reconnects = reconnects,
+                    ackFailures = ackFailures,
+                    passCount = passCount,
+                    lastSummary = lastSummary,
+                    message = message,
+                )
+            }
+        }
     }
 
     companion object {
