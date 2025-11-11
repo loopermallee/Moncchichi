@@ -36,6 +36,9 @@ class TelemetryConsistencyValidator(
     private var casePercentWarnedGlobal = false
     private val casePercentWarnedByLens = EnumMap<MoncchichiBleService.Lens, Boolean>(MoncchichiBleService.Lens::class.java)
     private var caseFlapWarned = false
+    private val lastAckTimestamp = EnumMap<MoncchichiBleService.Lens, Long>(MoncchichiBleService.Lens::class.java)
+    private val ackRegressionWarned = EnumMap<MoncchichiBleService.Lens, Boolean>(MoncchichiBleService.Lens::class.java)
+    private val ackGapWarned = EnumMap<MoncchichiBleService.Lens, Boolean>(MoncchichiBleService.Lens::class.java)
 
     init {
         scope.launch {
@@ -67,6 +70,9 @@ class TelemetryConsistencyValidator(
         lastUptime.clear()
         uptimeRegressionActive.clear()
         latestCaseStatus.value = CaseStatus()
+        lastAckTimestamp.clear()
+        ackRegressionWarned.clear()
+        ackGapWarned.clear()
     }
 
     private fun validate(snapshots: List<DeviceTelemetrySnapshot>) {
@@ -79,6 +85,7 @@ class TelemetryConsistencyValidator(
         checkCasePercent(now, caseStatus, snapshots)
         checkCaseFlapping(now, caseStatus)
         checkUptime(now, snapshots)
+        checkAck(now, snapshots)
     }
 
     private fun checkVoltageDrift(
@@ -190,11 +197,50 @@ class TelemetryConsistencyValidator(
         }
     }
 
+    private fun checkAck(now: Long, snapshots: List<DeviceTelemetrySnapshot>) {
+        for (snapshot in snapshots) {
+            val lens = snapshot.lens
+            val ackTimestamp = snapshot.lastAckTimestamp
+            val previous = lastAckTimestamp[lens]
+            if (ackTimestamp != null) {
+                if (previous != null && ackTimestamp < previous) {
+                    val warned = ackRegressionWarned[lens] == true
+                    if (!warned) {
+                        emitConsole("WARN", lens, "[ACK] timestamp regression", now)
+                        ackRegressionWarned[lens] = true
+                    }
+                } else {
+                    ackRegressionWarned.remove(lens)
+                }
+                lastAckTimestamp[lens] = ackTimestamp
+            }
+
+            val active = now - snapshot.timestamp <= ACTIVE_LINK_WINDOW_MS
+            if (!active) {
+                ackGapWarned.remove(lens)
+                continue
+            }
+            val delta = ackTimestamp?.let { now - it }
+            val stalled = delta == null || delta > ACK_GAP_THRESHOLD_MS
+            val warned = ackGapWarned[lens] == true
+            if (stalled) {
+                if (!warned) {
+                    emitConsole("WARN", lens, "[ACK] stalled", now)
+                    ackGapWarned[lens] = true
+                }
+            } else {
+                ackGapWarned.remove(lens)
+            }
+        }
+    }
+
     companion object {
         private const val CHECK_INTERVAL_MS = 10_000L
         private const val VOLTAGE_DRIFT_THRESHOLD_MV = 200
         private const val DRIFT_DURATION_THRESHOLD_MS = 30_000L
         private const val FLAP_WINDOW_MS = 5_000L
         private const val FLAP_THRESHOLD = 2
+        private const val ACK_GAP_THRESHOLD_MS = 60_000L
+        private const val ACTIVE_LINK_WINDOW_MS = 30_000L
     }
 }

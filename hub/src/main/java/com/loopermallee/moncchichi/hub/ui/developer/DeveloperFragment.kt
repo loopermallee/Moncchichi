@@ -14,6 +14,7 @@ import android.text.SpannableStringBuilder
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -44,8 +45,10 @@ import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
 import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
 import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 class DeveloperFragment : Fragment() {
 
@@ -77,6 +80,7 @@ class DeveloperFragment : Fragment() {
     private var currentMode: DeveloperMode = DeveloperMode.CONSOLE
     private var lensCards: List<LensCardController> = emptyList()
     private var caseCard: CaseCardController? = null
+    private var ackSummaryView: TextView? = null
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
@@ -105,6 +109,24 @@ class DeveloperFragment : Fragment() {
         val sequenceView = view.findViewById<TextView>(R.id.text_overview_sequence)
         val frameView = view.findViewById<TextView>(R.id.text_overview_last_frame)
         val autoReconnectView = view.findViewById<TextView>(R.id.text_overview_reconnect)
+        val overviewContainer = frameView.parent as? LinearLayout
+        val ackTextView = TextView(context).apply {
+            id = View.generateViewId()
+            setTextAppearance(R.style.TextAppearance.Material3.BodyMedium)
+            val margin = (resources.displayMetrics.density * 8f).roundToInt()
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = margin }
+            text = "ACK: — (L — • R —)"
+            setTextColor(ContextCompat.getColor(context, R.color.er_text_secondary))
+        }
+        overviewContainer?.let { container ->
+            val insertIndex = container.indexOfChild(autoReconnectView).takeIf { it >= 0 }
+                ?: container.childCount
+            container.addView(ackTextView, insertIndex)
+        }
+        ackSummaryView = ackTextView
         val pairingView = view.findViewById<TextView>(R.id.text_overview_pairing)
         val resetView = view.findViewById<TextView>(R.id.text_overview_resets)
         val leftPowerButton = view.findViewById<MaterialButton>(R.id.button_left_power_history)
@@ -281,6 +303,11 @@ class DeveloperFragment : Fragment() {
                 viewModel.deviceTelemetry.collectLatest { telemetry ->
                     lensCards.forEach { controller ->
                         controller.bind(telemetry[controller.lens])
+                    }
+                    ackSummaryView?.let { view ->
+                        val summary = buildAckSummary(telemetry)
+                        view.text = summary.text
+                        view.setTextColor(ContextCompat.getColor(view.context, summary.colorRes))
                     }
                 }
             }
@@ -857,7 +884,55 @@ class DeveloperFragment : Fragment() {
     private fun formatTimeOfDay(millis: Long): String =
         android.text.format.DateFormat.format("HH:mm:ss", millis).toString()
 
+    private data class AckSummary(val text: String, val colorRes: Int)
+
+    private data class AckLensInfo(val state: AckUiState, val ageLabel: String)
+
+    private enum class AckUiState(val priority: Int) {
+        OK(0),
+        DELAYED(1),
+        STALLED(2),
+    }
+
+    private fun buildAckSummary(
+        telemetry: Map<MoncchichiBleService.Lens, DeviceTelemetrySnapshot>,
+    ): AckSummary {
+        val now = System.currentTimeMillis()
+        val lensSummaries = MoncchichiBleService.Lens.values().map { lens ->
+            val snapshot = telemetry[lens]
+            val ackAt = snapshot?.lastAckTimestamp
+            val delta = ackAt?.let { (now - it).coerceAtLeast(0L) }
+            val state = when {
+                delta == null -> AckUiState.STALLED
+                delta <= ACK_OK_THRESHOLD_MS -> AckUiState.OK
+                delta <= ACK_DELAY_THRESHOLD_MS -> AckUiState.DELAYED
+                else -> AckUiState.STALLED
+            }
+            val ageLabel = delta?.let { "${TimeUnit.MILLISECONDS.toSeconds(it)} s ago" } ?: "—"
+            lens to AckLensInfo(state, ageLabel)
+        }
+        val worstState = lensSummaries.maxByOrNull { it.second.state.priority }?.second?.state
+            ?: AckUiState.STALLED
+        val statusLabel = when (worstState) {
+            AckUiState.OK -> "OK"
+            AckUiState.DELAYED -> "Delayed"
+            AckUiState.STALLED -> "Stalled"
+        }
+        val segments = lensSummaries.joinToString(" • ") { (lens, info) ->
+            "${lens.shortLabel} ${info.ageLabel}"
+        }
+        val colorRes = when (worstState) {
+            AckUiState.OK -> R.color.batteryNormal
+            AckUiState.DELAYED -> R.color.chargingActive
+            AckUiState.STALLED -> R.color.batteryLow
+        }
+        val text = "ACK: $statusLabel ($segments)"
+        return AckSummary(text, colorRes)
+    }
+
     companion object {
         private const val POWER_HISTORY_PREVIEW = 10
+        private const val ACK_OK_THRESHOLD_MS = 15_000L
+        private const val ACK_DELAY_THRESHOLD_MS = 60_000L
     }
 }
