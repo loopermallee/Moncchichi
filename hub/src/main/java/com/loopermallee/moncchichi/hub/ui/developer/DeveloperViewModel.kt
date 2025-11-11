@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -65,6 +66,9 @@ class DeveloperViewModel(
     val snapshot: StateFlow<BleTelemetryRepository.Snapshot> = _snapshot.asStateFlow()
 
     val caseStatus: StateFlow<BleTelemetryRepository.CaseStatus> = telemetry.caseStatus
+
+    private val _telemetrySummary = MutableStateFlow("")
+    val telemetrySummary: StateFlow<String> = _telemetrySummary.asStateFlow()
 
     private val _micStats = MutableStateFlow(
         MicMetrics(
@@ -108,6 +112,16 @@ class DeveloperViewModel(
         viewModelScope.launch {
             hubViewModel.state.collect { state ->
                 _consoleLines.value = state.consoleLines
+            }
+        }
+        viewModelScope.launch {
+            combine(
+                telemetry.deviceTelemetryFlow,
+                telemetry.caseStatus,
+            ) { snapshots, case ->
+                buildTelemetrySummary(snapshots, case)
+            }.collect { summary ->
+                _telemetrySummary.value = summary
             }
         }
         viewModelScope.launch {
@@ -238,6 +252,11 @@ class DeveloperViewModel(
     private fun buildSnapshotText(snapshot: BleTelemetryRepository.Snapshot): String {
         if (snapshot == BleTelemetryRepository.Snapshot()) return ""
         return buildString {
+            val summaryLine = telemetrySummary.value
+            if (summaryLine.isNotBlank()) {
+                appendLine(summaryLine)
+                appendLine()
+            }
             appendLine("Uptime: ${snapshot.uptimeSeconds?.let { formatDuration(it) } ?: "–"}")
             appendLine("Last lens: ${snapshot.lastLens?.name ?: "–"}")
             appendLine("Connection sequence: ${snapshot.connectionSequence ?: "–"}")
@@ -247,6 +266,13 @@ class DeveloperViewModel(
             appendLine("Case charging: ${case.charging?.let { if (it) "yes" else "no" } ?: "–"}")
             appendLine("Case lid: ${formatCaseDoor(case.lidOpen)}")
             appendLine("Silent mode: ${formatSilent(case.silentMode)}")
+            val deviceSnapshots = deviceTelemetry.value
+            val leftTelemetryJson = deviceSnapshots[MoncchichiBleService.Lens.LEFT]
+                ?.let { telemetry.toTelemetryJson(it, case) }
+            val rightTelemetryJson = deviceSnapshots[MoncchichiBleService.Lens.RIGHT]
+                ?.let { telemetry.toTelemetryJson(it, case) }
+            appendLine("Left telemetry JSON: ${leftTelemetryJson ?: "–"}")
+            appendLine("Right telemetry JSON: ${rightTelemetryJson ?: "–"}")
             appendLine()
             appendLensBlock("Left", snapshot.left)
             appendLine()
@@ -255,6 +281,54 @@ class DeveloperViewModel(
             appendLine("Auto reconnect successes: ${snapshot.autoReconnectSuccesses}")
             appendLine("Pairing dialogs shown: ${snapshot.pairingDialogsShown}")
             appendLine("Bond resets: ${snapshot.bondResetEvents}")
+        }
+    }
+
+    private fun buildTelemetrySummary(
+        snapshots: List<BleTelemetryRepository.DeviceTelemetrySnapshot>,
+        case: BleTelemetryRepository.CaseStatus,
+    ): String {
+        if (snapshots.isEmpty()) return ""
+        val left = snapshots.firstOrNull { it.lens == MoncchichiBleService.Lens.LEFT }
+        val right = snapshots.firstOrNull { it.lens == MoncchichiBleService.Lens.RIGHT }
+        val uptimeSeconds = snapshots.mapNotNull { it.uptimeSeconds }.maxOrNull()
+        val firmware = left?.firmwareVersion ?: right?.firmwareVersion
+        val hasCase = listOf(case.batteryPercent, case.charging, case.lidOpen, case.silentMode).any { it != null }
+        val hasLens = listOf(left?.batteryVoltageMv, right?.batteryVoltageMv, firmware, uptimeSeconds).any { it != null }
+        if (!hasCase && !hasLens) return ""
+        val caseBattery = case.batteryPercent?.let { "$it%" } ?: "–"
+        val caseState = when (case.lidOpen) {
+            true -> "Open"
+            false -> "Closed"
+            null -> "Unknown"
+        }
+        val silent = case.silentMode?.let { if (it) "Silent On" else "Silent Off" }
+        val charging = case.charging?.let { if (it) "Charging" else "Not Charging" }
+        val leftVoltage = left?.batteryVoltageMv?.let { "${it}mV" } ?: "–"
+        val rightVoltage = right?.batteryVoltageMv?.let { "${it}mV" } ?: "–"
+        val uptime = uptimeSeconds?.let { formatDuration(it) }
+        return buildString {
+            append("Case $caseBattery ($caseState)")
+            silent?.let {
+                append(" • ")
+                append(it)
+            }
+            charging?.let {
+                append(" • ")
+                append(it)
+            }
+            append(" • L ")
+            append(leftVoltage)
+            append(" • R ")
+            append(rightVoltage)
+            firmware?.let {
+                append(" • FW ")
+                append(it)
+            }
+            uptime?.let {
+                append(" • Up ")
+                append(it)
+            }
         }
     }
 

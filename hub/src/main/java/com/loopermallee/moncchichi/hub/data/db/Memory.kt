@@ -35,9 +35,15 @@ data class TelemetrySnapshot(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     @ColumnInfo(name = "recorded_at") val recordedAt: Long,
     @ColumnInfo(name = "uptime_seconds") val uptimeSeconds: Long?,
+    @ColumnInfo(name = "case_battery_percent") val caseBatteryPercent: Int?,
+    @ColumnInfo(name = "case_charging") val caseCharging: Boolean?,
+    @ColumnInfo(name = "case_lid_open") val caseLidOpen: Boolean?,
+    @ColumnInfo(name = "case_silent_mode") val caseSilentMode: Boolean?,
     @ColumnInfo(name = "left_battery_percent") val leftBatteryPercent: Int?,
+    @ColumnInfo(name = "left_battery_voltage_mv") val leftBatteryVoltageMv: Int?,
     @ColumnInfo(name = "left_case_battery_percent") val leftCaseBatteryPercent: Int?,
     @ColumnInfo(name = "left_case_open") val leftCaseOpen: Boolean?,
+    @ColumnInfo(name = "left_case_silent_mode") val leftCaseSilentMode: Boolean?,
     @ColumnInfo(name = "left_last_updated") val leftLastUpdated: Long?,
     @ColumnInfo(name = "left_rssi") val leftRssi: Int?,
     @ColumnInfo(name = "left_firmware_version") val leftFirmwareVersion: String?,
@@ -45,9 +51,15 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "left_reconnect_attempts") val leftReconnectAttempts: Int?,
     @ColumnInfo(name = "left_heartbeat_latency_ms") val leftHeartbeatLatencyMs: Int?,
     @ColumnInfo(name = "left_last_ack_mode") val leftLastAckMode: String?,
+    @ColumnInfo(name = "left_last_ack_status") val leftLastAckStatus: String?,
+    @ColumnInfo(name = "left_last_ack_timestamp") val leftLastAckTimestamp: Long?,
+    @ColumnInfo(name = "left_uptime_seconds") val leftUptimeSeconds: Long?,
+    @ColumnInfo(name = "left_snapshot_json") val leftSnapshotJson: String?,
     @ColumnInfo(name = "right_battery_percent") val rightBatteryPercent: Int?,
+    @ColumnInfo(name = "right_battery_voltage_mv") val rightBatteryVoltageMv: Int?,
     @ColumnInfo(name = "right_case_battery_percent") val rightCaseBatteryPercent: Int?,
     @ColumnInfo(name = "right_case_open") val rightCaseOpen: Boolean?,
+    @ColumnInfo(name = "right_case_silent_mode") val rightCaseSilentMode: Boolean?,
     @ColumnInfo(name = "right_last_updated") val rightLastUpdated: Long?,
     @ColumnInfo(name = "right_rssi") val rightRssi: Int?,
     @ColumnInfo(name = "right_firmware_version") val rightFirmwareVersion: String?,
@@ -55,6 +67,10 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "right_reconnect_attempts") val rightReconnectAttempts: Int?,
     @ColumnInfo(name = "right_heartbeat_latency_ms") val rightHeartbeatLatencyMs: Int?,
     @ColumnInfo(name = "right_last_ack_mode") val rightLastAckMode: String?,
+    @ColumnInfo(name = "right_last_ack_status") val rightLastAckStatus: String?,
+    @ColumnInfo(name = "right_last_ack_timestamp") val rightLastAckTimestamp: Long?,
+    @ColumnInfo(name = "right_uptime_seconds") val rightUptimeSeconds: Long?,
+    @ColumnInfo(name = "right_snapshot_json") val rightSnapshotJson: String?,
 )
 
 @Dao
@@ -83,7 +99,7 @@ interface MemoryDao {
 
 @Database(
     entities = [ConsoleLine::class, AssistantEntry::class, TelemetrySnapshot::class],
-    version = 6,
+    version = 7,
 )
 abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao
@@ -92,8 +108,10 @@ abstract class MemoryDb : RoomDatabase() {
 class MemoryRepository(private val dao: MemoryDao) {
     data class LensSnapshot(
         val batteryPercent: Int?,
+        val batteryVoltageMv: Int?,
         val caseBatteryPercent: Int?,
         val caseOpen: Boolean?,
+        val caseSilentMode: Boolean?,
         val lastUpdated: Long?,
         val rssi: Int?,
         val firmwareVersion: String?,
@@ -101,11 +119,23 @@ class MemoryRepository(private val dao: MemoryDao) {
         val reconnectAttempts: Int?,
         val heartbeatLatencyMs: Int?,
         val lastAckMode: String?,
+        val lastAckStatus: String?,
+        val lastAckTimestamp: Long?,
+        val uptimeSeconds: Long?,
+        val snapshotJson: String?,
+    )
+
+    data class CaseSnapshot(
+        val batteryPercent: Int?,
+        val charging: Boolean?,
+        val lidOpen: Boolean?,
+        val silentMode: Boolean?,
     )
 
     data class TelemetrySnapshotRecord(
         val recordedAt: Long,
         val uptimeSeconds: Long?,
+        val case: CaseSnapshot?,
         val left: LensSnapshot,
         val right: LensSnapshot,
     )
@@ -167,9 +197,15 @@ class MemoryRepository(private val dao: MemoryDao) {
         return TelemetrySnapshot(
             recordedAt = recordedAt,
             uptimeSeconds = uptimeSeconds,
+            caseBatteryPercent = case?.batteryPercent,
+            caseCharging = case?.charging,
+            caseLidOpen = case?.lidOpen,
+            caseSilentMode = case?.silentMode,
             leftBatteryPercent = left.batteryPercent,
+            leftBatteryVoltageMv = left.batteryVoltageMv,
             leftCaseBatteryPercent = left.caseBatteryPercent,
             leftCaseOpen = left.caseOpen,
+            leftCaseSilentMode = left.caseSilentMode,
             leftLastUpdated = left.lastUpdated,
             leftRssi = left.rssi,
             leftFirmwareVersion = left.firmwareVersion,
@@ -177,9 +213,15 @@ class MemoryRepository(private val dao: MemoryDao) {
             leftReconnectAttempts = left.reconnectAttempts,
             leftHeartbeatLatencyMs = left.heartbeatLatencyMs,
             leftLastAckMode = left.lastAckMode,
+            leftLastAckStatus = left.lastAckStatus,
+            leftLastAckTimestamp = left.lastAckTimestamp,
+            leftUptimeSeconds = left.uptimeSeconds,
+            leftSnapshotJson = left.snapshotJson,
             rightBatteryPercent = right.batteryPercent,
+            rightBatteryVoltageMv = right.batteryVoltageMv,
             rightCaseBatteryPercent = right.caseBatteryPercent,
             rightCaseOpen = right.caseOpen,
+            rightCaseSilentMode = right.caseSilentMode,
             rightLastUpdated = right.lastUpdated,
             rightRssi = right.rssi,
             rightFirmwareVersion = right.firmwareVersion,
@@ -187,6 +229,10 @@ class MemoryRepository(private val dao: MemoryDao) {
             rightReconnectAttempts = right.reconnectAttempts,
             rightHeartbeatLatencyMs = right.heartbeatLatencyMs,
             rightLastAckMode = right.lastAckMode,
+            rightLastAckStatus = right.lastAckStatus,
+            rightLastAckTimestamp = right.lastAckTimestamp,
+            rightUptimeSeconds = right.uptimeSeconds,
+            rightSnapshotJson = right.snapshotJson,
         )
     }
 
@@ -194,10 +240,18 @@ class MemoryRepository(private val dao: MemoryDao) {
         return TelemetrySnapshotRecord(
             recordedAt = recordedAt,
             uptimeSeconds = uptimeSeconds,
+            case = CaseSnapshot(
+                batteryPercent = caseBatteryPercent,
+                charging = caseCharging,
+                lidOpen = caseLidOpen,
+                silentMode = caseSilentMode,
+            ).takeIf { it.batteryPercent != null || it.charging != null || it.lidOpen != null || it.silentMode != null },
             left = LensSnapshot(
                 batteryPercent = leftBatteryPercent,
+                batteryVoltageMv = leftBatteryVoltageMv,
                 caseBatteryPercent = leftCaseBatteryPercent,
                 caseOpen = leftCaseOpen,
+                caseSilentMode = leftCaseSilentMode,
                 lastUpdated = leftLastUpdated,
                 rssi = leftRssi,
                 firmwareVersion = leftFirmwareVersion,
@@ -205,11 +259,17 @@ class MemoryRepository(private val dao: MemoryDao) {
                 reconnectAttempts = leftReconnectAttempts,
                 heartbeatLatencyMs = leftHeartbeatLatencyMs,
                 lastAckMode = leftLastAckMode,
+                lastAckStatus = leftLastAckStatus,
+                lastAckTimestamp = leftLastAckTimestamp,
+                uptimeSeconds = leftUptimeSeconds,
+                snapshotJson = leftSnapshotJson,
             ),
             right = LensSnapshot(
                 batteryPercent = rightBatteryPercent,
+                batteryVoltageMv = rightBatteryVoltageMv,
                 caseBatteryPercent = rightCaseBatteryPercent,
                 caseOpen = rightCaseOpen,
+                caseSilentMode = rightCaseSilentMode,
                 lastUpdated = rightLastUpdated,
                 rssi = rightRssi,
                 firmwareVersion = rightFirmwareVersion,
@@ -217,6 +277,10 @@ class MemoryRepository(private val dao: MemoryDao) {
                 reconnectAttempts = rightReconnectAttempts,
                 heartbeatLatencyMs = rightHeartbeatLatencyMs,
                 lastAckMode = rightLastAckMode,
+                lastAckStatus = rightLastAckStatus,
+                lastAckTimestamp = rightLastAckTimestamp,
+                uptimeSeconds = rightUptimeSeconds,
+                snapshotJson = rightSnapshotJson,
             ),
         )
     }
