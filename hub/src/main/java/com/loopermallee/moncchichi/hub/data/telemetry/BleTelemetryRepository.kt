@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
+import java.util.EnumMap
 import java.util.LinkedHashMap
 import java.util.Date
 import java.util.Locale
@@ -234,6 +235,8 @@ class BleTelemetryRepository(
         val isCharging: Boolean?,
         val caseBatteryPercent: Int?,
         val caseOpen: Boolean?,
+        val caseCharging: Boolean?,
+        val caseSilentMode: Boolean?,
         val uptimeSeconds: Long?,
         val firmwareVersion: String?,
         val environment: Map<String, String>?,
@@ -270,6 +273,8 @@ class BleTelemetryRepository(
             isCharging = null,
             caseBatteryPercent = null,
             caseOpen = null,
+            caseCharging = null,
+            caseSilentMode = null,
             uptimeSeconds = null,
             firmwareVersion = null,
             environment = null,
@@ -323,6 +328,8 @@ class BleTelemetryRepository(
             isCharging = mergeNonNull(previous.isCharging, isCharging, allowNullReset),
             caseBatteryPercent = mergeNonNull(previous.caseBatteryPercent, caseBatteryPercent, allowNullReset),
             caseOpen = mergeNonNull(previous.caseOpen, caseOpen, allowNullReset),
+            caseCharging = mergeNonNull(previous.caseCharging, caseCharging, allowNullReset),
+            caseSilentMode = mergeNonNull(previous.caseSilentMode, caseSilentMode, allowNullReset),
             uptimeSeconds = mergeNonNull(previous.uptimeSeconds, uptimeSeconds, allowNullReset),
             firmwareVersion = mergeNonNull(previous.firmwareVersion, firmwareVersion, allowNullReset),
             environment = mergeNonNull(previous.environment, environment, allowNullReset),
@@ -379,6 +386,27 @@ class BleTelemetryRepository(
                 append("reconnect=")
                 append(attempts)
             }
+            snapshot.caseBatteryPercent?.let { percent ->
+                append(' ')
+                append("casePct=")
+                append(percent)
+                append('%')
+            }
+            snapshot.caseOpen?.let { open ->
+                append(' ')
+                append("caseOpen=")
+                append(open)
+            }
+            snapshot.caseCharging?.let { charging ->
+                append(' ')
+                append("caseCharging=")
+                append(charging)
+            }
+            snapshot.caseSilentMode?.let { silent ->
+                append(' ')
+                append("caseSilent=")
+                append(silent)
+            }
         }
         emitConsole("TELEMETRY", snapshot.lens, message.trim(), snapshot.timestamp)
     }
@@ -425,6 +453,8 @@ class BleTelemetryRepository(
             }
             caseBatteryPercent?.let { add("casePct=$it") }
             caseOpen?.let { add("caseOpen=$it") }
+            caseCharging?.let { add("caseCharging=$it") }
+            caseSilentMode?.let { add("caseSilent=$it") }
             reconnectAttempts?.let { add("reconnect=$it") }
             heartbeatLatencyMs?.let { add("heartbeat=${it}ms") }
             lastAckMode?.let { add("ackMode=${it.name}") }
@@ -576,9 +606,15 @@ class BleTelemetryRepository(
     private var dashboardEncoder: DashboardDataEncoder? = null
     private var boundService: MoncchichiBleService? = null
     private var lastConnected = false
+    private val lastLensConnected = EnumMap<Lens, Boolean>(Lens::class.java).apply {
+        Lens.values().forEach { put(it, false) }
+    }
     private var serviceScope: CoroutineScope? = null
     private val lastAudioFrameTime = AtomicLong(0L)
     private var micWatchdogJob: Job? = null
+    private val lastCaseRefreshAt = EnumMap<Lens, Long>(Lens::class.java).apply {
+        Lens.values().forEach { put(it, 0L) }
+    }
 
     private val leftBuffer = ByteArrayOutputStream()
     private val rightBuffer = ByteArrayOutputStream()
@@ -614,6 +650,8 @@ class BleTelemetryRepository(
         micWatchdogJob = null
         lastAudioFrameTime.set(0L)
         _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
+        lastLensConnected.replaceAll { _, _ -> false }
+        lastCaseRefreshAt.replaceAll { _, _ -> 0L }
         serviceScope?.let { scope ->
             if (boundService != null) {
                 startMicWatchdog(scope)
@@ -677,6 +715,8 @@ class BleTelemetryRepository(
                 mergeReconnectDiagnostics(Lens.RIGHT, state.right)
                 mergeServiceCounters(state)
                 updateConnectionSequence(state.connectionOrder)
+                handleLensConnectionTransition(Lens.LEFT, state.left.isConnected)
+                handleLensConnectionTransition(Lens.RIGHT, state.right.isConnected)
             }
         }
         ackJob = scope.launch {
@@ -822,6 +862,7 @@ class BleTelemetryRepository(
                 _wearingStatus.update(event.lens, event.flags.wearing, event.timestampMs)
                 _inCaseStatus.update(event.lens, event.flags.inCradle, event.timestampMs)
                 updateCaseStatus(
+                    lens = event.lens,
                     timestamp = event.timestampMs,
                     lidOpen = event.flags.caseOpen,
                     silentMode = event.flags.silentMode,
@@ -831,7 +872,10 @@ class BleTelemetryRepository(
                     eventTimestamp = event.timestampMs,
                     logUpdate = false,
                 ) { snapshot ->
-                    snapshot.copy(caseOpen = event.flags.caseOpen)
+                    snapshot.copy(
+                        caseOpen = event.flags.caseOpen,
+                        caseSilentMode = event.flags.silentMode,
+                    )
                 }
             }
             is BleTelemetryParser.TelemetryEvent.BatteryEvent -> {
@@ -852,6 +896,7 @@ class BleTelemetryRepository(
                 }
                 event.caseBatteryPercent?.let { percent ->
                     updateCaseStatus(
+                        lens = event.lens,
                         timestamp = event.timestampMs,
                         batteryPercent = percent,
                     )
@@ -906,6 +951,7 @@ class BleTelemetryRepository(
             }
             is BleTelemetryParser.TelemetryEvent.CaseUpdate -> {
                 updateCaseStatus(
+                    lens = event.lens,
                     timestamp = event.timestampMs,
                     batteryPercent = event.caseBatteryPercent,
                     charging = event.charging,
@@ -1247,6 +1293,7 @@ class BleTelemetryRepository(
 
         if (event.caseOpen != null || event.caseBatteryPercent != null || (eventCode == 0x0E && event.charging != null)) {
             updateCaseStatus(
+                lens = lens,
                 timestamp = timestamp,
                 lidOpen = event.caseOpen,
                 batteryPercent = event.caseBatteryPercent,
@@ -1300,6 +1347,7 @@ class BleTelemetryRepository(
     }
 
     private fun updateCaseStatus(
+        lens: Lens?,
         timestamp: Long,
         batteryPercent: Int? = null,
         charging: Boolean? = null,
@@ -1310,6 +1358,8 @@ class BleTelemetryRepository(
         var changed = false
         var batteryChanged = false
         var lidChanged = false
+        var chargingChanged = false
+        var silentChanged = false
         var nextBattery = current.batteryPercent
         var nextCharging = current.charging
         var nextLid = current.lidOpen
@@ -1326,6 +1376,7 @@ class BleTelemetryRepository(
             if (value != nextCharging) {
                 nextCharging = value
                 changed = true
+                chargingChanged = true
             }
         }
         lidOpen?.let { value ->
@@ -1339,6 +1390,7 @@ class BleTelemetryRepository(
             if (value != nextSilent) {
                 nextSilent = value
                 changed = true
+                silentChanged = true
             }
         }
         if (!changed) {
@@ -1352,11 +1404,19 @@ class BleTelemetryRepository(
             updatedAt = timestamp,
         )
         _caseStatus.value = updated
-        emitCaseConsole(updated, timestamp)
-        propagateCaseTelemetry(updated, timestamp, batteryChanged, lidChanged)
+        emitCaseConsole(lens, updated, timestamp)
+        if (lidChanged) {
+            boundService?.updateHeartbeatLidOpen(updated.lidOpen)
+        }
+        lens?.let { sourceLens ->
+            if (chargingChanged) {
+                boundService?.updateHeartbeatInCase(sourceLens, _inCaseStatus.value.valueFor(sourceLens))
+            }
+        }
+        propagateCaseTelemetry(updated, timestamp, batteryChanged, lidChanged, chargingChanged, silentChanged)
     }
 
-    private fun emitCaseConsole(status: CaseStatus, timestamp: Long) {
+    private fun emitCaseConsole(lens: Lens?, status: CaseStatus, timestamp: Long) {
         val parts = buildList {
             status.batteryPercent?.let { add("battery=${it}%") }
             status.charging?.let { add("charging=${it}") }
@@ -1366,7 +1426,7 @@ class BleTelemetryRepository(
         if (parts.isEmpty()) {
             return
         }
-        emitConsole("CASE", null, parts.joinToString(separator = " "), timestamp)
+        emitConsole("CASE", lens, parts.joinToString(separator = " "), timestamp)
     }
 
     private fun propagateCaseTelemetry(
@@ -1374,8 +1434,10 @@ class BleTelemetryRepository(
         timestamp: Long,
         batteryChanged: Boolean,
         lidChanged: Boolean,
+        chargingChanged: Boolean,
+        silentChanged: Boolean,
     ) {
-        if (!batteryChanged && !lidChanged) {
+        if (!batteryChanged && !lidChanged && !chargingChanged && !silentChanged) {
             return
         }
         MoncchichiBleService.Lens.values().forEach { lens ->
@@ -1392,10 +1454,16 @@ class BleTelemetryRepository(
                 if (lidChanged) {
                     updated = updated.copy(caseOpen = status.lidOpen)
                 }
+                if (chargingChanged) {
+                    updated = updated.copy(caseCharging = status.charging)
+                }
+                if (silentChanged) {
+                    updated = updated.copy(caseSilentMode = status.silentMode)
+                }
                 updated
             }
         }
-        if (batteryChanged || lidChanged) {
+        if (batteryChanged || lidChanged || silentChanged) {
             updateSnapshot(eventTimestamp = timestamp) { current ->
                 var left = current.left
                 var right = current.right
@@ -1416,6 +1484,14 @@ class BleTelemetryRepository(
                     right = right.copy(caseOpen = status.lidOpen, lastUpdatedAt = timestamp)
                     snapshotChanged = true
                 }
+                if (silentChanged && status.silentMode != null && left.silentMode != status.silentMode) {
+                    left = left.copy(silentMode = status.silentMode, lastUpdatedAt = timestamp)
+                    snapshotChanged = true
+                }
+                if (silentChanged && status.silentMode != null && right.silentMode != status.silentMode) {
+                    right = right.copy(silentMode = status.silentMode, lastUpdatedAt = timestamp)
+                    snapshotChanged = true
+                }
                 if (!snapshotChanged) {
                     current
                 } else {
@@ -1425,9 +1501,28 @@ class BleTelemetryRepository(
         }
     }
 
+    private fun handleLensConnectionTransition(lens: Lens, connected: Boolean) {
+        val previous = lastLensConnected[lens] ?: false
+        if (previous == connected) {
+            return
+        }
+        lastLensConnected[lens] = connected
+        if (connected) {
+            requestCaseRefresh(lens)
+        } else {
+            lastCaseRefreshAt[lens] = 0L
+        }
+    }
+
     private fun requestCaseRefresh(lens: Lens) {
         val service = boundService ?: return
         val scope = serviceScope ?: return
+        val now = System.currentTimeMillis()
+        val last = lastCaseRefreshAt[lens] ?: 0L
+        if (now - last < CASE_REFRESH_MIN_INTERVAL_MS) {
+            return
+        }
+        lastCaseRefreshAt[lens] = now
         scope.launch {
             val target = when (lens) {
                 Lens.LEFT -> MoncchichiBleService.Target.Left
@@ -1436,6 +1531,7 @@ class BleTelemetryRepository(
             val statusPayload = byteArrayOf(G1Protocols.OPC_DEVICE_STATUS.toByte())
             service.send(statusPayload, target)
             service.send(G1Packets.batteryQuery(), target)
+            emitConsole("CASE", lens, "query 0x2B/0x2C", System.currentTimeMillis())
         }
     }
 
@@ -2247,5 +2343,6 @@ class BleTelemetryRepository(
         private const val SOURCE_DISAGREE_WINDOW_MS = 3_000L
         private const val POWER_HISTORY_SIZE = 10
         private const val BATTERY_STICKY_WINDOW_MS = 10_000L
+        private const val CASE_REFRESH_MIN_INTERVAL_MS = 3_000L
     }
 }
