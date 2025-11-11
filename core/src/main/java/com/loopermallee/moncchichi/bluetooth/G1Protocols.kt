@@ -17,7 +17,8 @@ object G1Protocols {
     const val OPC_UPTIME = 0x37
     const val OPC_ENV_RANGE_START = 0x32
     const val OPC_ENV_RANGE_END = 0x36
-    const val OPC_GESTURE = 0xF5
+    const val OPC_EVENT = 0xF5
+    const val OPC_GESTURE = OPC_EVENT
     const val OPC_SYSTEM_STATUS = 0x39
     const val OPC_DEBUG_REBOOT = 0x23
     const val SUBCMD_DEBUG = 0x72
@@ -58,7 +59,7 @@ object G1Protocols {
         OPC_DEVICE_STATUS -> "OPC_DEVICE_STATUS"
         OPC_BATTERY -> "OPC_BATTERY"
         OPC_UPTIME -> "OPC_UPTIME"
-        OPC_GESTURE -> "OPC_GESTURE"
+        OPC_EVENT -> "OPC_EVENT"
         OPC_SYSTEM_STATUS -> "OPC_SYSTEM_STATUS"
         else -> "0x%02X".format(opcode and 0xFF)
     }
@@ -80,7 +81,24 @@ object G1Protocols {
         return (normalized in OPC_DEVICE_STATUS..telemetryHeadEnd) ||
             (normalized in OPC_ENV_RANGE_START..OPC_ENV_RANGE_END) ||
             (normalized in telemetryTailStart..OPC_SYSTEM_STATUS) ||
-            normalized == OPC_GESTURE ||
+            normalized == OPC_EVENT ||
             normalized == CMD_KEEPALIVE
+    }
+
+    enum class F5EventType {
+        GESTURE,
+        SYSTEM,
+        CASE,
+        UNKNOWN,
+    }
+
+    fun f5EventType(subcommand: Int?): F5EventType {
+        val normalized = subcommand ?: return F5EventType.UNKNOWN
+        return when (normalized) {
+            in 0x00..0x05 -> F5EventType.GESTURE
+            0x08, 0x09, 0x0E, 0x0F -> F5EventType.CASE
+            in 0x06..0x0B -> F5EventType.SYSTEM
+            else -> F5EventType.UNKNOWN
+        }
     }
 }

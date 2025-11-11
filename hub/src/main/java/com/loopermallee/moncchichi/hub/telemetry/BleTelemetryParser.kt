@@ -7,7 +7,9 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_BATTERY
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_DEVICE_STATUS
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ENV_RANGE_END
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ENV_RANGE_START
-import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_GESTURE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.F5EventType
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_EVENT
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.f5EventType
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_SYSTEM_STATUS
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_UPTIME
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
@@ -129,6 +131,7 @@ class BleTelemetryParser(
             override val timestampMs: Long,
             val opcode: Int,
             val subcommand: Int?,
+            val type: F5EventType,
             val vitals: G1ReplyParser.DeviceVitals?,
             val evenAiEvent: G1ReplyParser.EvenAiEvent?,
             override val rawFrame: ByteArray,
@@ -168,7 +171,7 @@ class BleTelemetryParser(
             opcode in OPC_ENV_RANGE_START..OPC_ENV_RANGE_END -> parseEnvironmentSnapshot(lens, frame, timestampMs)
             opcode == OPC_UPTIME -> parseUptime(lens, frame, timestampMs)
             opcode == OPC_SYSTEM_STATUS -> parseAck(lens, frame, timestampMs)
-            opcode == OPC_GESTURE -> parseF5(lens, frame, timestampMs)
+            opcode == OPC_EVENT -> parseF5(lens, frame, timestampMs)
             opcode == CMD_KEEPALIVE -> parseAudio(lens, frame, timestampMs)
             else -> emptyList()
         }
@@ -337,23 +340,23 @@ class BleTelemetryParser(
         } else {
             null
         }
-        val isGestureEvent = subcommand != null && subcommand in gestureEventCodes
-        if (parsed == null && (!isGestureEvent || gesture == null) && subcommand !in systemEventCodes && subcommand !in specialSystemCodes) {
+        val classification = f5EventType(subcommand)
+        val isGestureEvent = classification == F5EventType.GESTURE && gesture != null
+        if (parsed == null && !isGestureEvent && classification == F5EventType.UNKNOWN) {
             return emptyList()
         }
         val events = mutableListOf<TelemetryEvent>()
-        parsed?.let { payload ->
-            if (payload.vitals != null || payload.evenAiEvent != null) {
-                events += TelemetryEvent.F5Event(
-                    lens = lens,
-                    timestampMs = timestampMs,
-                    opcode = frame.opcode,
-                    subcommand = payload.subcommand,
-                    vitals = payload.vitals,
-                    evenAiEvent = payload.evenAiEvent,
-                    rawFrame = frame.raw.copyOf(),
-                )
-            }
+        if (subcommand != null || parsed?.vitals != null || parsed?.evenAiEvent != null) {
+            events += TelemetryEvent.F5Event(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                subcommand = subcommand,
+                type = classification,
+                vitals = parsed?.vitals,
+                evenAiEvent = parsed?.evenAiEvent,
+                rawFrame = frame.raw.copyOf(),
+            )
         }
         if (isGestureEvent && gesture != null) {
             events += TelemetryEvent.GestureEvent(
@@ -371,23 +374,17 @@ class BleTelemetryParser(
                 frame = frame,
                 code = code,
             )
-            var suppressSystemEvent = false
             if (caseEvent != null) {
                 events += caseEvent
-                if (code in caseOnlySystemCodes) {
-                    suppressSystemEvent = true
-                }
             }
-            if (!suppressSystemEvent) {
-                val systemEvent = buildSystemEvent(
-                    lens = lens,
-                    timestampMs = timestampMs,
-                    frame = frame,
-                    code = code,
-                )
-                if (systemEvent != null) {
-                    events += systemEvent
-                }
+            val systemEvent = buildSystemEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                frame = frame,
+                code = code,
+            )
+            if (systemEvent != null) {
+                events += systemEvent
             }
         }
         return events
@@ -479,24 +476,9 @@ class BleTelemetryParser(
             else -> null
         }
     }
-    private val gestureEventCodes = setOf(
-        0x00,
-        0x01,
-        0x02,
-        0x03,
-        0x04,
-        0x05,
-        0x12,
-        0x17,
-        0x18,
-        0x1E,
-        0x1F,
-    )
-
     private val systemEventCodes = 0x06..0x0B
     private val specialSystemCodes = setOf(0x0E, 0x0F)
     private val caseEventCodes = setOf(0x08, 0x09, 0x0E, 0x0F)
-    private val caseOnlySystemCodes = setOf(0x08, 0x09, 0x0E, 0x0F)
 
     private fun G1ReplyParser.NotifyFrame.toEnvironmentSnapshot(): EnvironmentSnapshot? {
         val payloadCopy = payload.copyOf()

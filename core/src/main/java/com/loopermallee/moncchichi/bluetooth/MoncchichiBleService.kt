@@ -6,6 +6,7 @@ import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.BondAwaitResult
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_PING
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_EVENT
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.isAckComplete
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.isAckContinuation
@@ -585,7 +586,7 @@ class MoncchichiBleService(
         retries: Int = G1Protocols.MAX_RETRIES,
         retryDelayMs: Long = G1Protocols.RETRY_BACKOFF_MS,
     ): Boolean {
-        val payload = byteArrayOf(0xF5.toByte(), 0x24)
+        val payload = byteArrayOf(OPC_EVENT.toByte(), 0x24)
         return send(payload, lens.toTarget(), ackTimeoutMs, retries, retryDelayMs)
     }
 
@@ -1470,17 +1471,18 @@ private class HeartbeatSupervisor(
             return
         }
         lastAckSignature[lens] = AckSignature(event.opcode, event.status, event.timestampMs)
+        val opcodeLabel = event.opcode.toOpcodeLabel()
         if (event.success) {
             markAckSuccess(lens, event.timestampMs, event.type)
-            emitConsole("ACK", lens, "opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}", event.timestampMs)
+            emitConsole("ACK", lens, "opcode=${opcodeLabel} status=${event.status.toHex()}", event.timestampMs)
         } else if (event.busy) {
             emitConsole(
                 "ACK",
                 lens,
-                "[BUSY] opcode=${event.opcode.toOpcodeLabel()} retrying",
+                "[BUSY] opcode=${opcodeLabel} retrying",
                 event.timestampMs,
             )
-            log("[ACK][${lens.shortLabel}][BUSY] opcode=${event.opcode.toOpcodeLabel()} retrying")
+            log("[ACK][${lens.shortLabel}][BUSY] opcode=${opcodeLabel} retrying")
         } else {
             failPendingCommand(lens)
             val suppressed = shouldSuppressAckFailure(lens, event)
@@ -1489,17 +1491,17 @@ private class HeartbeatSupervisor(
                 emitConsole(
                     "ACK",
                     lens,
-                    "fail opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}",
+                    "fail opcode=${opcodeLabel} status=${event.status.toHex()}",
                     event.timestampMs,
                 )
                 logWarn(
-                    "[ACK][${lens.shortLabel}] failure opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}"
+                    "[ACK][${lens.shortLabel}] failure opcode=${opcodeLabel} status=${event.status.toHex()}"
                 )
             } else {
                 emitConsole(
                     "ACK",
                     lens,
-                    "fail suppressed opcode=${event.opcode.toOpcodeLabel()} status=${event.status.toHex()}",
+                    "fail suppressed opcode=${opcodeLabel} status=${event.status.toHex()}",
                     event.timestampMs,
                 )
             }
