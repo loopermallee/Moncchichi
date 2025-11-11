@@ -22,6 +22,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import java.util.EnumMap
 import kotlin.text.Charsets
 
 class BleTelemetryParser(
@@ -33,6 +34,17 @@ class BleTelemetryParser(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val events: SharedFlow<TelemetryEvent> = _events.asSharedFlow()
+
+    private data class GestureSample(
+        val code: Int,
+        val timestampMs: Long,
+    )
+
+    private val lastGestureByLens = EnumMap<MoncchichiBleService.Lens, GestureSample>(
+        MoncchichiBleService.Lens::class.java,
+    )
+
+    private val gestureDedupeWindowMs = 120L
 
     data class Result(
         val handlerFound: Boolean,
@@ -333,19 +345,18 @@ class BleTelemetryParser(
         frame: G1ReplyParser.NotifyFrame,
         timestampMs: Long,
     ): List<TelemetryEvent> {
+        val rawFrameCopy = frame.raw.copyOf()
+        val gestureEvents = parseGestureFrames(lens, rawFrameCopy, timestampMs)
         val parsed = G1ReplyParser.parseF5Payload(frame)
-        val subcommand = parsed?.subcommand ?: frame.payload.firstOrNull()?.toUnsignedInt()
-        val gesture = if (frame.payload.isNotEmpty()) {
-            runCatching { G1ReplyParser.parseGesture(frame.payload) }.getOrNull()
-        } else {
-            null
-        }
+        val subcommand = parsed?.subcommand
+            ?: frame.status?.toUnsignedInt()
+            ?: frame.payload.firstOrNull()?.toUnsignedInt()
         val classification = f5EventType(subcommand)
-        val isGestureEvent = classification == F5EventType.GESTURE && gesture != null
-        if (parsed == null && !isGestureEvent && classification == F5EventType.UNKNOWN) {
-            return emptyList()
-        }
         val events = mutableListOf<TelemetryEvent>()
+        events += gestureEvents
+        if (parsed == null && classification == F5EventType.UNKNOWN && subcommand == null) {
+            return events
+        }
         if (subcommand != null || parsed?.vitals != null || parsed?.evenAiEvent != null) {
             events += TelemetryEvent.F5Event(
                 lens = lens,
@@ -355,16 +366,7 @@ class BleTelemetryParser(
                 type = classification,
                 vitals = parsed?.vitals,
                 evenAiEvent = parsed?.evenAiEvent,
-                rawFrame = frame.raw.copyOf(),
-            )
-        }
-        if (isGestureEvent && gesture != null) {
-            events += TelemetryEvent.GestureEvent(
-                lens = lens,
-                timestampMs = timestampMs,
-                opcode = frame.opcode,
-                gesture = gesture,
-                rawFrame = frame.raw.copyOf(),
+                rawFrame = rawFrameCopy,
             )
         }
         subcommand?.let { code ->
@@ -388,6 +390,51 @@ class BleTelemetryParser(
             }
         }
         return events
+    }
+
+    private fun parseGestureFrames(
+        lens: MoncchichiBleService.Lens,
+        rawFrame: ByteArray,
+        timestampMs: Long,
+    ): List<TelemetryEvent.GestureEvent> {
+        val events = mutableListOf<TelemetryEvent.GestureEvent>()
+        var index = 0
+        while (index < rawFrame.size) {
+            val opcode = rawFrame[index].toUnsignedInt()
+            if (opcode != OPC_EVENT) {
+                index++
+                continue
+            }
+            val codeByte = rawFrame.getOrNull(index + 1) ?: break
+            val code = codeByte.toUnsignedInt()
+            if (f5EventType(code) == F5EventType.GESTURE && shouldEmitGesture(lens, code, timestampMs)) {
+                events += TelemetryEvent.GestureEvent(
+                    lens = lens,
+                    timestampMs = timestampMs,
+                    opcode = OPC_EVENT,
+                    gesture = G1ReplyParser.GestureEvent.fromCode(code),
+                    rawFrame = rawFrame.copyOf(),
+                )
+            }
+            index += 2
+        }
+        return events
+    }
+
+    private fun shouldEmitGesture(
+        lens: MoncchichiBleService.Lens,
+        code: Int,
+        timestampMs: Long,
+    ): Boolean {
+        val last = lastGestureByLens[lens]
+        if (last != null) {
+            val withinWindow = timestampMs - last.timestampMs <= gestureDedupeWindowMs
+            if (withinWindow && last.code == code) {
+                return false
+            }
+        }
+        lastGestureByLens[lens] = GestureSample(code, timestampMs)
+        return true
     }
 
     private fun buildSystemEvent(

@@ -65,9 +65,8 @@ class BleTelemetryRepository(
     private val memory: MemoryRepository,
     private val persistenceScope: CoroutineScope,
     private val logger: (String) -> Unit = {},
+    private val telemetryParser: BleTelemetryParser = BleTelemetryParser(),
 ) {
-
-    private val telemetryParser = BleTelemetryParser()
     private val missingOpcodeLog = mutableSetOf<Int>()
 
     data class LensTelemetry(
@@ -1041,7 +1040,7 @@ class BleTelemetryRepository(
         if (frame.isEmpty()) return
         val opcode = frame.first().toInt() and 0xFF
         val timestamp = System.currentTimeMillis()
-        val parseResult = telemetryParser.parse(lens, frame, timestamp)
+        val parseResult = telemetryParser.parse(lens, frame)
         if (parseResult.eventsEmitted) {
             return
         }
@@ -1498,9 +1497,11 @@ class BleTelemetryRepository(
         event.vitals?.let { vitals ->
             handleParsedVitals(lens, vitals, event.rawFrame)
         }
-        event.evenAiEvent?.let { evenAi ->
-            val message = describeEvenAi(evenAi)
-            emitConsole("GESTURE", lens, message, event.timestampMs)
+        if (event.type != F5EventType.GESTURE) {
+            event.evenAiEvent?.let { evenAi ->
+                val message = describeEvenAi(evenAi)
+                emitConsole("GESTURE", lens, message, event.timestampMs)
+            }
         }
         if (event.type == F5EventType.UNKNOWN) {
             validationController.onUnknownF5(lens, event)
@@ -1795,8 +1796,9 @@ class BleTelemetryRepository(
         return when (gesture.code) {
             0x01 -> "single"
             0x02 -> "double"
+            0x03 -> "triple"
             0x04 -> "hold"
-            else -> gesture.name.lowercase(Locale.US).replace('_', ' ')
+            else -> "unknown 0x%02X".format(Locale.US, gesture.code and 0xFF)
         }
     }
 

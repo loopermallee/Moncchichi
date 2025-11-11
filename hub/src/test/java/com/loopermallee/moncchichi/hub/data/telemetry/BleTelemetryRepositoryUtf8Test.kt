@@ -7,15 +7,18 @@ import com.loopermallee.moncchichi.hub.data.db.ConsoleLine
 import com.loopermallee.moncchichi.hub.data.db.MemoryDao
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.db.TelemetrySnapshot
+import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertNull
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 
 class BleTelemetryRepositoryUtf8Test {
 
@@ -212,6 +215,155 @@ class BleTelemetryRepositoryUtf8Test {
 
         assertTrue(logs.any { it.contains("[GESTURE][L] single") })
         assertTrue(logs.any { it.contains("[GESTURE][R] double") })
+    }
+
+    @Test
+    fun `gesture single frame emits one event`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+
+        val gesture = async(UnconfinedTestDispatcher(testScheduler)) { repository.gesture.first() }
+        val console = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.events.first { it.contains("[GESTURE]") }
+        }
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x01))
+
+        val event = gesture.await()
+        assertEquals(Lens.LEFT, event.lens)
+        assertEquals(0x01, event.gesture.code)
+
+        val consoleLine = console.await()
+        assertTrue(consoleLine.contains("[GESTURE][L] single"))
+    }
+
+    @Test
+    fun `gesture trailing bytes ignored`() = runTest {
+        val logs = mutableListOf<String>()
+        val repository = BleTelemetryRepository(
+            MemoryRepository(FakeMemoryDao()),
+            backgroundScope,
+        ) { message -> logs += message }
+
+        val gestures = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.gesture.take(1).toList(mutableListOf())
+        }
+        val console = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.events.first { it.contains("[GESTURE]") }
+        }
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x01, 0x11, 0x01))
+
+        val emittedGestures = gestures.await()
+        assertEquals(1, emittedGestures.size)
+        assertEquals(0x01, emittedGestures[0].gesture.code)
+
+        val consoleLine = console.await()
+        assertTrue(consoleLine.contains("[GESTURE][L] single"))
+        assertTrue(logs.none { it.contains("unknown", ignoreCase = true) })
+    }
+
+    @Test
+    fun `multiple gesture frames parsed from one buffer`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+
+        val gestures = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.gesture.take(2).toList(mutableListOf())
+        }
+        val console = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.events.take(2).toList(mutableListOf())
+        }
+
+        repository.onFrame(Lens.RIGHT, byteArrayOf(0xF5.toByte(), 0x02, 0xF5.toByte(), 0x03))
+
+        val emitted = gestures.await()
+        assertEquals(listOf(0x02, 0x03), emitted.map { it.gesture.code })
+
+        val consoleLines = console.await()
+        assertEquals(2, consoleLines.size)
+        assertTrue(consoleLines[0].contains("double"))
+        assertTrue(consoleLines[1].contains("triple"))
+    }
+
+    @Test
+    fun `duplicate gesture within window dropped`() = runTest {
+        var now = 0L
+        val parser = BleTelemetryParser { now }
+        val logs = mutableListOf<String>()
+        val repository = BleTelemetryRepository(
+            MemoryRepository(FakeMemoryDao()),
+            backgroundScope,
+            { message -> logs += message },
+            parser,
+        )
+
+        now = 0L
+        val firstGesture = async(UnconfinedTestDispatcher(testScheduler)) { repository.gesture.first() }
+        val firstConsole = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.events.first { it.contains("[GESTURE]") }
+        }
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x01))
+        val initialGesture = firstGesture.await()
+        assertEquals(0x01, initialGesture.gesture.code)
+        firstConsole.await()
+        assertEquals(1, logs.count { it.contains("[GESTURE]") })
+
+        now = 100L
+        val duplicateGesture = async(UnconfinedTestDispatcher(testScheduler)) {
+            withTimeoutOrNull(50) { repository.gesture.first() }
+        }
+        val duplicateConsole = async(UnconfinedTestDispatcher(testScheduler)) {
+            withTimeoutOrNull(50) { repository.events.first { it.contains("[GESTURE]") } }
+        }
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x01))
+        testScheduler.advanceTimeBy(50)
+        assertNull(duplicateGesture.await())
+        assertNull(duplicateConsole.await())
+        assertEquals(1, logs.count { it.contains("[GESTURE]") })
+    }
+
+    @Test
+    fun `duplicate gesture after window emitted`() = runTest {
+        var now = 0L
+        val parser = BleTelemetryParser { now }
+        val repository = BleTelemetryRepository(
+            MemoryRepository(FakeMemoryDao()),
+            backgroundScope,
+            telemetryParser = parser,
+        )
+
+        now = 0L
+        val firstGesture = async(UnconfinedTestDispatcher(testScheduler)) { repository.gesture.first() }
+        repository.onFrame(Lens.RIGHT, byteArrayOf(0xF5.toByte(), 0x01))
+        firstGesture.await()
+
+        now = 350L
+        val secondGesture = async(UnconfinedTestDispatcher(testScheduler)) { repository.gesture.first() }
+        val secondConsole = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.events.first { it.contains("[GESTURE]") }
+        }
+        repository.onFrame(Lens.RIGHT, byteArrayOf(0xF5.toByte(), 0x01))
+
+        val event = secondGesture.await()
+        assertEquals(0x01, event.gesture.code)
+        val consoleLine = secondConsole.await()
+        assertTrue(consoleLine.contains("[GESTURE][R] single"))
+    }
+
+    @Test
+    fun `unknown gesture emits diagnostic`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+
+        val gesture = async(UnconfinedTestDispatcher(testScheduler)) { repository.gesture.first() }
+        val console = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.events.first { it.contains("[GESTURE]") }
+        }
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0xFF.toByte()))
+
+        val event = gesture.await()
+        assertEquals(0xFF, event.gesture.code)
+        val consoleLine = console.await()
+        assertTrue(consoleLine.contains("unknown", ignoreCase = true))
     }
 }
 
