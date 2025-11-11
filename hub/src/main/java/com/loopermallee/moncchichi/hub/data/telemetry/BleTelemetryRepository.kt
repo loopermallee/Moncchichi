@@ -202,6 +202,22 @@ class BleTelemetryRepository(
     )
     val micPackets: SharedFlow<BleTelemetryParser.TelemetryEvent.AudioPacketEvent> = _micPackets.asSharedFlow()
 
+    private data class BatteryLogState(
+        var voltageMv: Int? = null,
+        var batteryPercent: Int? = null,
+        var isCharging: Boolean? = null,
+        var lastEmitAt: Long = 0L,
+    )
+
+    private data class AckLogState(
+        var lastOpcode: Int? = null,
+        var lastOutcome: AckOutcome = AckOutcome.OK,
+        var lastStatus: Int? = null,
+        var lastLoggedAt: Long = 0L,
+    )
+
+    private enum class AckOutcome { OK, BUSY, FAIL }
+
     private val _micAvailability = MutableStateFlow(false)
     val micAvailability: StateFlow<Boolean> = _micAvailability.asStateFlow()
     val micAlive: StateFlow<Boolean> = _micAvailability.asStateFlow()
@@ -749,6 +765,189 @@ class BleTelemetryRepository(
         _events.tryEmit(payload)
     }
 
+    private fun recordBatteryVitals(
+        lens: Lens,
+        timestamp: Long,
+        voltageMv: Int?,
+        batteryPercent: Int?,
+        isCharging: Boolean?,
+    ) {
+        val state = batteryLogState.getValue(lens)
+        var changed = false
+        voltageMv?.let { value ->
+            if (state.voltageMv != value) {
+                state.voltageMv = value
+                changed = true
+            }
+        }
+        batteryPercent?.let { percent ->
+            if (state.batteryPercent != percent) {
+                state.batteryPercent = percent
+                changed = true
+            }
+        }
+        isCharging?.let { charging ->
+            if (state.isCharging != charging) {
+                state.isCharging = charging
+                changed = true
+            }
+        }
+        maybeEmitBatteryVitals(lens, timestamp, changed)
+    }
+
+    private fun touchBatteryVitals(lens: Lens, timestamp: Long) {
+        maybeEmitBatteryVitals(lens, timestamp, changed = false)
+    }
+
+    private fun maybeEmitBatteryVitals(lens: Lens, timestamp: Long, changed: Boolean) {
+        val state = batteryLogState.getValue(lens)
+        val voltage = state.voltageMv
+        val charging = state.isCharging
+        if (voltage == null || charging == null) {
+            return
+        }
+        if (!changed && timestamp - state.lastEmitAt < BATTERY_LOG_INTERVAL_MS) {
+            return
+        }
+        val message = buildString {
+            append(voltage)
+            append(" mV")
+            state.batteryPercent?.let { percent ->
+                append(' ')
+                append(percent)
+                append('%')
+            }
+            append(' ')
+            append("charging=")
+            append(charging)
+        }
+        emitConsole("VITALS", lens, message, timestamp)
+        state.lastEmitAt = timestamp
+    }
+
+    private fun processAckSignal(
+        lens: Lens,
+        opcode: Int?,
+        status: Int?,
+        success: Boolean?,
+        busy: Boolean,
+        timestamp: Long,
+        ackType: MoncchichiBleService.AckType,
+        warmup: Boolean = false,
+        logConsole: Boolean = true,
+    ) {
+        val normalizedStatus = status?.and(0xFF)
+        val outcome = when {
+            busy || normalizedStatus == STATUS_BUSY -> AckOutcome.BUSY
+            success == true || isAckSuccessCode(normalizedStatus) -> AckOutcome.OK
+            success == false -> AckOutcome.FAIL
+            else -> return
+        }
+        if (logConsole && shouldLogAck(lens, opcode, outcome, normalizedStatus, timestamp)) {
+            val opcodeLabel = opcode?.toHexLabel() ?: "n/a"
+            val statusLabel = normalizedStatus?.toHexLabel()
+            val message = when (outcome) {
+                AckOutcome.OK -> "[OK] opcode=$opcodeLabel"
+                AckOutcome.BUSY -> "[BUSY] opcode=$opcodeLabel retrying"
+                AckOutcome.FAIL -> buildString {
+                    append("[FAIL] opcode=$opcodeLabel")
+                    statusLabel?.let {
+                        append(" status=")
+                        append(it)
+                    }
+                }
+            }
+            emitConsole("ACK", lens, message, timestamp)
+            ackLogState.getValue(lens).apply {
+                lastOpcode = opcode
+                lastOutcome = outcome
+                lastStatus = normalizedStatus
+                lastLoggedAt = timestamp
+            }
+            if (outcome == AckOutcome.FAIL) {
+                val statusLabel = normalizedStatus?.toHexLabel() ?: "n/a"
+                _uartText.tryEmit(UartLine(lens, "ACK FAIL opcode=$opcodeLabel status=$statusLabel"))
+            }
+        }
+
+        val statusText = when (outcome) {
+            AckOutcome.OK -> "OK"
+            AckOutcome.BUSY -> "BUSY"
+            AckOutcome.FAIL -> normalizedStatus?.toHexLabel() ?: "FAIL"
+        }
+
+        val telemetryState = lensTelemetrySnapshots.getValue(lens)
+        val previousSnapshot = telemetryState.value
+        val ackStateChanged = previousSnapshot.lastAckStatus != statusText || previousSnapshot.lastAckMode != ackType
+
+        updateDeviceTelemetry(
+            lens = lens,
+            eventTimestamp = timestamp,
+            logUpdate = ackStateChanged,
+            persist = false,
+        ) { snapshot ->
+            snapshot.copy(
+                lastAckStatus = statusText,
+                lastAckTimestamp = timestamp,
+                lastAckMode = ackType,
+            )
+        }
+
+        updateSnapshot(eventTimestamp = timestamp, persist = false) { current ->
+            val existing = current.lens(lens)
+            val latency = existing.lastAckAt?.let { previous -> (timestamp - previous).takeIf { it >= 0 } }
+            val failureCount = when (outcome) {
+                AckOutcome.OK -> if (opcode != null) 0 else existing.ackFailureCount
+                AckOutcome.BUSY -> existing.ackFailureCount
+                AckOutcome.FAIL -> existing.ackFailureCount + 1
+            }
+            val dropCount = when (outcome) {
+                AckOutcome.FAIL -> existing.ackDropCount + 1
+                else -> existing.ackDropCount
+            }
+            val warmupCount = existing.ackWarmupCount + if (warmup && outcome == AckOutcome.OK) 1 else 0
+            val successCount = existing.ackSuccessCount + if (outcome == AckOutcome.OK) 1 else 0
+            val updated = existing.copy(
+                lastAckAt = timestamp,
+                lastAckOpcode = opcode,
+                lastAckLatencyMs = latency,
+                ackSuccessCount = successCount,
+                ackFailureCount = failureCount,
+                ackWarmupCount = warmupCount,
+                ackDropCount = dropCount,
+                ackMode = ackType,
+            )
+            current.updateLens(lens, updated)
+        }
+
+        if (outcome == AckOutcome.OK) {
+            touchBatteryVitals(lens, timestamp)
+        }
+    }
+
+    private fun shouldLogAck(
+        lens: Lens,
+        opcode: Int?,
+        outcome: AckOutcome,
+        status: Int?,
+        timestamp: Long,
+    ): Boolean {
+        val state = ackLogState.getValue(lens)
+        val duplicate = state.lastOpcode == opcode &&
+            state.lastOutcome == outcome &&
+            state.lastStatus == status &&
+            timestamp - state.lastLoggedAt < ACK_LOG_DEDUP_WINDOW_MS
+        return !duplicate
+    }
+
+    private fun isAckSuccessCode(status: Int?): Boolean {
+        val normalized = status ?: return false
+        return when (normalized and 0xFF) {
+            STATUS_OK, OPC_ACK_COMPLETE, OPC_ACK_CONTINUE -> true
+            else -> false
+        }
+    }
+
     private fun statePriority(reason: StateChangedEvent.Reason): Int = when (reason) {
         StateChangedEvent.Reason.IN_CASE -> 0
         StateChangedEvent.Reason.WEARING -> 1
@@ -817,6 +1016,12 @@ class BleTelemetryRepository(
     }
     private var serviceScope: CoroutineScope? = null
     private val lastAudioFrameTime = AtomicLong(0L)
+    private val batteryLogState = EnumMap<Lens, BatteryLogState>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, BatteryLogState()) }
+    }
+    private val ackLogState = EnumMap<Lens, AckLogState>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, AckLogState()) }
+    }
     private var micWatchdogJob: Job? = null
     private val lastCaseRefreshAt = EnumMap<Lens, Long>(Lens::class.java).apply {
         Lens.values().forEach { put(it, 0L) }
@@ -858,6 +1063,18 @@ class BleTelemetryRepository(
         micWatchdogJob?.cancel()
         micWatchdogJob = null
         lastAudioFrameTime.set(0L)
+        batteryLogState.values.forEach { state ->
+            state.voltageMv = null
+            state.batteryPercent = null
+            state.isCharging = null
+            state.lastEmitAt = 0L
+        }
+        ackLogState.values.forEach { state ->
+            state.lastOpcode = null
+            state.lastOutcome = AckOutcome.OK
+            state.lastStatus = null
+            state.lastLoggedAt = 0L
+        }
         _dashboardStatus.value = DashboardDataEncoder.BurstStatus()
         lastLensConnected.replaceAll { _, _ -> false }
         lastCaseRefreshAt.replaceAll { _, _ -> 0L }
@@ -1129,6 +1346,7 @@ class BleTelemetryRepository(
                         caseSilentMode = event.flags.silentMode,
                     )
                 }
+                touchBatteryVitals(event.lens, event.timestampMs)
             }
             is BleTelemetryParser.TelemetryEvent.BatteryEvent -> {
                 event.info?.let { info ->
@@ -1139,11 +1357,12 @@ class BleTelemetryRepository(
                             isCharging = info.isCharging,
                         )
                     }
-                    emitConsole(
-                        "VITALS",
+                    recordBatteryVitals(
                         event.lens,
-                        "${info.voltage} mV charging=${info.isCharging}",
                         event.timestampMs,
+                        info.voltage,
+                        event.batteryPercent,
+                        info.isCharging,
                     )
                 }
                 event.caseBatteryPercent?.let { percent ->
@@ -1236,53 +1455,17 @@ class BleTelemetryRepository(
     }
 
     private fun handleAckEvent(event: BleTelemetryParser.TelemetryEvent.AckEvent) {
-        val statusLabel = event.ackCode?.let { describeAckCode(it) } ?: "unknown"
-        val outcome = when {
-            event.busy -> "busy"
-            event.success == true -> "success"
-            event.success == false -> "error"
-            else -> "pending"
-        }
-        val payloadHex = event.payload.takeIf { it.isNotEmpty() }?.toHex()
-        val message = buildString {
-            append(statusLabel)
-            append(' ')
-            append(outcome)
-            event.sequence?.let { seq ->
-                append(" seq=")
-                append(seq)
-            }
-            payloadHex?.let { hex ->
-                append(" payload=")
-                append(hex)
-            }
-            append(" mode=binary")
-        }
-        emitConsole("ACK", event.lens, message.trim(), event.timestampMs)
-        val ackStatus = event.ackCode?.let { describeAckCode(it).uppercase(Locale.US) }
-            ?: when {
-                event.busy -> "BUSY"
-                event.success == true -> "SUCCESS"
-                event.success == false -> "FAIL"
-                else -> "PENDING"
-            }
-        updateDeviceTelemetry(event.lens, event.timestampMs) { snapshot ->
-            snapshot.copy(
-                lastAckStatus = ackStatus,
-                lastAckTimestamp = event.timestampMs,
-                lastAckMode = MoncchichiBleService.AckType.BINARY,
-            )
-        }
-    }
-
-    private fun describeAckCode(code: Int): String {
-        return when (code) {
-            STATUS_OK -> "ok"
-            STATUS_BUSY -> "busy"
-            OPC_ACK_CONTINUE -> "continue"
-            OPC_ACK_COMPLETE -> "complete"
-            else -> "0x%02X".format(Locale.US, code and 0xFF)
-        }
+        processAckSignal(
+            lens = event.lens,
+            opcode = event.opcode,
+            status = event.ackCode,
+            success = event.success,
+            busy = event.busy,
+            timestamp = event.timestampMs,
+            ackType = MoncchichiBleService.AckType.BINARY,
+            warmup = false,
+            logConsole = false,
+        )
     }
 
     private fun logParserFallback(opcode: Int, timestamp: Long) {
@@ -1407,15 +1590,17 @@ class BleTelemetryRepository(
             val next = if (updated == existing) current else current.updateLens(lens, updated)
             next.withFrame(lens, hex)
         }
-        val parts = mutableListOf<String>()
-        if (batteryChanged) {
-            lensBattery?.let { percent -> parts += "battery=${percent}%@${opcode.toHexLabel()}" }
-        }
+        recordBatteryVitals(
+            lens = lens,
+            timestamp = timestamp,
+            voltageMv = event.info?.voltage,
+            batteryPercent = lensBattery,
+            isCharging = event.info?.isCharging,
+        )
         if (caseChanged) {
-            caseBattery?.let { percent -> parts += "case=${percent}%" }
-        }
-        if (parts.isNotEmpty()) {
-            emitConsole("VITALS", lens, parts.joinToString(", "), timestamp)
+            caseBattery?.let { percent ->
+                emitConsole("CASE", lens, "battery=${percent}%", timestamp)
+            }
         }
     }
 
@@ -1436,6 +1621,7 @@ class BleTelemetryRepository(
         updateDeviceTelemetry(lens, timestamp) { snapshot ->
             snapshot.copy(uptimeSeconds = uptime)
         }
+        touchBatteryVitals(lens, timestamp)
     }
 
     private fun handleAudioPacket(event: BleTelemetryParser.TelemetryEvent.AudioPacketEvent) {
@@ -1548,6 +1734,7 @@ class BleTelemetryRepository(
                 emitConsole("CASE", lens, label, timestamp)
             } else {
                 emitConsole("CHG", lens, if (value) "on" else "off", timestamp)
+                recordBatteryVitals(lens, timestamp, null, null, value)
             }
         }
 
@@ -1929,24 +2116,18 @@ class BleTelemetryRepository(
             }
         }
 
-        val parts = mutableListOf<String>()
-        if (batteryChanged) {
-            trustedBattery?.let { percent ->
-                parts += "battery=${percent}%@${opcode.toHexLabel()}"
-            }
-        }
-        if (chargingChanged) {
-            charging?.let { value ->
-                parts += if (value) "charging@${opcode.toHexLabel()}" else "not charging@${opcode.toHexLabel()}"
-            }
-        }
+        recordBatteryVitals(
+            lens = lens,
+            timestamp = timestamp,
+            voltageMv = null,
+            batteryPercent = trustedBattery,
+            isCharging = charging,
+        )
+
         if (firmwareChanged) {
             firmwareBanner?.let { banner ->
-                parts += "fw=${banner} (${opcode.toHexLabel()})"
+                emitConsole("VITALS", lens, "fw=${banner} (${opcode.toHexLabel()})", timestamp)
             }
-        }
-        if (parts.isNotEmpty()) {
-            emitConsole("VITALS", lens, parts.joinToString(separator = ", " ), timestamp)
         }
 
         if (firmwareChanged) {
@@ -2045,44 +2226,17 @@ class BleTelemetryRepository(
 
     private fun onAck(event: MoncchichiBleService.AckEvent) {
         validationController.onAck(event)
-        val opcode = event.opcode?.let { String.format("0x%02X", it) } ?: "n/a"
-        val status = event.status?.let { String.format("0x%02X", it) } ?: "n/a"
-        val outcome = when {
-            event.busy -> "BUSY"
-            event.success -> "OK"
-            else -> "FAIL"
-        }
-        val qualifiers = buildList {
-            if (event.warmup) add("warmup")
-            if (event.busy) add("retrying")
-            if (!event.success && !event.busy) add("retrying")
-        }
-        val qualifierLabel = if (qualifiers.isEmpty()) "" else " (${qualifiers.joinToString(", ")})"
-        val modeLabel = event.type.name.lowercase(Locale.US)
-        val message = "ACK $outcome opcode=$opcode status=$status mode=$modeLabel$qualifierLabel"
-        emitConsole("DIAG", event.lens, message, event.timestampMs)
-        _uartText.tryEmit(UartLine(event.lens, message))
-        updateSnapshot(eventTimestamp = event.timestampMs, persist = false) { current ->
-            val existing = current.lens(event.lens)
-            val latency = existing.lastAckAt?.let { previous -> (event.timestampMs - previous).takeIf { it >= 0 } }
-            val failureCount = when {
-                event.success && event.opcode != null -> 0
-                event.success -> existing.ackFailureCount
-                event.busy -> existing.ackFailureCount
-                else -> existing.ackFailureCount + 1
-            }
-            val updated = existing.copy(
-                lastAckAt = event.timestampMs,
-                lastAckOpcode = event.opcode,
-                lastAckLatencyMs = latency,
-                ackSuccessCount = existing.ackSuccessCount + if (event.success) 1 else 0,
-                ackFailureCount = failureCount,
-                ackWarmupCount = existing.ackWarmupCount + if (event.warmup && event.success) 1 else 0,
-                ackDropCount = existing.ackDropCount + if (!event.success && !event.busy) 1 else 0,
-                ackMode = event.type,
-            )
-            current.updateLens(event.lens, updated)
-        }
+        processAckSignal(
+            lens = event.lens,
+            opcode = event.opcode,
+            status = event.status,
+            success = event.success,
+            busy = event.busy,
+            timestamp = event.timestampMs,
+            ackType = event.type,
+            warmup = event.warmup,
+            logConsole = true,
+        )
     }
 
     private fun decodeBinary(lens: Lens, frame: ByteArray): Boolean {
@@ -3127,6 +3281,8 @@ class BleTelemetryRepository(
         private const val POWER_HISTORY_SIZE = 10
         private const val BATTERY_STICKY_WINDOW_MS = 10_000L
         private const val CASE_REFRESH_MIN_INTERVAL_MS = 3_000L
+        private const val BATTERY_LOG_INTERVAL_MS = 30_000L
+        private const val ACK_LOG_DEDUP_WINDOW_MS = 3_000L
     }
 }
 
