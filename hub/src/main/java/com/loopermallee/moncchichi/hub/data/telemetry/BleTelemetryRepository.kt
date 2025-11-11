@@ -1004,6 +1004,7 @@ class BleTelemetryRepository(
                 append(" payload=")
                 append(hex)
             }
+            append(" mode=binary")
         }
         emitConsole("ACK", event.lens, message.trim(), event.timestampMs)
         val ackStatus = event.ackCode?.let { describeAckCode(it).uppercase(Locale.US) }
@@ -1769,13 +1770,19 @@ class BleTelemetryRepository(
     private fun onAck(event: MoncchichiBleService.AckEvent) {
         val opcode = event.opcode?.let { String.format("0x%02X", it) } ?: "n/a"
         val status = event.status?.let { String.format("0x%02X", it) } ?: "n/a"
-        val outcome = if (event.success) "OK" else "FAIL"
+        val outcome = when {
+            event.busy -> "BUSY"
+            event.success -> "OK"
+            else -> "FAIL"
+        }
         val qualifiers = buildList {
             if (event.warmup) add("warmup")
-            if (!event.success) add("retrying")
+            if (event.busy) add("retrying")
+            if (!event.success && !event.busy) add("retrying")
         }
         val qualifierLabel = if (qualifiers.isEmpty()) "" else " (${qualifiers.joinToString(", ")})"
-        val message = "ACK $outcome opcode=$opcode status=$status$qualifierLabel"
+        val modeLabel = event.type.name.lowercase(Locale.US)
+        val message = "ACK $outcome opcode=$opcode status=$status mode=$modeLabel$qualifierLabel"
         emitConsole("DIAG", event.lens, message, event.timestampMs)
         _uartText.tryEmit(UartLine(event.lens, message))
         updateSnapshot(eventTimestamp = event.timestampMs, persist = false) { current ->
@@ -1784,6 +1791,7 @@ class BleTelemetryRepository(
             val failureCount = when {
                 event.success && event.opcode != null -> 0
                 event.success -> existing.ackFailureCount
+                event.busy -> existing.ackFailureCount
                 else -> existing.ackFailureCount + 1
             }
             val updated = existing.copy(
@@ -1793,7 +1801,8 @@ class BleTelemetryRepository(
                 ackSuccessCount = existing.ackSuccessCount + if (event.success) 1 else 0,
                 ackFailureCount = failureCount,
                 ackWarmupCount = existing.ackWarmupCount + if (event.warmup && event.success) 1 else 0,
-                ackDropCount = existing.ackDropCount + if (event.success) 0 else 1,
+                ackDropCount = existing.ackDropCount + if (!event.success && !event.busy) 1 else 0,
+                ackMode = event.type,
             )
             current.updateLens(event.lens, updated)
         }

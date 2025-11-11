@@ -735,6 +735,7 @@ class MoncchichiBleService(
                     }
                 }
                 _incoming.tryEmit(IncomingFrame(lens, payload))
+                heartbeatSupervisor.onTelemetry(lens, now)
                 when (val parsed = G1ReplyParser.parseNotify(payload)) {
                     is G1ReplyParser.Parsed.Vitals -> {
                         val vitals = parsed.vitals
@@ -1147,11 +1148,13 @@ class MoncchichiBleService(
         }
         val ack = waitForHeartbeatAck(lens, attemptStart, HEARTBEAT_ACK_WINDOW_MS)
         val success = ack != null
+        val busy = ack?.busy == true
         val latency = ack?.let { (it.timestamp - attemptStart).takeIf { delta -> delta >= 0 } }
         return HeartbeatResult(
             sequence = packet.sequence,
             timestamp = timestamp,
             success = success,
+            busy = busy,
             ackType = ack?.type,
             latencyMs = latency,
         )
@@ -1170,13 +1173,31 @@ class MoncchichiBleService(
         latencyMs: Long?,
         ackType: AckType,
         elapsedSinceLastMs: Long,
+        busy: Boolean,
     ) {
         recordHeartbeatSuccess(lens, timestamp)
-        val elapsedLabel = String.format(Locale.US, "%.1fs", elapsedSinceLastMs / 1000.0)
-        val latencyLabel = latencyMs?.let { "$it ms" } ?: "n/a"
+        val intervalLabel = String.format(Locale.US, "%.1fs", elapsedSinceLastMs / 1000.0)
+        val latencyLabel = latencyMs?.let { "${it}ms" } ?: "n/a"
         val modeLabel = ackType.name.lowercase(Locale.US)
-        emitConsole("PING", lens, "seq=$sequence elapsed=$elapsedLabel ack=$latencyLabel mode=$modeLabel", timestamp)
-        log("[BLE][PING][${lens.shortLabel}] seq=$sequence elapsed=$elapsedLabel ok")
+        val statusLabel = if (busy) "busy" else "ok"
+        val consoleMessage = buildString {
+            append("seq=")
+            append(sequence)
+            append(' ')
+            append("latency=")
+            append(latencyLabel)
+            append(' ')
+            append("interval=")
+            append(intervalLabel)
+            append(' ')
+            append("status=")
+            append(statusLabel)
+            append(' ')
+            append("mode=")
+            append(modeLabel)
+        }
+        emitConsole("PING", lens, consoleMessage, timestamp)
+        log("[BLE][PING][${lens.shortLabel}] seq=$sequence latency=$latencyLabel status=$statusLabel mode=$modeLabel")
         updateLens(lens) {
             it.copy(heartbeatLatencyMs = latencyMs, heartbeatAckType = ackType)
         }
@@ -1260,11 +1281,28 @@ private class HeartbeatSupervisor(
         restartLoop()
     }
 
-    fun onAck(lens: MoncchichiBleService.Lens?, timestamp: Long, type: MoncchichiBleService.AckType) {
+    fun onAck(
+        lens: MoncchichiBleService.Lens?,
+        timestamp: Long,
+        type: MoncchichiBleService.AckType,
+        success: Boolean,
+        @Suppress("UNUSED_PARAMETER") busy: Boolean,
+    ) {
         if (lens == null) return
         val state = states[lens] ?: return
         state.lastAckAt = timestamp
         state.lastAckType = type
+        if (!state.connected) return
+        if (success) {
+            state.missCount = 0
+        }
+        state.nextDueAt = computeNextDue(timestamp)
+    }
+
+    fun onTelemetry(lens: MoncchichiBleService.Lens, timestamp: Long) {
+        val state = states[lens] ?: return
+        if (!state.connected) return
+        state.nextDueAt = computeNextDue(timestamp)
     }
 
     private fun ensureLoop() {
@@ -1331,7 +1369,15 @@ private class HeartbeatSupervisor(
                         val ackType = result.ackType ?: MoncchichiBleService.AckType.BINARY
                         val elapsed = state.lastSuccessAt?.let { eventTimestamp - it }?.takeIf { it >= 0 } ?: baseIntervalMs
                         state.lastSuccessAt = eventTimestamp
-                        onHeartbeatSuccess(lens, result.sequence, eventTimestamp, result.latencyMs, ackType, elapsed)
+                        onHeartbeatSuccess(
+                            lens,
+                            result.sequence,
+                            eventTimestamp,
+                            result.latencyMs,
+                            ackType,
+                            elapsed,
+                            result.busy,
+                        )
                     } else {
                         state.missCount = (state.missCount + 1).coerceAtMost(rebondThreshold)
                         onHeartbeatMiss(lens, eventTimestamp, state.missCount)
@@ -1527,6 +1573,7 @@ private class HeartbeatSupervisor(
     }
 
     private fun handleAckEvent(lens: Lens, event: AckEvent) {
+        heartbeatSupervisor.onAck(lens, event.timestampMs, event.type, event.success, event.busy)
         if (isDuplicateAck(lens, event)) {
             return
         }
@@ -1536,6 +1583,9 @@ private class HeartbeatSupervisor(
             markAckSuccess(lens, event.timestampMs, event.type)
             emitConsole("ACK", lens, "opcode=${opcodeLabel} status=${event.status.toHex()}", event.timestampMs)
         } else if (event.busy) {
+            if (event.opcode == CMD_PING) {
+                notifyHeartbeatSignal(lens, event.timestampMs, event.type, success = false, busy = true)
+            }
             emitConsole(
                 "ACK",
                 lens,
@@ -1580,7 +1630,7 @@ private class HeartbeatSupervisor(
         updateStabilityMetrics(lens, timestamp) { metrics ->
             metrics.copy(lastAckDeltaMs = delta)
         }
-        notifyHeartbeatSignal(lens, timestamp, type)
+        notifyHeartbeatSignal(lens, timestamp, type, success = true, busy = false)
     }
 
     private fun isDuplicateAck(lens: Lens, event: AckEvent): Boolean {
@@ -1631,9 +1681,14 @@ private class HeartbeatSupervisor(
         }
     }
 
-    private fun notifyHeartbeatSignal(lens: Lens?, timestamp: Long, type: AckType) {
-        ackSignalFlow.tryEmit(AckSignal(lens, timestamp, type))
-        heartbeatSupervisor.onAck(lens, timestamp, type)
+    private fun notifyHeartbeatSignal(
+        lens: Lens?,
+        timestamp: Long,
+        type: AckType,
+        success: Boolean,
+        busy: Boolean,
+    ) {
+        ackSignalFlow.tryEmit(AckSignal(lens, timestamp, type, success, busy))
     }
 
     private fun emitConsole(
@@ -1684,11 +1739,18 @@ private class HeartbeatSupervisor(
         val sequence: Int,
         val timestamp: Long,
         val success: Boolean,
+        val busy: Boolean,
         val ackType: AckType?,
         val latencyMs: Long?,
     )
 
-    private data class AckSignal(val lens: Lens?, val timestamp: Long, val type: AckType)
+    private data class AckSignal(
+        val lens: Lens?,
+        val timestamp: Long,
+        val type: AckType,
+        val success: Boolean,
+        val busy: Boolean,
+    )
 
     private fun updateLens(lens: Lens, reducer: (LensStatus) -> LensStatus) {
         val current = _state.value
@@ -1870,8 +1932,8 @@ private class HeartbeatSupervisor(
         private const val CASE_BATTERY_SUBCOMMAND: Byte = 0x01
         private const val BOND_RECOVERY_GUARD_MS = 3_000L
         private const val UNBOND_REASON_REMOVED = 5
-        private const val HEARTBEAT_INTERVAL_MS = 15_000L
-        private const val HEARTBEAT_JITTER_MS = 3_000L
+        private const val HEARTBEAT_INTERVAL_MS = 29_000L
+        private const val HEARTBEAT_JITTER_MS = 1_000L
         private const val HEARTBEAT_ACK_WINDOW_MS = 1_500L
         private const val HEARTBEAT_REBOND_THRESHOLD = 3
         private const val HEARTBEAT_IDLE_POLL_MS = 1_000L
