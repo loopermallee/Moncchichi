@@ -2106,8 +2106,10 @@ internal class ReconnectCoordinator(
     private val onSuccess: (MoncchichiBleService.Lens, Int) -> Unit,
     private val onStop: (MoncchichiBleService.Lens) -> Unit,
     private val updateState: (MoncchichiBleService.Lens, MoncchichiBleService.ReconnectStatus) -> Unit,
-    private val backoffDelayMs: Long = 2_000L,
-    private val maxAttempts: Int = 3,
+    private val backoffDelaysMs: LongArray = longArrayOf(1_000L, 3_000L, 5_000L, 10_000L),
+    private val maxAttempts: Int = backoffDelaysMs.size,
+    private val stabilityResetMs: Long = 30_000L,
+    private val elapsedRealtime: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
     private val jobs = EnumMap<MoncchichiBleService.Lens, Job?>(MoncchichiBleService.Lens::class.java).apply {
         MoncchichiBleService.Lens.values().forEach { lens -> put(lens, null) }
@@ -2118,11 +2120,20 @@ internal class ReconnectCoordinator(
     private val attempts = EnumMap<MoncchichiBleService.Lens, Int>(MoncchichiBleService.Lens::class.java).apply {
         MoncchichiBleService.Lens.values().forEach { put(it, 0) }
     }
+    private val backoffIndexes = EnumMap<MoncchichiBleService.Lens, Int>(MoncchichiBleService.Lens::class.java).apply {
+        MoncchichiBleService.Lens.values().forEach { put(it, 0) }
+    }
+    private val stableSince = EnumMap<MoncchichiBleService.Lens, Long?>(MoncchichiBleService.Lens::class.java)
 
     fun schedule(lens: MoncchichiBleService.Lens, reason: String) {
+        stableSince.remove(lens)
+        val existingJob = jobs[lens]
+        if (existingJob?.isActive == true) {
+            return
+        }
         val nextGeneration = (generations[lens] ?: 0) + 1
         generations[lens] = nextGeneration
-        jobs[lens]?.cancel()
+        existingJob?.cancel()
         attempts[lens] = 0
         val job = scope.launch { runSequence(lens, reason, nextGeneration) }
         jobs[lens] = job
@@ -2131,14 +2142,57 @@ internal class ReconnectCoordinator(
     fun cancel(lens: MoncchichiBleService.Lens) {
         val nextGeneration = (generations[lens] ?: 0) + 1
         generations[lens] = nextGeneration
-        jobs.remove(lens)?.cancel()
+        jobs[lens]?.cancel()
+        jobs[lens] = null
         attempts[lens] = 0
+        backoffIndexes[lens] = 0
+        stableSince.remove(lens)
         updateState(lens, MoncchichiBleService.ReconnectStatus())
         onStop(lens)
     }
 
     fun reset(lens: MoncchichiBleService.Lens) {
-        cancel(lens)
+        val job = jobs[lens]
+        val index = (backoffIndexes[lens] ?: 0).coerceAtLeast(0)
+        if (index == 0) {
+            stableSince.remove(lens)
+            updateState(lens, MoncchichiBleService.ReconnectStatus())
+        } else {
+            val now = elapsedRealtime()
+            val since = stableSince[lens]
+            if (since == null) {
+                stableSince[lens] = now
+                updateState(
+                    lens,
+                    MoncchichiBleService.ReconnectStatus(
+                        state = MoncchichiBleService.ReconnectPhase.Cooldown,
+                        attempt = 0,
+                        nextDelayMs = stabilityResetMs,
+                    ),
+                )
+            } else {
+                val elapsed = now - since
+                if (elapsed >= stabilityResetMs) {
+                    stableSince.remove(lens)
+                    backoffIndexes[lens] = 0
+                    attempts[lens] = 0
+                    updateState(lens, MoncchichiBleService.ReconnectStatus())
+                } else {
+                    updateState(
+                        lens,
+                        MoncchichiBleService.ReconnectStatus(
+                            state = MoncchichiBleService.ReconnectPhase.Cooldown,
+                            attempt = 0,
+                            nextDelayMs = stabilityResetMs - elapsed,
+                        ),
+                    )
+                }
+            }
+        }
+        attempts[lens] = 0
+        if (job != null) {
+            job.cancel()
+        }
     }
 
     private suspend fun runSequence(
@@ -2155,15 +2209,17 @@ internal class ReconnectCoordinator(
                     return
                 }
                 attempts[lens] = nextAttempt
+                val delayIndex = (backoffIndexes[lens] ?: 0).coerceIn(0, backoffDelaysMs.lastIndex)
+                val delayMs = backoffDelaysMs[delayIndex]
                 updateState(
                     lens,
                     MoncchichiBleService.ReconnectStatus(
                         state = MoncchichiBleService.ReconnectPhase.Waiting,
                         attempt = nextAttempt,
-                        nextDelayMs = backoffDelayMs,
+                        nextDelayMs = delayMs,
                     ),
                 )
-                delay(backoffDelayMs)
+                delay(delayMs)
                 if (!shouldContinue(lens)) {
                     return
                 }
@@ -2172,15 +2228,18 @@ internal class ReconnectCoordinator(
                     MoncchichiBleService.ReconnectStatus(
                         state = MoncchichiBleService.ReconnectPhase.Retrying,
                         attempt = nextAttempt,
-                        nextDelayMs = backoffDelayMs,
+                        nextDelayMs = delayMs,
                     ),
                 )
-                onAttempt(lens, nextAttempt, backoffDelayMs, reason)
+                onAttempt(lens, nextAttempt, delayMs, reason)
                 val success = attempt(lens, nextAttempt, reason)
                 if (success) {
                     completedSuccessfully = true
                     onSuccess(lens, nextAttempt)
                     return
+                }
+                if (delayIndex < backoffDelaysMs.lastIndex) {
+                    backoffIndexes[lens] = delayIndex + 1
                 }
             }
         } finally {
@@ -2188,7 +2247,9 @@ internal class ReconnectCoordinator(
             if (currentGeneration == generation) {
                 jobs[lens] = null
                 attempts[lens] = 0
-                updateState(lens, MoncchichiBleService.ReconnectStatus())
+                if (!stableSince.containsKey(lens)) {
+                    updateState(lens, MoncchichiBleService.ReconnectStatus())
+                }
                 if (!completedSuccessfully) {
                     onStop(lens)
                 }
