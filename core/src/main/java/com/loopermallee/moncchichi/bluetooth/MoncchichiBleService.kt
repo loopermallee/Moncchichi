@@ -244,6 +244,9 @@ class MoncchichiBleService(
     private val heartbeatRebondTriggered = EnumMap<Lens, Boolean>(Lens::class.java).apply {
         Lens.values().forEach { lens -> put(lens, false) }
     }
+    private val heartbeatReconnectTriggered = EnumMap<Lens, Boolean>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, false) }
+    }
 
     private val heartbeatSupervisor = HeartbeatSupervisor(
         parentScope = scope,
@@ -1087,10 +1090,12 @@ class MoncchichiBleService(
     private fun cancelReconnect(lens: Lens) {
         reconnectCoordinator.cancel(lens)
         heartbeatRebondTriggered[lens] = false
+        heartbeatReconnectTriggered[lens] = false
     }
 
     private fun resetReconnectTimer(lens: Lens) {
         heartbeatRebondTriggered[lens] = false
+        heartbeatReconnectTriggered[lens] = false
         reconnectCoordinator.reset(lens)
     }
 
@@ -1249,6 +1254,7 @@ class MoncchichiBleService(
                 heartbeatMissCount = 0,
             )
         }
+        heartbeatReconnectTriggered[lens] = false
         resetReconnectTimer(lens)
         emitStabilitySnapshot(timestamp)
     }
@@ -1264,12 +1270,41 @@ class MoncchichiBleService(
             )
         }
         emitStabilitySnapshot(timestamp)
+        maybeTriggerHeartbeatReconnect(lens, missCount)
         if (missCount >= HEARTBEAT_REBOND_THRESHOLD && rebondJob?.isActive != true) {
             if (heartbeatRebondTriggered[lens] != true) {
                 heartbeatRebondTriggered[lens] = true
                 emitConsole("PING", lens, "rebound", timestamp)
                 performRebond(lens)
             }
+        }
+    }
+
+    private fun maybeTriggerHeartbeatReconnect(lens: Lens, missCount: Int) {
+        if (missCount < HEARTBEAT_RECONNECT_THRESHOLD) {
+            return
+        }
+        if (heartbeatReconnectTriggered[lens] == true) {
+            return
+        }
+        val reasonLabel = "missed ping streak=$missCount"
+        val record = clientRecords[lens]
+        val attempted = when {
+            record != null -> {
+                record.client.reconnect(reasonLabel)
+                true
+            }
+            shouldAutoReconnect(lens) -> {
+                scheduleReconnect(lens, reasonLabel)
+                true
+            }
+            else -> false
+        }
+        if (attempted) {
+            log("[RECOVER][${lens.shortLabel}] reconnecting ($reasonLabel)")
+            heartbeatReconnectTriggered[lens] = true
+        } else {
+            logWarn("[BLE][PING][${lens.shortLabel}] reconnect skipped ($reasonLabel)")
         }
     }
 
@@ -1996,6 +2031,7 @@ private class HeartbeatSupervisor(
         private const val HEARTBEAT_INTERVAL_MS = 5_000L
         private const val HEARTBEAT_JITTER_MS = 0L
         private const val HEARTBEAT_ACK_WINDOW_MS = 2_000L
+        private const val HEARTBEAT_RECONNECT_THRESHOLD = 3
         private const val HEARTBEAT_REBOND_THRESHOLD = 3
         private const val HEARTBEAT_IDLE_POLL_MS = 1_000L
         private const val HEARTBEAT_BUSY_DEFER_MS = 3_000L

@@ -767,6 +767,10 @@ class G1BleClient(
         }
     }
 
+    fun reconnect(reason: String = "manual") {
+        scheduleGattReconnect(reason)
+    }
+
     fun close() {
         monitorJob?.cancel()
         rssiJob?.cancel()
