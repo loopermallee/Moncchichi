@@ -1515,12 +1515,12 @@ class BleTelemetryRepository(
         }
     }
 
-    private fun requestCaseRefresh(lens: Lens) {
+    private fun requestCaseRefresh(lens: Lens, force: Boolean = false) {
         val service = boundService ?: return
         val scope = serviceScope ?: return
         val now = System.currentTimeMillis()
         val last = lastCaseRefreshAt[lens] ?: 0L
-        if (now - last < CASE_REFRESH_MIN_INTERVAL_MS) {
+        if (!force && now - last < CASE_REFRESH_MIN_INTERVAL_MS) {
             return
         }
         lastCaseRefreshAt[lens] = now
@@ -2004,6 +2004,7 @@ class BleTelemetryRepository(
             if (existing.reconnectSuccesses != status.reconnectSuccesses) {
                 updated = updated.copy(reconnectSuccesses = status.reconnectSuccesses)
                 emitConsole("STATE", lens, "auto-reconnect success")
+                requestCaseRefresh(lens, force = true)
                 changed = true
             }
             if (existing.reconnecting != status.reconnecting) {

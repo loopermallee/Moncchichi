@@ -210,26 +210,24 @@ class MoncchichiBleService(
     private val hostHeartbeatSequence = IntArray(Lens.values().size)
     private val knownDevices = mutableMapOf<Lens, BluetoothDevice>()
     private val bondFailureStreak = mutableMapOf<Lens, Int>()
+    private val staleBondFailureStreak = EnumMap<Lens, Int>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, 0) }
+    }
     private val reconnectCoordinator = ReconnectCoordinator(
         scope = scope,
         shouldContinue = { lens -> shouldAutoReconnect(lens) },
         onAttempt = { lens, attempt, delayMs, reason ->
             recordReconnectAttempt(lens)
             val lensLabel = lens.name.lowercase(Locale.US)
-            val delayLabel = if (delayMs % 1_000L == 0L) {
-                "${delayMs / 1_000}s"
-            } else {
-                String.format(Locale.US, "%.1fs", delayMs / 1_000.0)
-            }
-            log("[BLE][RECONNECT][${lens.shortLabel}] attempt=$attempt delay=$delayLabel reason=$reason")
+            log("[RECONNECT][${lens.shortLabel}] attempt=$attempt delay=${delayMs}ms reason=$reason")
         },
         attempt = { lens, attempt, reason ->
             val device = knownDevices[lens] ?: return@ReconnectCoordinator false
             connect(device, lens)
         },
-        onSuccess = { lens ->
-            val lensLabel = lens.name.lowercase(Locale.US)
-            log("[BLE][LINK][AUTO] $lensLabel auto-reconnect success")
+        onSuccess = { lens, attempts ->
+            val triesLabel = if (attempts == 1) "1 try" else "$attempts tries"
+            log("[RECONNECT][${lens.shortLabel}] success after $triesLabel")
             recordReconnectSuccess(lens)
         },
         onStop = { lens ->
@@ -241,6 +239,9 @@ class MoncchichiBleService(
     private var rightBondRetryAttempt = 0
     private var rightBondRetryJob: Job? = null
     private var totalBondResetEvents = 0
+    private val heartbeatRebondTriggered = EnumMap<Lens, Boolean>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, false) }
+    }
 
     private val heartbeatSupervisor = HeartbeatSupervisor(
         parentScope = scope,
@@ -308,7 +309,7 @@ class MoncchichiBleService(
             }
             cancelReconnect(lens)
 
-            maybeClearStaleBond(device, lens)
+            val reuseBond = maybeClearStaleBond(device, lens)
 
             val record = buildClientRecord(lens, device)
             clientRecords[lens]?.dispose()
@@ -341,39 +342,47 @@ class MoncchichiBleService(
                     log("[PAIRING] Right connect preflight leftBonded=$leftBonded rightBonded=$rightBonded")
                 }
                 record.client.connect()
-                when (val bondResult = record.client.awaitBonded(BOND_TIMEOUT_MS)) {
-                    BondAwaitResult.Success -> {
-                        bondFailureStreak[lens] = 0
-                        when (lens) {
-                            Lens.LEFT -> onLeftBondComplete()
-                            Lens.RIGHT -> onRightBondComplete()
-                        }
+                if (reuseBond) {
+                    bondFailureStreak[lens] = 0
+                    when (lens) {
+                        Lens.LEFT -> onLeftBondComplete()
+                        Lens.RIGHT -> onRightBondComplete()
                     }
-                    BondAwaitResult.Timeout -> {
-                        logWarn("Bond wait timed out for ${device.address} (${lens.name.lowercase(Locale.US)})")
-                        val restart = onBondFailure(lens, device, bondResult)
-                        if (lens == Lens.RIGHT && state.value.left.bonded) {
-                            scheduleRightBondRetry(device)
+                } else {
+                    when (val bondResult = record.client.awaitBonded(BOND_TIMEOUT_MS)) {
+                        BondAwaitResult.Success -> {
+                            bondFailureStreak[lens] = 0
+                            when (lens) {
+                                Lens.LEFT -> onLeftBondComplete()
+                                Lens.RIGHT -> onRightBondComplete()
+                            }
                         }
-                        handleConnectionFailure(lens, record)
-                        if (restart) {
-                            disconnectAll()
+                        BondAwaitResult.Timeout -> {
+                            logWarn("Bond wait timed out for ${device.address} (${lens.name.lowercase(Locale.US)})")
+                            val restart = onBondFailure(lens, device, bondResult)
+                            if (lens == Lens.RIGHT && state.value.left.bonded) {
+                                scheduleRightBondRetry(device)
+                            }
+                            handleConnectionFailure(lens, record)
+                            if (restart) {
+                                disconnectAll()
+                            }
+                            return@withContext false
                         }
-                        return@withContext false
-                    }
-                    is BondAwaitResult.Failed -> {
-                        logWarn(
-                            "Bond failed for ${device.address} (${lens.name.lowercase(Locale.US)}) reason=${bondResult.reason.toBondReasonString()}"
-                        )
-                        val restart = onBondFailure(lens, device, bondResult)
-                        if (lens == Lens.RIGHT && state.value.left.bonded) {
-                            scheduleRightBondRetry(device)
+                        is BondAwaitResult.Failed -> {
+                            logWarn(
+                                "Bond failed for ${device.address} (${lens.name.lowercase(Locale.US)}) reason=${bondResult.reason.toBondReasonString()}"
+                            )
+                            val restart = onBondFailure(lens, device, bondResult)
+                            if (lens == Lens.RIGHT && state.value.left.bonded) {
+                                scheduleRightBondRetry(device)
+                            }
+                            handleConnectionFailure(lens, record)
+                            if (restart) {
+                                disconnectAll()
+                            }
+                            return@withContext false
                         }
-                        handleConnectionFailure(lens, record)
-                        if (restart) {
-                            disconnectAll()
-                        }
-                        return@withContext false
                     }
                 }
                 val timeout = if (lens == Lens.LEFT) {
@@ -429,7 +438,7 @@ class MoncchichiBleService(
             true
         }
 
-    private suspend fun maybeClearStaleBond(device: BluetoothDevice, lens: Lens) {
+    private suspend fun maybeClearStaleBond(device: BluetoothDevice, lens: Lens): Boolean {
         val status = clientState(lens)
         val currentBondState = device.bondState
         val hasBondHistory =
@@ -442,21 +451,50 @@ class MoncchichiBleService(
                 !status.bonded &&
                 hasBondHistory
         val removalDetected = status.lastBondReason == UNBOND_REASON_REMOVED
-        if (!staleBond && !removalDetected) {
-            return
-        }
-        val shouldClear = staleBond || (removalDetected && currentBondState != BluetoothDevice.BOND_NONE)
         val lensLabel = lens.name.lowercase(Locale.US)
         val reasonLabel = formatBondReason(status.lastBondReason)
-        if (shouldClear) {
-            logWarn("[PAIRING] $lensLabel clearing stale bond before connect (bondState=$currentBondState reason=$reasonLabel)")
+
+        var reuseExisting = false
+        var clearedBond = false
+
+        if (staleBond) {
+            val next = (staleBondFailureStreak[lens] ?: 0) + 1
+            val thresholdReached = next >= STALE_BOND_CLEAR_THRESHOLD
+            if (thresholdReached) {
+                staleBondFailureStreak[lens] = 0
+                logWarn("[BOND][${lens.shortLabel}] cleared stale streak=$next reason=$reasonLabel")
+                val cleared = clearBond(device)
+                log("[PAIRING] removeBond ${device.address} -> $cleared (pre-connect)")
+                if (cleared) {
+                    clearedBond = true
+                    delay(STALE_BOND_CLEAR_DELAY_MS)
+                }
+            } else {
+                staleBondFailureStreak[lens] = next
+                reuseExisting = true
+                log("[BOND][${lens.shortLabel}] reused stale streak=$next/$STALE_BOND_CLEAR_THRESHOLD")
+            }
+        } else {
+            staleBondFailureStreak[lens] = 0
+            if (currentBondState == BluetoothDevice.BOND_BONDED) {
+                reuseExisting = true
+                log("[BOND][${lens.shortLabel}] reused")
+            }
+        }
+
+        if (removalDetected && currentBondState != BluetoothDevice.BOND_NONE && !clearedBond) {
+            logWarn("[BOND][${lens.shortLabel}] cleared removal reason=$reasonLabel")
             val cleared = clearBond(device)
             log("[PAIRING] removeBond ${device.address} -> $cleared (pre-connect)")
             if (cleared) {
+                clearedBond = true
+                staleBondFailureStreak[lens] = 0
                 delay(STALE_BOND_CLEAR_DELAY_MS)
             }
         }
+
         if (removalDetected) {
+            reuseExisting = false
             val elapsed = status.lastBondEventAt?.let { System.currentTimeMillis() - it } ?: 0L
             val remaining = (BOND_RECOVERY_GUARD_MS - elapsed).coerceAtLeast(0L)
             if (remaining > 0L) {
@@ -464,6 +502,8 @@ class MoncchichiBleService(
                 delay(remaining)
             }
         }
+
+        return reuseExisting && !clearedBond
     }
 
     fun disconnect(lens: Lens) {
@@ -477,12 +517,14 @@ class MoncchichiBleService(
         hostHeartbeatSequence[lens.ordinal] = 0
         knownDevices.remove(lens)
         bondFailureStreak.remove(lens)
+        staleBondFailureStreak[lens] = 0
         resetContinuationBuffer(lens)
         clearPendingCommands(lens)
         lastAckSuccessMs.remove(lens)
         lastAckSignature.remove(lens)
         cancelReconnect(lens)
         lastDisconnectTimestamp[lens] = System.currentTimeMillis()
+        heartbeatRebondTriggered[lens] = false
         resetStabilityMetrics(lens)
         updateLens(lens) { LensStatus() }
         if (connectionOrder.remove(lens)) {
@@ -736,6 +778,7 @@ class MoncchichiBleService(
                 }
                 _incoming.tryEmit(IncomingFrame(lens, payload))
                 heartbeatSupervisor.onTelemetry(lens, now)
+                resetReconnectTimer(lens)
                 when (val parsed = G1ReplyParser.parseNotify(payload)) {
                     is G1ReplyParser.Parsed.Vitals -> {
                         val vitals = parsed.vitals
@@ -1003,6 +1046,7 @@ class MoncchichiBleService(
     private fun scheduleReconnect(lens: Lens, reason: String) {
         if (!shouldAutoReconnect(lens)) return
         updateLens(lens) { it.copy(reconnecting = true) }
+        heartbeatRebondTriggered[lens] = false
         reconnectCoordinator.schedule(lens, reason)
     }
 
@@ -1028,6 +1072,8 @@ class MoncchichiBleService(
         val current = _state.value
         _state.value = current.copy(autoReconnectSuccessCount = current.autoReconnectSuccessCount + 1)
         bondFailureStreak[lens] = 0
+        staleBondFailureStreak[lens] = 0
+        heartbeatRebondTriggered[lens] = false
     }
 
     private fun setReconnectState(lens: Lens, status: ReconnectStatus) {
@@ -1038,6 +1084,12 @@ class MoncchichiBleService(
 
     private fun cancelReconnect(lens: Lens) {
         reconnectCoordinator.cancel(lens)
+        heartbeatRebondTriggered[lens] = false
+    }
+
+    private fun resetReconnectTimer(lens: Lens) {
+        heartbeatRebondTriggered[lens] = false
+        reconnectCoordinator.reset(lens)
     }
 
     private fun shouldAutoReconnect(lens: Lens): Boolean {
@@ -1202,7 +1254,7 @@ class MoncchichiBleService(
         updateLens(lens) {
             it.copy(heartbeatLatencyMs = latencyMs, heartbeatAckType = ackType)
         }
-        reconnectCoordinator.reset(lens)
+        resetReconnectTimer(lens)
         emitStabilitySnapshot(timestamp)
     }
 
@@ -1212,8 +1264,11 @@ class MoncchichiBleService(
         logWarn("[BLE][PING][${lens.shortLabel}] miss $missCount")
         emitStabilitySnapshot(timestamp)
         if (missCount >= HEARTBEAT_REBOND_THRESHOLD && rebondJob?.isActive != true) {
-            emitConsole("PING", lens, "rebound", timestamp)
-            performRebond(lens)
+            if (heartbeatRebondTriggered[lens] != true) {
+                heartbeatRebondTriggered[lens] = true
+                emitConsole("PING", lens, "rebound", timestamp)
+                performRebond(lens)
+            }
         }
     }
 
@@ -1632,6 +1687,7 @@ private class HeartbeatSupervisor(
         updateStabilityMetrics(lens, timestamp) { metrics ->
             metrics.copy(lastAckDeltaMs = delta)
         }
+        resetReconnectTimer(lens)
         notifyHeartbeatSignal(lens, timestamp, type, success = true, busy = false)
     }
 
@@ -1798,6 +1854,8 @@ private class HeartbeatSupervisor(
         cancelReconnect(lens)
         recordConnectionFailure(lens)
         lastDisconnectTimestamp[lens] = System.currentTimeMillis()
+        heartbeatRebondTriggered[lens] = false
+        staleBondFailureStreak[lens] = 0
         resetStabilityMetrics(lens)
         updateLens(lens) { LensStatus() }
         if (connectionOrder.remove(lens)) {
@@ -1947,6 +2005,7 @@ private class HeartbeatSupervisor(
         private const val RSSI_WINDOW_SIZE = 8
         private const val GATT_FAILURE_WINDOW_MS = 60_000L
         private const val GATT_REFRESH_THRESHOLD = 3
+        private const val STALE_BOND_CLEAR_THRESHOLD = 3
     }
 }
 
@@ -1955,123 +2014,96 @@ internal class ReconnectCoordinator(
     private val shouldContinue: suspend (MoncchichiBleService.Lens) -> Boolean,
     private val onAttempt: (MoncchichiBleService.Lens, Int, Long, String) -> Unit,
     private val attempt: suspend (MoncchichiBleService.Lens, Int, String) -> Boolean,
-    private val onSuccess: (MoncchichiBleService.Lens) -> Unit,
+    private val onSuccess: (MoncchichiBleService.Lens, Int) -> Unit,
     private val onStop: (MoncchichiBleService.Lens) -> Unit,
     private val updateState: (MoncchichiBleService.Lens, MoncchichiBleService.ReconnectStatus) -> Unit,
-    private val baseDelayMs: Long = 1_000L,
-    private val maxDelayMs: Long = 30_000L,
+    private val backoffDelayMs: Long = 2_000L,
+    private val maxAttempts: Int = 3,
 ) {
-    private var job: Job? = null
-    private val queue = ArrayDeque<Pair<MoncchichiBleService.Lens, String>>()
+    private val jobs = EnumMap<MoncchichiBleService.Lens, Job?>(MoncchichiBleService.Lens::class.java).apply {
+        MoncchichiBleService.Lens.values().forEach { lens -> put(lens, null) }
+    }
+    private val generations = EnumMap<MoncchichiBleService.Lens, Int>(MoncchichiBleService.Lens::class.java).apply {
+        MoncchichiBleService.Lens.values().forEach { lens -> put(lens, 0) }
+    }
     private val attempts = EnumMap<MoncchichiBleService.Lens, Int>(MoncchichiBleService.Lens::class.java).apply {
         MoncchichiBleService.Lens.values().forEach { put(it, 0) }
     }
 
     fun schedule(lens: MoncchichiBleService.Lens, reason: String) {
-        queue.removeAll { it.first == lens }
-        queue.addLast(lens to reason)
-        val nextAttempt = attempts.getValue(lens) + 1
-        updateState(
-            lens,
-            MoncchichiBleService.ReconnectStatus(
-                state = MoncchichiBleService.ReconnectPhase.Waiting,
-                attempt = nextAttempt,
-                nextDelayMs = computeDelay(nextAttempt),
-            ),
-        )
-        if (job?.isActive != true) {
-            job = scope.launch { runQueue() }
-        }
+        val nextGeneration = (generations[lens] ?: 0) + 1
+        generations[lens] = nextGeneration
+        jobs[lens]?.cancel()
+        attempts[lens] = 0
+        val job = scope.launch { runSequence(lens, reason, nextGeneration) }
+        jobs[lens] = job
     }
 
     fun cancel(lens: MoncchichiBleService.Lens) {
-        queue.removeAll { it.first == lens }
-        updateState(lens, MoncchichiBleService.ReconnectStatus())
-        if (queue.isEmpty()) {
-            job?.cancel()
-            job = null
-        }
-    }
-
-    fun reset(lens: MoncchichiBleService.Lens) {
+        val nextGeneration = (generations[lens] ?: 0) + 1
+        generations[lens] = nextGeneration
+        jobs.remove(lens)?.cancel()
         attempts[lens] = 0
-        updateState(lens, MoncchichiBleService.ReconnectStatus())
-    }
-
-    private suspend fun runQueue() {
-        while (scope.isActive) {
-            val next = queue.removeFirstOrNull()
-            if (next == null) {
-                job = null
-                return
-            }
-            val (lens, reason) = next
-            runSequence(lens, reason)
-            if (queue.isEmpty()) {
-                job = null
-                return
-            }
-        }
-    }
-
-    private suspend fun runSequence(lens: MoncchichiBleService.Lens, reason: String) {
-        while (scope.isActive) {
-            if (!shouldContinue(lens)) {
-                updateState(lens, MoncchichiBleService.ReconnectStatus())
-                onStop(lens)
-                return
-            }
-            val attemptNumber = (attempts[lens] ?: 0) + 1
-            attempts[lens] = attemptNumber
-            val delayMs = computeDelay(attemptNumber)
-            updateState(
-                lens,
-                MoncchichiBleService.ReconnectStatus(
-                    state = MoncchichiBleService.ReconnectPhase.Cooldown,
-                    attempt = attemptNumber,
-                    nextDelayMs = delayMs,
-                ),
-            )
-            delay(delayMs)
-            if (!shouldContinue(lens)) {
-                updateState(lens, MoncchichiBleService.ReconnectStatus())
-                onStop(lens)
-                return
-            }
-            updateState(
-                lens,
-                MoncchichiBleService.ReconnectStatus(
-                    state = MoncchichiBleService.ReconnectPhase.Retrying,
-                    attempt = attemptNumber,
-                    nextDelayMs = delayMs,
-                ),
-            )
-            onAttempt(lens, attemptNumber, delayMs, reason)
-            val success = attempt(lens, attemptNumber, reason)
-            if (success) {
-                attempts[lens] = 0
-                updateState(lens, MoncchichiBleService.ReconnectStatus())
-                onSuccess(lens)
-                return
-            }
-            updateState(
-                lens,
-                MoncchichiBleService.ReconnectStatus(
-                    state = MoncchichiBleService.ReconnectPhase.Cooldown,
-                    attempt = attemptNumber,
-                    nextDelayMs = delayMs,
-                ),
-            )
-        }
         updateState(lens, MoncchichiBleService.ReconnectStatus())
         onStop(lens)
     }
 
-    private fun computeDelay(attempt: Int): Long {
-        val multiplier = 1L shl (attempt - 1).coerceAtMost(15)
-        val raw = baseDelayMs * multiplier
-        return raw.coerceAtMost(maxDelayMs)
+    fun reset(lens: MoncchichiBleService.Lens) {
+        cancel(lens)
     }
 
-    private fun <T> ArrayDeque<T>.removeFirstOrNull(): T? = if (isEmpty()) null else removeFirst()
+    private suspend fun runSequence(
+        lens: MoncchichiBleService.Lens,
+        reason: String,
+        generation: Int,
+    ) {
+        val job = coroutineContext[Job] ?: return
+        var completedSuccessfully = false
+        try {
+            while (scope.isActive && shouldContinue(lens)) {
+                val nextAttempt = (attempts[lens] ?: 0) + 1
+                if (nextAttempt > maxAttempts) {
+                    return
+                }
+                attempts[lens] = nextAttempt
+                updateState(
+                    lens,
+                    MoncchichiBleService.ReconnectStatus(
+                        state = MoncchichiBleService.ReconnectPhase.Waiting,
+                        attempt = nextAttempt,
+                        nextDelayMs = backoffDelayMs,
+                    ),
+                )
+                delay(backoffDelayMs)
+                if (!shouldContinue(lens)) {
+                    return
+                }
+                updateState(
+                    lens,
+                    MoncchichiBleService.ReconnectStatus(
+                        state = MoncchichiBleService.ReconnectPhase.Retrying,
+                        attempt = nextAttempt,
+                        nextDelayMs = backoffDelayMs,
+                    ),
+                )
+                onAttempt(lens, nextAttempt, backoffDelayMs, reason)
+                val success = attempt(lens, nextAttempt, reason)
+                if (success) {
+                    completedSuccessfully = true
+                    onSuccess(lens, nextAttempt)
+                    return
+                }
+            }
+        } finally {
+            val currentGeneration = generations[lens]
+            if (currentGeneration == generation) {
+                jobs[lens] = null
+                attempts[lens] = 0
+                updateState(lens, MoncchichiBleService.ReconnectStatus())
+                if (!completedSuccessfully) {
+                    onStop(lens)
+                }
+            }
+        }
+    }
 }
