@@ -951,7 +951,7 @@ class MoncchichiBleService(
         val target = lens.toTarget()
         val commands = listOf(
             byteArrayOf(G1Protocols.OPC_DEVICE_STATUS.toByte()),
-            G1Packets.batteryQuery(),
+            byteArrayOf(G1Protocols.CMD_GLASSES_INFO.toByte(), CASE_BATTERY_SUBCOMMAND),
         )
         commands.forEachIndexed { index, payload ->
             val opcodeLabel = payload.firstOrNull()?.toInt()?.let { String.format(Locale.US, "0x%02X", it and 0xFF) } ?: "n/a"
@@ -1867,6 +1867,7 @@ private class HeartbeatSupervisor(
         private const val STALE_BOND_CLEAR_DELAY_MS = 500L
         private const val KEEP_ALIVE_MIN_INTERVAL_MS = 1_000L
         private const val CASE_TELEMETRY_COMMAND_DELAY_MS = 50L
+        private const val CASE_BATTERY_SUBCOMMAND: Byte = 0x01
         private const val BOND_RECOVERY_GUARD_MS = 3_000L
         private const val UNBOND_REASON_REMOVED = 5
         private const val HEARTBEAT_INTERVAL_MS = 15_000L
