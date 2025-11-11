@@ -5,6 +5,7 @@ import android.os.SystemClock
 import com.loopermallee.moncchichi.bluetooth.BondResult
 import com.loopermallee.moncchichi.bluetooth.G1Packets
 import com.loopermallee.moncchichi.bluetooth.G1Protocols
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.F5EventType
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
@@ -1176,12 +1177,52 @@ class BleTelemetryRepository(
     }
 
     private fun handleF5Event(event: BleTelemetryParser.TelemetryEvent.F5Event) {
+        val lens = event.lens
+        val typeLabel = when (event.type) {
+            F5EventType.GESTURE -> "GESTURE"
+            F5EventType.SYSTEM -> "SYSTEM"
+            F5EventType.CASE -> "CASE"
+            F5EventType.UNKNOWN -> "UNKNOWN"
+        }
+        val subLabel = event.subcommand?.toHexLabel() ?: "n/a"
+        val payloadHex = event.rawFrame.toHex()
+        val details = mutableListOf<String>()
         event.vitals?.let { vitals ->
-            handleParsedVitals(event.lens, vitals, event.rawFrame)
+            vitals.batteryPercent?.let { percent ->
+                details += "battery=${percent}%"
+            }
+            vitals.charging?.let { charging ->
+                details += "charging=${charging}"
+            }
+            vitals.firmwareVersion?.takeIf { it.isNotBlank() }?.let { banner ->
+                details += "fw=${banner}"
+            }
+        }
+        event.evenAiEvent?.let { evenAi ->
+            details += describeEvenAi(evenAi)
+        }
+        val extra = details.takeIf { it.isNotEmpty() }?.joinToString(separator = " ")
+        val logMessage = buildString {
+            append("[BLE][F5][")
+            append(typeLabel)
+            append("][")
+            append(lens.shortLabel)
+            append("] sub=")
+            append(subLabel)
+            append(" payload=")
+            append(payloadHex)
+            if (extra != null) {
+                append(' ')
+                append(extra)
+            }
+        }
+        logger(logMessage)
+        event.vitals?.let { vitals ->
+            handleParsedVitals(lens, vitals, event.rawFrame)
         }
         event.evenAiEvent?.let { evenAi ->
             val message = describeEvenAi(evenAi)
-            emitConsole("GESTURE", event.lens, message, event.timestampMs)
+            emitConsole("GESTURE", lens, message, event.timestampMs)
         }
     }
 
