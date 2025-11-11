@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.isVisible
 import androidx.core.widget.NestedScrollView
+import androidx.core.widget.TextViewCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
@@ -33,6 +34,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.R as MaterialR
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.hub.R
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
@@ -112,7 +114,7 @@ class DeveloperFragment : Fragment() {
         val overviewContainer = frameView.parent as? LinearLayout
         val ackTextView = TextView(context).apply {
             id = View.generateViewId()
-            setTextAppearance(R.style.TextAppearance.Material3.BodyMedium)
+            TextViewCompat.setTextAppearance(this, MaterialR.style.TextAppearance_Material3_BodyMedium)
             val margin = (resources.displayMetrics.density * 8f).roundToInt()
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
