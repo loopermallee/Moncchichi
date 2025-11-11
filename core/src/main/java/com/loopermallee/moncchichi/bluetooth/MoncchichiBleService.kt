@@ -202,6 +202,10 @@ class MoncchichiBleService(
 
     private val clientRecords: MutableMap<Lens, ClientRecord> = ConcurrentHashMap()
     private val keepAliveWriteTimestamps = mutableMapOf<Lens, Long>()
+    private val caseTelemetryRequested = EnumMap<Lens, Boolean>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, false) }
+    }
+    private val caseEventCodes = intArrayOf(0x0E, 0x0F)
     private val connectionOrder = mutableListOf<Lens>()
     private val hostHeartbeatSequence = IntArray(Lens.values().size)
     private val knownDevices = mutableMapOf<Lens, BluetoothDevice>()
@@ -469,6 +473,7 @@ class MoncchichiBleService(
             record.dispose()
         }
         keepAliveWriteTimestamps.remove(lens)
+        caseTelemetryRequested[lens] = false
         hostHeartbeatSequence[lens.ordinal] = 0
         knownDevices.remove(lens)
         bondFailureStreak.remove(lens)
@@ -624,6 +629,7 @@ class MoncchichiBleService(
         clientRecords.values.forEach { it.dispose() }
         clientRecords.clear()
         keepAliveWriteTimestamps.clear()
+        caseTelemetryRequested.replaceAll { _, _ -> false }
         hostHeartbeatSequence.fill(0)
         ackContinuationBuffers.values.forEach { it.reset() }
         pendingCommandAcks.values.forEach { it.clear() }
@@ -670,6 +676,15 @@ class MoncchichiBleService(
                         lastBondReason = state.lastBondReason,
                         lastBondEventAt = state.lastBondEventAt,
                     )
+                }
+                val wasReady = previousStatus.state == G1BleClient.ConnectionState.CONNECTED && previousStatus.warmupOk
+                val nowConnected = state.status == G1BleClient.ConnectionState.CONNECTED
+                if (!nowConnected) {
+                    caseTelemetryRequested[lens] = false
+                }
+                val nowReady = nowConnected && state.warmupOk
+                if (!wasReady && nowReady) {
+                    scheduleCaseTelemetry(lens)
                 }
                 handleBondTransitions(lens, previousStatus, state)
                 handleReconnectStateChange(lens, previousStatus.state, state)
@@ -919,6 +934,51 @@ class MoncchichiBleService(
     private fun recordRightBondRetry() {
         val current = _state.value
         _state.value = current.copy(rightBondRetryCount = current.rightBondRetryCount + 1)
+    }
+
+    private fun scheduleCaseTelemetry(lens: Lens) {
+        if (caseTelemetryRequested[lens] == true) {
+            return
+        }
+        caseTelemetryRequested[lens] = true
+        scope.launch(Dispatchers.IO) {
+            requestCaseTelemetry(lens)
+            subscribeCaseEvents(lens)
+        }
+    }
+
+    private suspend fun requestCaseTelemetry(lens: Lens) {
+        val target = lens.toTarget()
+        val commands = listOf(
+            byteArrayOf(G1Protocols.OPC_DEVICE_STATUS.toByte()),
+            byteArrayOf(G1Protocols.CMD_GLASSES_INFO.toByte(), CASE_BATTERY_SUBCOMMAND),
+        )
+        commands.forEachIndexed { index, payload ->
+            val opcodeLabel = payload.firstOrNull()?.toInt()?.let { String.format(Locale.US, "0x%02X", it and 0xFF) } ?: "n/a"
+            val ok = send(payload, target)
+            if (!ok) {
+                logWarn("[BLE][${lens.shortLabel}] Case telemetry request failed (opcode=$opcodeLabel)")
+                caseTelemetryRequested[lens] = false
+                return
+            }
+            if (index < commands.lastIndex) {
+                delay(CASE_TELEMETRY_COMMAND_DELAY_MS)
+            }
+        }
+        log("[BLE][${lens.shortLabel}] Case telemetry requested (0x2B/0x2C)")
+    }
+
+    private suspend fun subscribeCaseEvents(lens: Lens) {
+        val target = lens.toTarget()
+        caseEventCodes.forEachIndexed { index, code ->
+            val payload = byteArrayOf(G1Protocols.OPC_EVENT.toByte(), code.toByte())
+            send(payload, target, ackTimeoutMs = 0L, retries = 0)
+            if (index < caseEventCodes.lastIndex) {
+                delay(CASE_TELEMETRY_COMMAND_DELAY_MS)
+            }
+        }
+        val codesLabel = caseEventCodes.joinToString(separator = ", ") { String.format(Locale.US, "0x%02X", it) }
+        log("[BLE][${lens.shortLabel}] Subscribed to case F5 events $codesLabel")
     }
 
     private fun logKeepAliveTelemetry(lens: Lens, result: G1BleClient.KeepAliveResult) {
@@ -1806,6 +1866,8 @@ private class HeartbeatSupervisor(
         private const val RIGHT_BOND_RETRY_BASE_DELAY_MS = 10_000L
         private const val STALE_BOND_CLEAR_DELAY_MS = 500L
         private const val KEEP_ALIVE_MIN_INTERVAL_MS = 1_000L
+        private const val CASE_TELEMETRY_COMMAND_DELAY_MS = 50L
+        private const val CASE_BATTERY_SUBCOMMAND: Byte = 0x01
         private const val BOND_RECOVERY_GUARD_MS = 3_000L
         private const val UNBOND_REASON_REMOVED = 5
         private const val HEARTBEAT_INTERVAL_MS = 15_000L
