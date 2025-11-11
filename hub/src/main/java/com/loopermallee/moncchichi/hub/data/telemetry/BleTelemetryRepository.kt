@@ -2561,6 +2561,8 @@ class BleTelemetryRepository(
         ((byte.toInt() and 0xFF).toString(16)).padStart(2, '0')
     }
 
+    private fun Byte.toHexLabel(): String = toInt().toHexLabel()
+
     private fun Int.toHexLabel(): String = String.format("0x%02X", this and 0xFF)
 
     private fun updateSnapshot(
