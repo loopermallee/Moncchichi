@@ -53,6 +53,7 @@ import kotlin.collections.ArrayDeque
 import kotlin.math.max
 import kotlin.text.Charsets
 import java.util.concurrent.atomic.AtomicLong
+import org.json.JSONObject
 
 /**
  * Aggregates BLE telemetry packets (battery %, uptime, firmware, RSSI) emitted by [MoncchichiBleService].
@@ -265,6 +266,10 @@ class BleTelemetryRepository(
                 replay = 1,
             )
 
+    fun toTelemetryJson(snapshot: DeviceTelemetrySnapshot, caseStatus: CaseStatus = _caseStatus.value): String? {
+        return snapshot.buildTelemetryJson(caseStatus)
+    }
+
     private fun initialDeviceTelemetrySnapshot(lens: Lens): DeviceTelemetrySnapshot {
         return DeviceTelemetrySnapshot(
             lens = lens,
@@ -412,26 +417,42 @@ class BleTelemetryRepository(
     }
 
     private fun persistDeviceTelemetrySnapshots(recordedAt: Long) {
-        val left = lensTelemetrySnapshots.getValue(Lens.LEFT).value
-        val right = lensTelemetrySnapshots.getValue(Lens.RIGHT).value
-        val uptime = listOfNotNull(left.uptimeSeconds, right.uptimeSeconds).maxOrNull()
-        val leftRecord = left.toLensRecord()
-        val rightRecord = right.toLensRecord()
-        if (leftRecord.notes == null && rightRecord.notes == null && uptime == null) {
+        val leftSnapshot = lensTelemetrySnapshots.getValue(Lens.LEFT).value
+        val rightSnapshot = lensTelemetrySnapshots.getValue(Lens.RIGHT).value
+        val caseStatus = _caseStatus.value
+        val uptime = listOfNotNull(leftSnapshot.uptimeSeconds, rightSnapshot.uptimeSeconds).maxOrNull()
+        val caseRecord = caseStatus.toRecord()
+        val leftRecord = leftSnapshot.toLensRecord(caseStatus)
+        val rightRecord = rightSnapshot.toLensRecord(caseStatus)
+        val hasData = leftRecord.hasContent() || rightRecord.hasContent() || caseRecord != null || uptime != null
+        if (!hasData) {
             return
         }
         val record = MemoryRepository.TelemetrySnapshotRecord(
             recordedAt = recordedAt,
             uptimeSeconds = uptime,
+            case = caseRecord,
             left = leftRecord,
             right = rightRecord,
         )
+        val normalized = record.copy(recordedAt = 0L)
+        val shouldPersist = synchronized(snapshotPersistLock) {
+            if (lastPersistedSnapshotContent == normalized) {
+                false
+            } else {
+                lastPersistedSnapshotContent = normalized
+                true
+            }
+        }
+        if (!shouldPersist) {
+            return
+        }
         persistenceScope.launch {
             memory.addTelemetrySnapshot(record)
         }
     }
 
-    private fun DeviceTelemetrySnapshot.toLensRecord(): MemoryRepository.LensSnapshot {
+    private fun DeviceTelemetrySnapshot.toLensRecord(caseStatus: CaseStatus): MemoryRepository.LensSnapshot {
         val notes = buildList {
             batteryVoltageMv?.let { add("battMv=$it") }
             isCharging?.let { add("charging=$it") }
@@ -451,10 +472,10 @@ class BleTelemetryRepository(
             lastGesture?.let { event ->
                 add("gesture=${gestureLabel(event.gesture)}")
             }
-            caseBatteryPercent?.let { add("casePct=$it") }
-            caseOpen?.let { add("caseOpen=$it") }
+            (caseBatteryPercent ?: caseStatus.batteryPercent)?.let { add("casePct=$it") }
+            (caseOpen ?: caseStatus.lidOpen)?.let { add("caseOpen=$it") }
             caseCharging?.let { add("caseCharging=$it") }
-            caseSilentMode?.let { add("caseSilent=$it") }
+            (caseSilentMode ?: caseStatus.silentMode)?.let { add("caseSilent=$it") }
             reconnectAttempts?.let { add("reconnect=$it") }
             heartbeatLatencyMs?.let { add("heartbeat=${it}ms") }
             lastAckMode?.let { add("ackMode=${it.name}") }
@@ -463,10 +484,13 @@ class BleTelemetryRepository(
             }
         }.takeIf { it.isNotEmpty() }?.joinToString(separator = ", ")
 
+        val snapshotJson = buildTelemetryJson(caseStatus)
         return MemoryRepository.LensSnapshot(
             batteryPercent = null,
-            caseBatteryPercent = caseBatteryPercent,
-            caseOpen = caseOpen,
+            batteryVoltageMv = batteryVoltageMv,
+            caseBatteryPercent = caseBatteryPercent ?: caseStatus.batteryPercent,
+            caseOpen = caseOpen ?: caseStatus.lidOpen,
+            caseSilentMode = caseSilentMode ?: caseStatus.silentMode,
             lastUpdated = timestamp,
             rssi = null,
             firmwareVersion = firmwareVersion,
@@ -474,7 +498,83 @@ class BleTelemetryRepository(
             reconnectAttempts = reconnectAttempts,
             heartbeatLatencyMs = heartbeatLatencyMs,
             lastAckMode = lastAckMode?.name,
+            lastAckStatus = lastAckStatus,
+            lastAckTimestamp = lastAckTimestamp,
+            uptimeSeconds = uptimeSeconds,
+            snapshotJson = snapshotJson,
         )
+    }
+
+    private fun CaseStatus.toRecord(): MemoryRepository.CaseSnapshot? {
+        if (batteryPercent == null && charging == null && lidOpen == null && silentMode == null) {
+            return null
+        }
+        return MemoryRepository.CaseSnapshot(
+            batteryPercent = batteryPercent,
+            charging = charging,
+            lidOpen = lidOpen,
+            silentMode = silentMode,
+        )
+    }
+
+    private fun MemoryRepository.LensSnapshot.hasContent(): Boolean {
+        return listOf(
+            batteryPercent,
+            batteryVoltageMv,
+            caseBatteryPercent,
+            caseOpen,
+            caseSilentMode,
+            lastUpdated,
+            rssi,
+            firmwareVersion,
+            notes,
+            reconnectAttempts,
+            heartbeatLatencyMs,
+            lastAckMode,
+            lastAckStatus,
+            lastAckTimestamp,
+            uptimeSeconds,
+            snapshotJson,
+        ).any { it != null }
+    }
+
+    private fun DeviceTelemetrySnapshot.buildTelemetryJson(caseStatus: CaseStatus): String? {
+        val json = JSONObject()
+        var hasField = false
+        fun put(name: String, value: Any?) {
+            if (value != null) {
+                json.put(name, value)
+                hasField = true
+            }
+        }
+        json.put("lens", lens.name.lowercase(Locale.US))
+        put("timestamp", timestamp)
+        put("batteryVoltageMv", batteryVoltageMv)
+        put("isCharging", isCharging)
+        put("caseBatteryPercent", caseBatteryPercent ?: caseStatus.batteryPercent)
+        put("caseOpen", caseOpen ?: caseStatus.lidOpen)
+        put("caseCharging", caseCharging ?: caseStatus.charging)
+        put("caseSilentMode", caseSilentMode ?: caseStatus.silentMode)
+        put("uptimeSeconds", uptimeSeconds)
+        put("firmwareVersion", firmwareVersion)
+        put("lastAckStatus", lastAckStatus)
+        put("lastAckTimestamp", lastAckTimestamp)
+        put("lastAckMode", lastAckMode?.name)
+        put("reconnectAttempts", reconnectAttempts)
+        put("heartbeatLatencyMs", heartbeatLatencyMs)
+        environment?.takeIf { it.isNotEmpty() }?.let { map ->
+            val envJson = JSONObject()
+            map.entries.sortedBy { it.key }.forEach { (key, value) ->
+                envJson.put(key, value)
+            }
+            json.put("environment", envJson)
+            hasField = true
+        }
+        lastGesture?.let { event ->
+            json.put("lastGesture", gestureLabel(event.gesture))
+            hasField = true
+        }
+        return if (hasField) json.toString() else null
     }
 
     data class UartLine(val lens: Lens, val text: String)
@@ -515,6 +615,83 @@ class BleTelemetryRepository(
         persistenceScope.launch {
             telemetryParser.events.collect { event ->
                 handleTelemetryEvent(event)
+            }
+        }
+        startSnapshotLogger()
+    }
+
+    private fun startSnapshotLogger() {
+        snapshotLogJob?.cancel()
+        snapshotLogJob = persistenceScope.launch {
+            while (isActive) {
+                delay(30_000L)
+                buildTelemetryLogLine()?.let { line ->
+                    logger(line)
+                    memory.addConsoleLine(line)
+                }
+            }
+        }
+    }
+
+    private fun buildTelemetryLogLine(): String? {
+        val case = _caseStatus.value
+        val left = lensTelemetrySnapshots.getValue(Lens.LEFT).value
+        val right = lensTelemetrySnapshots.getValue(Lens.RIGHT).value
+        val uptimeSeconds = listOfNotNull(left.uptimeSeconds, right.uptimeSeconds).maxOrNull()
+        val firmware = left.firmwareVersion ?: right.firmwareVersion
+        val hasCaseData = listOf(case.batteryPercent, case.charging, case.lidOpen, case.silentMode)
+            .any { it != null }
+        val hasLensData = listOf(
+            left.batteryVoltageMv,
+            right.batteryVoltageMv,
+            firmware,
+            uptimeSeconds,
+        ).any { it != null }
+        if (!hasCaseData && !hasLensData) {
+            return null
+        }
+        val caseLabel = buildString {
+            append("Case ")
+            append(case.batteryPercent?.let { "$it%" } ?: "–")
+            append(' ')
+            append('(')
+            append(
+                when (case.lidOpen) {
+                    true -> "Open"
+                    false -> "Closed"
+                    null -> "Unknown"
+                }
+            )
+            append(')')
+        }
+        val silentLabel = case.silentMode?.let { if (it) "Silent On" else "Silent Off" }
+        val caseChargingLabel = case.charging?.let { if (it) "Charging" else "Not Charging" }
+        val leftLabel = left.batteryVoltageMv?.let { "L ${it}mV" } ?: "L ?"
+        val rightLabel = right.batteryVoltageMv?.let { "R ${it}mV" } ?: "R ?"
+        val uptimeLabel = uptimeSeconds?.let { "Up ${it}s" }
+        val firmwareLabel = firmware?.let { "FW $it" }
+        return buildString {
+            append("[TELEMETRY] ")
+            append(caseLabel)
+            silentLabel?.let {
+                append(" • ")
+                append(it)
+            }
+            caseChargingLabel?.let {
+                append(" • ")
+                append(it)
+            }
+            append(" • ")
+            append(leftLabel)
+            append(" • ")
+            append(rightLabel)
+            firmwareLabel?.let {
+                append(" • ")
+                append(it)
+            }
+            uptimeLabel?.let {
+                append(" • ")
+                append(it)
             }
         }
     }
@@ -603,6 +780,7 @@ class BleTelemetryRepository(
     private var ackJob: Job? = null
     private var stabilityJob: Job? = null
     private var dashboardStatusJob: Job? = null
+    private var snapshotLogJob: Job? = null
     private var dashboardEncoder: DashboardDataEncoder? = null
     private var boundService: MoncchichiBleService? = null
     private var lastConnected = false
@@ -615,6 +793,8 @@ class BleTelemetryRepository(
     private val lastCaseRefreshAt = EnumMap<Lens, Long>(Lens::class.java).apply {
         Lens.values().forEach { put(it, 0L) }
     }
+    private val snapshotPersistLock = Any()
+    private var lastPersistedSnapshotContent: MemoryRepository.TelemetrySnapshotRecord? = null
 
     private val leftBuffer = ByteArrayOutputStream()
     private val rightBuffer = ByteArrayOutputStream()
@@ -748,6 +928,7 @@ class BleTelemetryRepository(
         clearBuffers()
         keepAliveSnapshots.clear()
         synchronized(stabilityHistory) { stabilityHistory.clear() }
+        synchronized(snapshotPersistLock) { lastPersistedSnapshotContent = null }
     }
 
     suspend fun sendMicToggle(enabled: Boolean, lens: Lens = Lens.RIGHT): Boolean {
@@ -1500,6 +1681,7 @@ class BleTelemetryRepository(
                 }
             }
         }
+        persistDeviceTelemetrySnapshots(timestamp)
     }
 
     private fun handleLensConnectionTransition(lens: Lens, connected: Boolean) {
@@ -1992,6 +2174,7 @@ class BleTelemetryRepository(
     }
 
     private fun mergeReconnectDiagnostics(lens: Lens, status: MoncchichiBleService.LensStatus) {
+        var telemetryChanged = false
         updateSnapshot(persist = false) { current ->
             val existing = current.lens(lens)
             var updated = existing
@@ -2037,6 +2220,7 @@ class BleTelemetryRepository(
                         lastAckMode = status.heartbeatAckType ?: snapshot.lastAckMode,
                     )
                 }
+                telemetryChanged = true
                 changed = true
             }
 
@@ -2045,6 +2229,9 @@ class BleTelemetryRepository(
             } else {
                 current.updateLens(lens, updated)
             }
+        }
+        if (telemetryChanged) {
+            persistDeviceTelemetrySnapshots(System.currentTimeMillis())
         }
     }
 
@@ -2312,22 +2499,16 @@ class BleTelemetryRepository(
 
     private fun persistSnapshot(snapshot: Snapshot, eventTimestamp: Long?) {
         val recordedAt = eventTimestamp ?: System.currentTimeMillis()
-        val record = MemoryRepository.TelemetrySnapshotRecord(
-            recordedAt = recordedAt,
-            uptimeSeconds = snapshot.uptimeSeconds,
-            left = snapshot.left.toRecord(),
-            right = snapshot.right.toRecord(),
-        )
-        persistenceScope.launch {
-            memory.addTelemetrySnapshot(record)
-        }
+        persistDeviceTelemetrySnapshots(recordedAt)
     }
 
     private fun LensTelemetry.toRecord(): MemoryRepository.LensSnapshot =
         MemoryRepository.LensSnapshot(
             batteryPercent = batteryPercent,
+            batteryVoltageMv = null,
             caseBatteryPercent = caseBatteryPercent,
             caseOpen = caseOpen,
+            caseSilentMode = silentMode,
             lastUpdated = lastUpdatedAt,
             rssi = rssi,
             firmwareVersion = firmwareVersion,
@@ -2335,6 +2516,10 @@ class BleTelemetryRepository(
             reconnectAttempts = reconnectAttemptsSnapshot,
             heartbeatLatencyMs = heartbeatLatencySnapshotMs,
             lastAckMode = ackMode?.name,
+            lastAckStatus = null,
+            lastAckTimestamp = null,
+            uptimeSeconds = null,
+            snapshotJson = null,
         )
 
     private fun MoncchichiBleService.Target.toLensOrNull(): Lens? = when (this) {
