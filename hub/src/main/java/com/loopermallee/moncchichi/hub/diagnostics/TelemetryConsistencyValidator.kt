@@ -4,6 +4,7 @@ import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.CaseStatus
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.DeviceTelemetrySnapshot
 import java.util.ArrayDeque
+import java.util.EnumMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -32,7 +33,8 @@ class TelemetryConsistencyValidator(
     private val uptimeRegressionActive = mutableMapOf<MoncchichiBleService.Lens, Boolean>()
     private var voltageDriftStart: Long? = null
     private var voltageWarned = false
-    private var casePercentWarned = false
+    private var casePercentWarnedGlobal = false
+    private val casePercentWarnedByLens = EnumMap<MoncchichiBleService.Lens, Boolean>(MoncchichiBleService.Lens::class.java)
     private var caseFlapWarned = false
 
     init {
@@ -57,7 +59,8 @@ class TelemetryConsistencyValidator(
     fun reset() {
         voltageDriftStart = null
         voltageWarned = false
-        casePercentWarned = false
+        casePercentWarnedGlobal = false
+        casePercentWarnedByLens.clear()
         caseFlapWarned = false
         caseToggleHistory.clear()
         lastCaseState = null
@@ -73,7 +76,7 @@ class TelemetryConsistencyValidator(
         val caseStatus = latestCaseStatus.value
 
         checkVoltageDrift(now, lensSnapshots)
-        checkCasePercent(now, caseStatus)
+        checkCasePercent(now, caseStatus, snapshots)
         checkCaseFlapping(now, caseStatus)
         checkUptime(now, snapshots)
     }
@@ -105,16 +108,33 @@ class TelemetryConsistencyValidator(
         }
     }
 
-    private fun checkCasePercent(now: Long, status: CaseStatus) {
+    private fun checkCasePercent(
+        now: Long,
+        status: CaseStatus,
+        snapshots: List<DeviceTelemetrySnapshot>,
+    ) {
         val percent = status.batteryPercent
         val invalidPercent = percent != null && (percent < 0 || percent > 100)
         if (invalidPercent) {
-            if (!casePercentWarned) {
+            if (!casePercentWarnedGlobal) {
                 emitConsole("WARN", null, "[CASE] invalid percent", now)
-                casePercentWarned = true
+                casePercentWarnedGlobal = true
             }
         } else {
-            casePercentWarned = false
+            casePercentWarnedGlobal = false
+        }
+        for (snapshot in snapshots) {
+            val lensPercent = snapshot.caseBatteryPercent
+            val invalidLens = lensPercent != null && (lensPercent < 0 || lensPercent > 100)
+            val warned = casePercentWarnedByLens[snapshot.lens] == true
+            if (invalidLens) {
+                if (!warned) {
+                    emitConsole("WARN", snapshot.lens, "[CASE] invalid percent", now)
+                    casePercentWarnedByLens[snapshot.lens] = true
+                }
+            } else {
+                casePercentWarnedByLens.remove(snapshot.lens)
+            }
         }
     }
 
@@ -132,17 +152,20 @@ class TelemetryConsistencyValidator(
         val last = lastCaseState
         if (last != null && last != state) {
             caseToggleHistory.addLast(now)
+            while (caseToggleHistory.size > 10) {
+                caseToggleHistory.removeFirst()
+            }
         }
         lastCaseState = state
         while (caseToggleHistory.isNotEmpty() && now - caseToggleHistory.first() > FLAP_WINDOW_MS) {
             caseToggleHistory.removeFirst()
         }
-        if (caseToggleHistory.size > FLAP_THRESHOLD) {
+        if (caseToggleHistory.size >= FLAP_THRESHOLD) {
             if (!caseFlapWarned) {
                 emitConsole("WARN", null, "[CASE] unstable lid state", now)
                 caseFlapWarned = true
             }
-        } else if (caseToggleHistory.isEmpty()) {
+        } else {
             caseFlapWarned = false
         }
     }
@@ -171,7 +194,7 @@ class TelemetryConsistencyValidator(
         private const val CHECK_INTERVAL_MS = 10_000L
         private const val VOLTAGE_DRIFT_THRESHOLD_MV = 200
         private const val DRIFT_DURATION_THRESHOLD_MS = 30_000L
-        private const val FLAP_WINDOW_MS = 30_000L
-        private const val FLAP_THRESHOLD = 3
+        private const val FLAP_WINDOW_MS = 5_000L
+        private const val FLAP_THRESHOLD = 2
     }
 }

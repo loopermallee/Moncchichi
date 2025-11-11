@@ -481,9 +481,9 @@ class DeveloperFragment : Fragment() {
                 batteryView.setTextColor(defaultTextColor)
                 return
             }
-            batteryView.text = String.format(Locale.US, "%d %%", value)
+            batteryView.text = String.format(Locale.US, "%d%%", value)
             val color = when {
-                value > 60 -> batteryHighColor
+                value >= 60 -> batteryHighColor
                 value >= 30 -> batteryMidColor
                 else -> batteryLowColor
             }
