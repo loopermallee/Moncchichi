@@ -1229,6 +1229,7 @@ private class HeartbeatSupervisor(
         Long?,
         MoncchichiBleService.AckType,
         Long,
+        Boolean,
     ) -> Unit,
     private val onHeartbeatMiss: (MoncchichiBleService.Lens, Long, Int) -> Unit,
     private val rebondThreshold: Int,
