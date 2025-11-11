@@ -117,6 +117,8 @@ class BleTelemetryRepository(
         val powerHistory: List<PowerFrame> = emptyList(),
         val reconnectAttemptsSnapshot: Int? = null,
         val heartbeatLatencySnapshotMs: Int? = null,
+        val heartbeatLastPingAt: Long? = null,
+        val heartbeatMissCount: Int = 0,
         val ackMode: MoncchichiBleService.AckType? = null,
     )
 
@@ -2444,6 +2446,12 @@ class BleTelemetryRepository(
             }
             if (existing.reconnecting != status.reconnecting) {
                 updated = updated.copy(reconnecting = status.reconnecting)
+                val message = if (status.reconnecting) {
+                    "reconnecting"
+                } else {
+                    "link restored"
+                }
+                emitConsole("RECOVER", lens, message)
                 changed = true
             }
             if (existing.bondResets != status.bondResetCount) {
@@ -2460,6 +2468,8 @@ class BleTelemetryRepository(
                 updated = updated.copy(
                     heartbeatLatencySnapshotMs = heartbeatLatency,
                     reconnectAttemptsSnapshot = reconnectSnapshot,
+                    heartbeatLastPingAt = status.heartbeatLastPingAt,
+                    heartbeatMissCount = status.heartbeatMissCount,
                     ackMode = status.heartbeatAckType,
                 )
                 val hbLabel = heartbeatLatency?.let { "${it} ms" } ?: "n/a"

@@ -101,6 +101,8 @@ class MoncchichiBleService(
         val lastBondEventAt: Long? = null,
         val heartbeatLatencyMs: Long? = null,
         val heartbeatAckType: AckType? = null,
+        val heartbeatLastPingAt: Long? = null,
+        val heartbeatMissCount: Int = 0,
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
@@ -230,16 +232,14 @@ class MoncchichiBleService(
             log("[RECONNECT][${lens.shortLabel}] success after $triesLabel")
             recordReconnectSuccess(lens)
         },
-        onStop = { lens ->
-            updateLens(lens) { it.copy(reconnecting = false) }
-        },
+        onStop = ::onReconnectStopped,
         updateState = ::setReconnectState,
     )
     private var pendingRightBondSequence = false
     private var rightBondRetryAttempt = 0
     private var rightBondRetryJob: Job? = null
     private var totalBondResetEvents = 0
-    private val heartbeatRebondTriggered = EnumMap<Lens, Boolean>(Lens::class.java).apply {
+    private val heartbeatRecoveryTriggered = EnumMap<Lens, Boolean>(Lens::class.java).apply {
         Lens.values().forEach { lens -> put(lens, false) }
     }
 
@@ -255,7 +255,7 @@ class MoncchichiBleService(
         onHeartbeatMiss = { lens, timestamp, missCount ->
             handleHeartbeatMiss(lens, timestamp, missCount)
         },
-        rebondThreshold = HEARTBEAT_REBOND_THRESHOLD,
+        rebondThreshold = HEARTBEAT_RECOVERY_THRESHOLD,
         baseIntervalMs = HEARTBEAT_INTERVAL_MS,
         jitterMs = HEARTBEAT_JITTER_MS,
         idlePollMs = HEARTBEAT_IDLE_POLL_MS,
@@ -524,7 +524,7 @@ class MoncchichiBleService(
         lastAckSignature.remove(lens)
         cancelReconnect(lens)
         lastDisconnectTimestamp[lens] = System.currentTimeMillis()
-        heartbeatRebondTriggered[lens] = false
+        heartbeatRecoveryTriggered[lens] = false
         resetStabilityMetrics(lens)
         updateLens(lens) { LensStatus() }
         if (connectionOrder.remove(lens)) {
@@ -1046,7 +1046,6 @@ class MoncchichiBleService(
     private fun scheduleReconnect(lens: Lens, reason: String) {
         if (!shouldAutoReconnect(lens)) return
         updateLens(lens) { it.copy(reconnecting = true) }
-        heartbeatRebondTriggered[lens] = false
         reconnectCoordinator.schedule(lens, reason)
     }
 
@@ -1067,13 +1066,14 @@ class MoncchichiBleService(
                 reconnectSuccesses = it.reconnectSuccesses + 1,
                 reconnecting = false,
                 degraded = false,
+                heartbeatMissCount = 0,
             )
         }
         val current = _state.value
         _state.value = current.copy(autoReconnectSuccessCount = current.autoReconnectSuccessCount + 1)
         bondFailureStreak[lens] = 0
         staleBondFailureStreak[lens] = 0
-        heartbeatRebondTriggered[lens] = false
+        heartbeatRecoveryTriggered[lens] = false
     }
 
     private fun setReconnectState(lens: Lens, status: ReconnectStatus) {
@@ -1084,12 +1084,17 @@ class MoncchichiBleService(
 
     private fun cancelReconnect(lens: Lens) {
         reconnectCoordinator.cancel(lens)
-        heartbeatRebondTriggered[lens] = false
+        heartbeatRecoveryTriggered[lens] = false
     }
 
     private fun resetReconnectTimer(lens: Lens) {
-        heartbeatRebondTriggered[lens] = false
+        heartbeatRecoveryTriggered[lens] = false
         reconnectCoordinator.reset(lens)
+    }
+
+    private fun onReconnectStopped(lens: Lens) {
+        heartbeatRecoveryTriggered[lens] = false
+        updateLens(lens) { it.copy(reconnecting = false) }
     }
 
     private fun shouldAutoReconnect(lens: Lens): Boolean {
@@ -1189,6 +1194,10 @@ class MoncchichiBleService(
         val attemptStart = System.currentTimeMillis()
         val queued = record.client.enqueueHeartbeat(packet.sequence, packet.payload)
         val timestamp = System.currentTimeMillis()
+        if (queued) {
+            emitConsole("PING", lens, "sent", timestamp)
+            log("[BLE][PING][${lens.shortLabel}] sent seq=${packet.sequence}")
+        }
         if (!queued) {
             return HeartbeatResult(
                 sequence = packet.sequence,
@@ -1233,26 +1242,15 @@ class MoncchichiBleService(
         val latencyLabel = latencyMs?.let { "${it}ms" } ?: "n/a"
         val modeLabel = ackType.name.lowercase(Locale.US)
         val statusLabel = if (busy) "busy" else "ok"
-        val consoleMessage = buildString {
-            append("seq=")
-            append(sequence)
-            append(' ')
-            append("latency=")
-            append(latencyLabel)
-            append(' ')
-            append("interval=")
-            append(intervalLabel)
-            append(' ')
-            append("status=")
-            append(statusLabel)
-            append(' ')
-            append("mode=")
-            append(modeLabel)
-        }
-        emitConsole("PING", lens, consoleMessage, timestamp)
-        log("[BLE][PING][${lens.shortLabel}] seq=$sequence latency=$latencyLabel status=$statusLabel mode=$modeLabel")
+        emitConsole("PING", lens, "[OK] RTT=$latencyLabel", timestamp)
+        log("[BLE][PING][${lens.shortLabel}] ok seq=$sequence latency=$latencyLabel interval=$intervalLabel status=$statusLabel mode=$modeLabel")
         updateLens(lens) {
-            it.copy(heartbeatLatencyMs = latencyMs, heartbeatAckType = ackType)
+            it.copy(
+                heartbeatLatencyMs = latencyMs,
+                heartbeatAckType = ackType,
+                heartbeatLastPingAt = timestamp,
+                heartbeatMissCount = 0,
+            )
         }
         resetReconnectTimer(lens)
         emitStabilitySnapshot(timestamp)
@@ -1260,16 +1258,34 @@ class MoncchichiBleService(
 
     private fun handleHeartbeatMiss(lens: Lens, timestamp: Long, missCount: Int) {
         recordHeartbeatMiss(lens, timestamp)
-        emitConsole("PING", lens, "miss=$missCount", timestamp)
-        logWarn("[BLE][PING][${lens.shortLabel}] miss $missCount")
-        emitStabilitySnapshot(timestamp)
-        if (missCount >= HEARTBEAT_REBOND_THRESHOLD && rebondJob?.isActive != true) {
-            if (heartbeatRebondTriggered[lens] != true) {
-                heartbeatRebondTriggered[lens] = true
-                emitConsole("PING", lens, "rebound", timestamp)
-                performRebond(lens)
-            }
+        emitConsole("PING", lens, "[WARN] missed ping ($missCount)", timestamp)
+        logWarn("[BLE][PING][${lens.shortLabel}] missed ping ($missCount)")
+        updateLens(lens) {
+            it.copy(
+                heartbeatLastPingAt = timestamp,
+                heartbeatMissCount = missCount,
+            )
         }
+        emitStabilitySnapshot(timestamp)
+        if (missCount >= HEARTBEAT_RECOVERY_THRESHOLD) {
+            triggerHeartbeatRecovery(lens, timestamp, missCount)
+        }
+    }
+
+    private fun triggerHeartbeatRecovery(lens: Lens, timestamp: Long, missCount: Int) {
+        if (heartbeatRecoveryTriggered[lens] == true) {
+            return
+        }
+        if (currentLensStatus(lens).reconnecting) {
+            return
+        }
+        if (!shouldAutoReconnect(lens)) {
+            return
+        }
+        heartbeatRecoveryTriggered[lens] = true
+        emitConsole("RECOVER", lens, "reconnecting", timestamp)
+        logWarn("[BLE][PING][${lens.shortLabel}] unresponsive; scheduling reconnect (misses=$missCount)")
+        scheduleReconnect(lens, "heartbeat miss x$missCount")
     }
 
 private class HeartbeatSupervisor(
@@ -1854,7 +1870,7 @@ private class HeartbeatSupervisor(
         cancelReconnect(lens)
         recordConnectionFailure(lens)
         lastDisconnectTimestamp[lens] = System.currentTimeMillis()
-        heartbeatRebondTriggered[lens] = false
+        heartbeatRecoveryTriggered[lens] = false
         staleBondFailureStreak[lens] = 0
         resetStabilityMetrics(lens)
         updateLens(lens) { LensStatus() }
@@ -1992,10 +2008,10 @@ private class HeartbeatSupervisor(
         private const val CASE_BATTERY_SUBCOMMAND: Byte = 0x01
         private const val BOND_RECOVERY_GUARD_MS = 3_000L
         private const val UNBOND_REASON_REMOVED = 5
-        private const val HEARTBEAT_INTERVAL_MS = 29_000L
-        private const val HEARTBEAT_JITTER_MS = 1_000L
-        private const val HEARTBEAT_ACK_WINDOW_MS = 1_500L
-        private const val HEARTBEAT_REBOND_THRESHOLD = 3
+        private const val HEARTBEAT_INTERVAL_MS = 5_000L
+        private const val HEARTBEAT_JITTER_MS = 0L
+        private const val HEARTBEAT_ACK_WINDOW_MS = 2_000L
+        private const val HEARTBEAT_RECOVERY_THRESHOLD = 3
         private const val HEARTBEAT_IDLE_POLL_MS = 1_000L
         private const val HEARTBEAT_BUSY_DEFER_MS = 3_000L
         private const val HEARTBEAT_BUSY_POLL_MS = 150L
