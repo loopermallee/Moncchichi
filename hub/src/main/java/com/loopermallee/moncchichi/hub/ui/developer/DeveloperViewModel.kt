@@ -34,9 +34,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.collections.buildList
 
 private const val PREF_KEY_MODE = "developer_mode_selection"
 
@@ -98,6 +100,14 @@ class DeveloperViewModel(
         telemetry.deviceTelemetryFlow
             .map { snapshots -> snapshots.associateBy { it.lens } }
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    val deviceTelemetryUiFlow: StateFlow<String?> =
+        combine(telemetry.deviceTelemetryFlow, telemetry.caseStatus) { snapshots, caseStatus ->
+            val byLens = snapshots.associateBy { it.lens }
+            val left = byLens[MoncchichiBleService.Lens.LEFT]
+            val right = byLens[MoncchichiBleService.Lens.RIGHT]
+            buildTelemetrySummary(left, right, caseStatus)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val gestures: SharedFlow<LensGestureEvent> = telemetry.gesture
 
@@ -187,6 +197,46 @@ class DeveloperViewModel(
 
     fun setAudioSink(sink: AudioSink) {
         SettingsRepository.setAudioSink(sink)
+    }
+
+    private fun buildTelemetrySummary(
+        left: BleTelemetryRepository.DeviceTelemetrySnapshot?,
+        right: BleTelemetryRepository.DeviceTelemetrySnapshot?,
+        caseStatus: BleTelemetryRepository.CaseStatus,
+    ): String? {
+        val caseLabel = caseStatus.batteryPercent?.let { percent ->
+            buildString {
+                append("Case ")
+                append(percent)
+                append('%')
+                append(" (")
+                append(
+                    when (caseStatus.lidOpen) {
+                        true -> "Open"
+                        false -> "Closed"
+                        null -> "Unknown"
+                    }
+                )
+                append(')')
+                if (caseStatus.charging == true) append(" ⚡")
+                if (caseStatus.lidOpen == false) append(" 📦")
+            }
+        }
+        val leftLabel = left?.batteryVoltageMv?.let { "L ${it} mV" }
+        val rightLabel = right?.batteryVoltageMv?.let { "R ${it} mV" }
+        val firmware = left?.firmwareVersion ?: right?.firmwareVersion
+        val uptime = listOfNotNull(left?.uptimeSeconds, right?.uptimeSeconds).maxOrNull()
+        if (caseLabel == null && leftLabel == null && rightLabel == null && firmware == null && uptime == null) {
+            return null
+        }
+        val parts = buildList {
+            caseLabel?.let(::add)
+            leftLabel?.let(::add)
+            rightLabel?.let(::add)
+            firmware?.takeIf { it.isNotBlank() }?.let { add("FW $it") }
+            uptime?.let { add("Up ${it} s") }
+        }
+        return parts.joinToString(separator = " • ")
     }
 
     fun exportAllLogs(context: Context) {

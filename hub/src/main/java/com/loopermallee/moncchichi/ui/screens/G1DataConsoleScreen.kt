@@ -75,6 +75,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.collections.buildList
 
 @Composable
 fun G1DataConsoleScreen(
@@ -558,6 +559,14 @@ private fun LensVitalsCard(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
+            telemetrySummaryText(left, right, caseStatus)?.let { summary ->
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(24.dp)
@@ -632,8 +641,12 @@ private fun CaseStatusSection(caseStatus: CaseStatus) {
         )
         val battery = caseStatus.batteryPercent
         val batteryText = battery?.let { "$it %" } ?: "—"
+        val iconSuffix = buildString {
+            if (caseStatus.charging == true) append(" ⚡")
+            if (caseStatus.lidOpen == false) append(" 📦")
+        }
         Text(
-            text = "🔋 Battery: $batteryText",
+            text = "🔋 Battery: $batteryText$iconSuffix",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = if (battery != null) FontWeight.Medium else FontWeight.Normal,
             color = battery?.let { caseBatteryColor(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
@@ -685,8 +698,8 @@ private fun formatUptimeLabel(seconds: Long?): String {
 }
 
 private fun caseBatteryColor(percent: Int): Color = when {
-    percent > 60 -> Color(0xFF4CAF50)
-    percent >= 30 -> Color(0xFFFFC107)
+    percent >= 80 -> Color(0xFF4CAF50)
+    percent >= 40 -> Color(0xFFFFC107)
     else -> Color(0xFFF44336)
 }
 
@@ -700,4 +713,44 @@ private fun gestureLabel(event: LensGestureEvent): String {
         0x04 -> "hold"
         else -> event.gesture.name.lowercase(Locale.US).replace('_', ' ')
     }
+}
+
+private fun telemetrySummaryText(
+    left: DeviceTelemetrySnapshot?,
+    right: DeviceTelemetrySnapshot?,
+    caseStatus: CaseStatus,
+): String? {
+    val caseLabel = caseStatus.batteryPercent?.let { percent ->
+        buildString {
+            append("Case ")
+            append(percent)
+            append('%')
+            append(" (")
+            append(
+                when (caseStatus.lidOpen) {
+                    true -> "Open"
+                    false -> "Closed"
+                    null -> "Unknown"
+                }
+            )
+            append(')')
+            if (caseStatus.charging == true) append(" ⚡")
+            if (caseStatus.lidOpen == false) append(" 📦")
+        }
+    }
+    val leftLabel = left?.batteryVoltageMv?.let { "L ${it} mV" }
+    val rightLabel = right?.batteryVoltageMv?.let { "R ${it} mV" }
+    val firmware = left?.firmwareVersion ?: right?.firmwareVersion
+    val uptime = listOfNotNull(left?.uptimeSeconds, right?.uptimeSeconds).maxOrNull()
+    if (caseLabel == null && leftLabel == null && rightLabel == null && firmware == null && uptime == null) {
+        return null
+    }
+    val parts = buildList {
+        caseLabel?.let(::add)
+        leftLabel?.let(::add)
+        rightLabel?.let(::add)
+        firmware?.takeIf { it.isNotBlank() }?.let { add("FW $it") }
+        uptime?.let { add("Up ${it} s") }
+    }
+    return parts.joinToString(separator = " • ")
 }

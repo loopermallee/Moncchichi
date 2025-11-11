@@ -45,6 +45,7 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "left_reconnect_attempts") val leftReconnectAttempts: Int?,
     @ColumnInfo(name = "left_heartbeat_latency_ms") val leftHeartbeatLatencyMs: Int?,
     @ColumnInfo(name = "left_last_ack_mode") val leftLastAckMode: String?,
+    @ColumnInfo(name = "left_snapshot_json") val leftSnapshotJson: String?,
     @ColumnInfo(name = "right_battery_percent") val rightBatteryPercent: Int?,
     @ColumnInfo(name = "right_case_battery_percent") val rightCaseBatteryPercent: Int?,
     @ColumnInfo(name = "right_case_open") val rightCaseOpen: Boolean?,
@@ -55,6 +56,7 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "right_reconnect_attempts") val rightReconnectAttempts: Int?,
     @ColumnInfo(name = "right_heartbeat_latency_ms") val rightHeartbeatLatencyMs: Int?,
     @ColumnInfo(name = "right_last_ack_mode") val rightLastAckMode: String?,
+    @ColumnInfo(name = "right_snapshot_json") val rightSnapshotJson: String?,
 )
 
 @Dao
@@ -83,7 +85,7 @@ interface MemoryDao {
 
 @Database(
     entities = [ConsoleLine::class, AssistantEntry::class, TelemetrySnapshot::class],
-    version = 6,
+    version = 7,
 )
 abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao
@@ -101,6 +103,7 @@ class MemoryRepository(private val dao: MemoryDao) {
         val reconnectAttempts: Int?,
         val heartbeatLatencyMs: Int?,
         val lastAckMode: String?,
+        val snapshotJson: String?,
     )
 
     data class TelemetrySnapshotRecord(
@@ -177,6 +180,7 @@ class MemoryRepository(private val dao: MemoryDao) {
             leftReconnectAttempts = left.reconnectAttempts,
             leftHeartbeatLatencyMs = left.heartbeatLatencyMs,
             leftLastAckMode = left.lastAckMode,
+            leftSnapshotJson = left.snapshotJson,
             rightBatteryPercent = right.batteryPercent,
             rightCaseBatteryPercent = right.caseBatteryPercent,
             rightCaseOpen = right.caseOpen,
@@ -187,6 +191,7 @@ class MemoryRepository(private val dao: MemoryDao) {
             rightReconnectAttempts = right.reconnectAttempts,
             rightHeartbeatLatencyMs = right.heartbeatLatencyMs,
             rightLastAckMode = right.lastAckMode,
+            rightSnapshotJson = right.snapshotJson,
         )
     }
 
@@ -205,6 +210,7 @@ class MemoryRepository(private val dao: MemoryDao) {
                 reconnectAttempts = leftReconnectAttempts,
                 heartbeatLatencyMs = leftHeartbeatLatencyMs,
                 lastAckMode = leftLastAckMode,
+                snapshotJson = leftSnapshotJson,
             ),
             right = LensSnapshot(
                 batteryPercent = rightBatteryPercent,
@@ -217,6 +223,7 @@ class MemoryRepository(private val dao: MemoryDao) {
                 reconnectAttempts = rightReconnectAttempts,
                 heartbeatLatencyMs = rightHeartbeatLatencyMs,
                 lastAckMode = rightLastAckMode,
+                snapshotJson = rightSnapshotJson,
             ),
         )
     }
