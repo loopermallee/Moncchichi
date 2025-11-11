@@ -635,6 +635,10 @@ class BleTelemetryRepository(
             null
         }
 
+    private val lastRebondCounts = EnumMap<Lens, Int>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, 0) }
+    }
+
     init {
         persistenceScope.launch {
             telemetryParser.events.collect { event ->
@@ -1017,6 +1021,26 @@ class BleTelemetryRepository(
         val rssiLabel = metrics.avgRssi?.toString() ?: "n/a"
         val ackLabel = metrics.lastAckDeltaMs?.let { "${it} ms" } ?: "n/a"
         val reconnectLabel = metrics.reconnectLatencyMs?.let { "${it} ms" } ?: "n/a"
+        val rebondCount = metrics.rebondEvents
+        if (lens != null) {
+            val previous = lastRebondCounts[lens] ?: 0
+            if (rebondCount > previous) {
+                telemetryValidator?.reset()
+            }
+            lastRebondCounts[lens] = rebondCount
+        } else {
+            var resetTriggered = false
+            Lens.values().forEach { tracked ->
+                val previous = lastRebondCounts[tracked] ?: 0
+                if (rebondCount > previous) {
+                    resetTriggered = true
+                }
+                lastRebondCounts[tracked] = rebondCount
+            }
+            if (resetTriggered) {
+                telemetryValidator?.reset()
+            }
+        }
         val message =
             "HB=${metrics.heartbeatCount} MISS=${metrics.missedHeartbeats} " +
                 "REBOND=${metrics.rebondEvents} RSSI=$rssiLabel ΔACK=$ackLabel RECON=$reconnectLabel"
@@ -1603,6 +1627,7 @@ class BleTelemetryRepository(
         val touchedBattery = batteryPercent != null
         val touchedLid = lidOpen != null
         val touchedSilent = silentMode != null
+        val touchedCharging = charging != null
 
         batteryPercent?.let { value ->
             if (value != nextBattery) {
@@ -1632,16 +1657,8 @@ class BleTelemetryRepository(
                 silentChanged = true
             }
         }
-        if (!changed) {
-            if (touchedBattery || touchedLid || touchedSilent) {
-                validationController.onCaseStatus(
-                    status = current,
-                    timestamp = timestamp,
-                    batteryUpdated = touchedBattery,
-                    lidUpdated = touchedLid,
-                    silentUpdated = touchedSilent,
-                )
-            }
+        val anyTouched = touchedBattery || touchedLid || touchedSilent || touchedCharging
+        if (!changed && !anyTouched) {
             return
         }
         val updated = CaseStatus(
@@ -1649,7 +1666,7 @@ class BleTelemetryRepository(
             charging = nextCharging,
             lidOpen = nextLid,
             silentMode = nextSilent,
-            updatedAt = timestamp,
+            updatedAt = if (anyTouched) timestamp else current.updatedAt,
         )
         _caseStatus.value = updated
         validationController.onCaseStatus(
@@ -1659,25 +1676,26 @@ class BleTelemetryRepository(
             lidUpdated = touchedLid,
             silentUpdated = touchedSilent,
         )
-        emitCaseConsole(lens, updated, timestamp)
-        if (lidChanged) {
-            boundService?.updateHeartbeatLidOpen(updated.lidOpen)
-        }
-        lens?.let { sourceLens ->
-            if (chargingChanged) {
-                boundService?.updateHeartbeatInCase(sourceLens, _inCaseStatus.value.valueFor(sourceLens))
+        if (changed) {
+            emitCaseConsole(lens, updated, timestamp)
+            if (lidChanged) {
+                boundService?.updateHeartbeatLidOpen(updated.lidOpen)
             }
+            lens?.let { sourceLens ->
+                if (chargingChanged) {
+                    boundService?.updateHeartbeatInCase(sourceLens, _inCaseStatus.value.valueFor(sourceLens))
+                }
+            }
+            propagateCaseTelemetry(updated, timestamp, batteryChanged, lidChanged, chargingChanged, silentChanged)
         }
-        propagateCaseTelemetry(updated, timestamp, batteryChanged, lidChanged, chargingChanged, silentChanged)
     }
 
     private fun emitCaseConsole(lens: Lens?, status: CaseStatus, timestamp: Long) {
-        val parts = buildList {
-            status.batteryPercent?.let { add("battery=${it}%") }
-            status.charging?.let { add("charging=${it}") }
-            status.lidOpen?.let { add("lid=${if (it) "open" else "closed"}") }
-            status.silentMode?.let { add("silent=${if (it) "true" else "false"}") }
-        }
+        val batteryLabel = status.batteryPercent?.let { percent -> String.format(Locale.US, "%d%%", percent) }
+        val lidLabel = status.lidOpen?.let { open -> "lid=${if (open) "open" else "closed"}" }
+        val chargingLabel = status.charging?.let { charging -> if (charging) "charging" else "not_charging" }
+        val silentLabel = status.silentMode?.let { silent -> if (silent) "silent_on" else "silent_off" }
+        val parts = listOfNotNull(batteryLabel, lidLabel, chargingLabel, silentLabel)
         if (parts.isEmpty()) {
             return
         }
