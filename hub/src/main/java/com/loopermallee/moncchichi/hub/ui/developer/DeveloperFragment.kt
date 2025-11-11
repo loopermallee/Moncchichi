@@ -83,6 +83,7 @@ class DeveloperFragment : Fragment() {
     private var lensCards: List<LensCardController> = emptyList()
     private var caseCard: CaseCardController? = null
     private var ackSummaryView: TextView? = null
+    private var linkSummaryView: TextView? = null
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
@@ -112,22 +113,34 @@ class DeveloperFragment : Fragment() {
         val frameView = view.findViewById<TextView>(R.id.text_overview_last_frame)
         val autoReconnectView = view.findViewById<TextView>(R.id.text_overview_reconnect)
         val overviewContainer = frameView.parent as? LinearLayout
-        val ackTextView = TextView(context).apply {
+        val summaryMargin = (resources.displayMetrics.density * 8f).roundToInt()
+        val linkTextView = TextView(context).apply {
             id = View.generateViewId()
             TextViewCompat.setTextAppearance(this, MaterialR.style.TextAppearance_Material3_BodyMedium)
-            val margin = (resources.displayMetrics.density * 8f).roundToInt()
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = margin }
+            ).apply { topMargin = summaryMargin }
+            text = "LINK: L — • R —"
+            setTextColor(ContextCompat.getColor(context, R.color.er_text_secondary))
+        }
+        val ackTextView = TextView(context).apply {
+            id = View.generateViewId()
+            TextViewCompat.setTextAppearance(this, MaterialR.style.TextAppearance_Material3_BodyMedium)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = summaryMargin }
             text = "ACK: — (L — • R —)"
             setTextColor(ContextCompat.getColor(context, R.color.er_text_secondary))
         }
         overviewContainer?.let { container ->
             val insertIndex = container.indexOfChild(autoReconnectView).takeIf { it >= 0 }
                 ?: container.childCount
-            container.addView(ackTextView, insertIndex)
+            container.addView(linkTextView, insertIndex)
+            container.addView(ackTextView, insertIndex + 1)
         }
+        linkSummaryView = linkTextView
         ackSummaryView = ackTextView
         val pairingView = view.findViewById<TextView>(R.id.text_overview_pairing)
         val resetView = view.findViewById<TextView>(R.id.text_overview_resets)
@@ -287,6 +300,11 @@ class DeveloperFragment : Fragment() {
                         R.string.developer_label_resets,
                         snapshot.bondResetEvents,
                     )
+                    linkSummaryView?.let { view ->
+                        val summary = buildLinkSummary(snapshot)
+                        view.text = summary.text
+                        view.setTextColor(ContextCompat.getColor(view.context, summary.colorRes))
+                    }
 
                 }
             }
@@ -886,6 +904,17 @@ class DeveloperFragment : Fragment() {
     private fun formatTimeOfDay(millis: Long): String =
         android.text.format.DateFormat.format("HH:mm:ss", millis).toString()
 
+    private data class LinkSummary(val text: String, val colorRes: Int)
+
+    private data class LinkLensInfo(val state: LinkUiState, val segment: String)
+
+    private enum class LinkUiState(val priority: Int) {
+        GOOD(0),
+        WARNING(1),
+        CRITICAL(2),
+        UNKNOWN(0),
+    }
+
     private data class AckSummary(val text: String, val colorRes: Int)
 
     private data class AckLensInfo(val state: AckUiState, val ageLabel: String)
@@ -894,6 +923,44 @@ class DeveloperFragment : Fragment() {
         OK(0),
         DELAYED(1),
         STALLED(2),
+    }
+
+    private fun buildLinkSummary(snapshot: BleTelemetryRepository.Snapshot): LinkSummary {
+        val lensInfos = MoncchichiBleService.Lens.values().map { lens ->
+            val telemetry = when (lens) {
+                MoncchichiBleService.Lens.LEFT -> snapshot.left
+                MoncchichiBleService.Lens.RIGHT -> snapshot.right
+            }
+            val missCount = telemetry.heartbeatMissCount
+            val avgLatency = telemetry.heartbeatLatencyAvgMs ?: telemetry.heartbeatLatencySnapshotMs
+            val (state, icon, detail) = when {
+                missCount >= LINK_CRITICAL_MISS_THRESHOLD ->
+                    Triple(LinkUiState.CRITICAL, "❌", formatMissDetail(missCount))
+                missCount > 0 -> Triple(LinkUiState.WARNING, "⚠️", formatMissDetail(missCount))
+                avgLatency != null -> Triple(
+                    LinkUiState.GOOD,
+                    "✅",
+                    "(${String.format(Locale.US, "%d ms", avgLatency)})",
+                )
+                else -> Triple(LinkUiState.UNKNOWN, "⚪", "(—)")
+            }
+            val segment = "${lens.shortLabel} $icon $detail"
+            LinkLensInfo(state = state, segment = segment)
+        }
+        val worstState = lensInfos.maxByOrNull { it.state.priority }?.state ?: LinkUiState.UNKNOWN
+        val colorRes = when (worstState) {
+            LinkUiState.GOOD -> R.color.batteryNormal
+            LinkUiState.WARNING -> R.color.chargingActive
+            LinkUiState.CRITICAL -> R.color.batteryLow
+            LinkUiState.UNKNOWN -> R.color.er_text_secondary
+        }
+        val text = lensInfos.joinToString(separator = " • ") { it.segment }
+        return LinkSummary(text = "LINK: $text", colorRes = colorRes)
+    }
+
+    private fun formatMissDetail(missCount: Int): String {
+        val label = if (missCount == 1) "miss" else "misses"
+        return "(${missCount} $label)"
     }
 
     private fun buildAckSummary(
@@ -936,5 +1003,6 @@ class DeveloperFragment : Fragment() {
         private const val POWER_HISTORY_PREVIEW = 10
         private const val ACK_OK_THRESHOLD_MS = 15_000L
         private const val ACK_DELAY_THRESHOLD_MS = 60_000L
+        private const val LINK_CRITICAL_MISS_THRESHOLD = 3
     }
 }
