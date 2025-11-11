@@ -50,6 +50,7 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "left_notes") val leftNotes: String?,
     @ColumnInfo(name = "left_reconnect_attempts") val leftReconnectAttempts: Int?,
     @ColumnInfo(name = "left_heartbeat_latency_ms") val leftHeartbeatLatencyMs: Int?,
+    @ColumnInfo(name = "left_heartbeat_latency_avg_ms") val leftHeartbeatLatencyAvgMs: Int?,
     @ColumnInfo(name = "left_last_ack_mode") val leftLastAckMode: String?,
     @ColumnInfo(name = "left_last_ack_status") val leftLastAckStatus: String?,
     @ColumnInfo(name = "left_last_ack_timestamp") val leftLastAckTimestamp: Long?,
@@ -66,6 +67,7 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "right_notes") val rightNotes: String?,
     @ColumnInfo(name = "right_reconnect_attempts") val rightReconnectAttempts: Int?,
     @ColumnInfo(name = "right_heartbeat_latency_ms") val rightHeartbeatLatencyMs: Int?,
+    @ColumnInfo(name = "right_heartbeat_latency_avg_ms") val rightHeartbeatLatencyAvgMs: Int?,
     @ColumnInfo(name = "right_last_ack_mode") val rightLastAckMode: String?,
     @ColumnInfo(name = "right_last_ack_status") val rightLastAckStatus: String?,
     @ColumnInfo(name = "right_last_ack_timestamp") val rightLastAckTimestamp: Long?,
@@ -99,7 +101,7 @@ interface MemoryDao {
 
 @Database(
     entities = [ConsoleLine::class, AssistantEntry::class, TelemetrySnapshot::class],
-    version = 7,
+    version = 8,
 )
 abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao
@@ -118,6 +120,7 @@ class MemoryRepository(private val dao: MemoryDao) {
         val notes: String?,
         val reconnectAttempts: Int?,
         val heartbeatLatencyMs: Int?,
+        val heartbeatLatencyAvgMs: Int?,
         val lastAckMode: String?,
         val lastAckStatus: String?,
         val lastAckTimestamp: Long?,
@@ -212,6 +215,7 @@ class MemoryRepository(private val dao: MemoryDao) {
             leftNotes = left.notes,
             leftReconnectAttempts = left.reconnectAttempts,
             leftHeartbeatLatencyMs = left.heartbeatLatencyMs,
+            leftHeartbeatLatencyAvgMs = left.heartbeatLatencyAvgMs,
             leftLastAckMode = left.lastAckMode,
             leftLastAckStatus = left.lastAckStatus,
             leftLastAckTimestamp = left.lastAckTimestamp,
@@ -228,6 +232,7 @@ class MemoryRepository(private val dao: MemoryDao) {
             rightNotes = right.notes,
             rightReconnectAttempts = right.reconnectAttempts,
             rightHeartbeatLatencyMs = right.heartbeatLatencyMs,
+            rightHeartbeatLatencyAvgMs = right.heartbeatLatencyAvgMs,
             rightLastAckMode = right.lastAckMode,
             rightLastAckStatus = right.lastAckStatus,
             rightLastAckTimestamp = right.lastAckTimestamp,
@@ -258,6 +263,7 @@ class MemoryRepository(private val dao: MemoryDao) {
                 notes = leftNotes,
                 reconnectAttempts = leftReconnectAttempts,
                 heartbeatLatencyMs = leftHeartbeatLatencyMs,
+                heartbeatLatencyAvgMs = leftHeartbeatLatencyAvgMs,
                 lastAckMode = leftLastAckMode,
                 lastAckStatus = leftLastAckStatus,
                 lastAckTimestamp = leftLastAckTimestamp,
@@ -276,6 +282,7 @@ class MemoryRepository(private val dao: MemoryDao) {
                 notes = rightNotes,
                 reconnectAttempts = rightReconnectAttempts,
                 heartbeatLatencyMs = rightHeartbeatLatencyMs,
+                heartbeatLatencyAvgMs = rightHeartbeatLatencyAvgMs,
                 lastAckMode = rightLastAckMode,
                 lastAckStatus = rightLastAckStatus,
                 lastAckTimestamp = rightLastAckTimestamp,
