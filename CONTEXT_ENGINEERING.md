@@ -1,120 +1,123 @@
-# CONTEXT_ENGINEERING.md  
-**Phase 4.6 — BLE Workflow Realignment & Case Telemetry Intelligence**
+CONTEXT_ENGINEERING_PHASE4_TASK6.md
 
----
+Phase 4.0 r2 – BLE Alignment, Gesture Correction, and Developer Console Update
 
-## 1. CONTEXT OVERVIEW
+Objective
+Standardize the Moncchichi Hub BLE runtime behavior with Even Realities G1 firmware v1.6.6 and implement a reliable, testable update plan. Codex must strictly follow the logic outlined here without assuming any unspecified behavior. All ambiguous cases must defer to existing Even Realities reference behavior or remain unchanged until verified.
 
-Recent diagnostics (2025-11-11) compared the **Moncchichi Hub** app against the official **Even Reality v1.6.6** firmware and companion app.  
-The testing covered multiple device states:
-- Lid open / closed  
-- Charging / non-charging  
-- In-case / out-of-case / worn  
-- Widgets (GPS → News → Calendar)  
-- Gesture tests (single / double / hold)
+Summary of the current issue state
 
-The Even Reality app demonstrated stable and stateful BLE telemetry, while Moncchichi Hub displayed transient errors and misclassified events.
+Gesture flood and false “unknown gesture” reports occur when multiple bytes follow 0xF5 frames.
 
----
+Case telemetry (battery and lid state) disappears after reconnection.
 
-## 2. SUMMARY OF FINDINGS
+Heartbeat logic misclassifies active links as “missed” when no ACK is received.
 
-| Category | Even Reality Behavior | Moncchichi Hub Behavior | Issue Summary |
-|-----------|----------------------|--------------------------|---------------|
-| **Event Parsing** | Distinguishes gesture (0x00–0x05) vs system (0x06–0x0F). | Treats all 0xF5 frames as gestures. | Causes “Gesture Left Unknown” spam when idle or docked. |
-| **Case Telemetry** | Parses 0x0E / 0x0F and 0x2C for lid + battery status. | Missing implementation. | Case battery % and lid open state absent. |
-| **Heartbeat (0x25)** | Sent every ≈30 s to each lens individually. | Irregular / shared timer. | Causes → PING ← ERR and dropouts after ~30 s. |
-| **ACK Handling** | Maps 0xC9=OK  0xCA=BUSY  0xCB=CONTINUE  0xC0=COMPLETE. | BUSY misread as fail / CONTINUE ignored. | False error messages, premature retries. |
-| **Reconnect Logic** | Independent retry loops per lens. | Single global retry attempt. | One lens can fail silently. |
-| **Telemetry State** | Maintains context (wear, case, charging). | Stateless per-packet. | Logs unfiltered noise and duplicate events. |
-| **UI Binding** | Displays case battery, lid status, lens connection state. | Limited to lens battery only. | Incomplete user feedback. |
+Left/right connection order is non-deterministic, causing sync failures and HUD warnings.
 
----
+Five-tap gestures trigger firmware restarts but the app attempts to reconnect both lenses at once, producing link contention.
 
-## 3. ROOT CAUSE CATEGORIES
+Developer console lacks readability and requires manual scrolling.
 
-| Type | Underlying Cause |
-|------|------------------|
-| **Protocol Interpretation** | Mis-mapping of F5 and ACK opcodes. |
-| **Connection Stability** | Missing per-lens heartbeat / retry. |
-| **Telemetry Integration** | No merge between case and lens snapshots. |
-| **UI Feedback** | Absent callbacks for connect/disconnect and case updates. |
 
----
+Reference logic (as confirmed from Even G1 app behavior and firmware 1.6.6 protocol)
 
-## 4. OBJECTIVES (Phase 4.6)
+Gesture frames are limited to two bytes: [0xF5, gesture_code]. Any additional bytes after 0xF5 must be ignored.
 
-1. Achieve full **protocol parity** with Even Reality v1.6.6.  
-2. Eliminate **false gesture** and **→ PING ← ERR** messages.  
-3. Introduce **case telemetry** (battery, lid, charging).  
-4. Restore **stable BLE link** > 5 min continuous.  
-5. Enhance **UI feedback** on lens connection and case status.  
+Case state and battery values persist until replaced by a newer 0x2B/0x2C frame. They are marked stale if unchanged for longer than 60 seconds.
 
----
+Heartbeat counter resets on any received BLE frame, not just ACKs. Rebond is triggered only when no inbound or outbound frame occurs for three heartbeat intervals.
 
-## 5. IMPLEMENTATION STRATEGY
+Connection must occur in strict sequence: Left lens → Right lens. The left acts as the sync source.
 
-### A. Event Reclassification
-- Parse 0xF5 sub-opcodes:  
-  - 0x00–0x05 → Gestures  
-  - 0x06–0x0B → Wear / Case / Charging  
-  - 0x0E–0x0F → Case Battery / Charging  
-- Route non-gesture events to `SystemEvent` flow.  
-- Silence gesture stream when lid closed or charging.
+After restart gestures or power cycles, left lens must reconnect first and broadcast a ready flag before right lens connects.
 
-### B. Case Telemetry
-- Query 0x2B (Get Silent Mode & State) and 0x2C (Get Battery Info).  
-- Parse lid state + case battery % + charging flags.  
-- Append fields to `DeviceTelemetrySnapshot`.
+Developer console text must auto-scroll and apply clear color coding for INFO, WARN, ERROR, ACK, and CASE messages.
 
-### C. Heartbeat & ACK Reliability
-- Maintain per-lens 0x25 heartbeat timers.  
-- Treat 0xCA as BUSY → retry once.  
-- Handle 0xCB as CONTINUE → wait for C9 complete.  
-- Remove ERR emission for valid BUSY/CONTINUE responses.
 
-### D. Reconnect Handling
-- Introduce per-lens retry loop (×3, 2 s back-off).  
-- Skip re-bond if device already trusted.  
+Implementation plan
+Codex must implement the following tasks incrementally. Each task should compile and function independently before proceeding to the next. Codex must not merge tasks prematurely or optimize across boundaries until confirmed stable.
 
-### E. UI / UX Enhancements
-- Show case battery and lid state in Developer screen.  
-- Add toast notifications for left/right connection success.  
-- Replace “Gesture Unknown” spam with [CASE] / [WEAR] labels.  
+Task 1 – Gesture Parsing Correction
 
----
+Limit gesture decoding to [0xF5, gesture_code].
 
-## 6. PHASED TASKS AND DELIVERABLES
+Ignore any trailing bytes or subcommands (e.g., 0xF5 11 01).
 
-| Phase | Focus | Output |
-|-------|--------|---------|
-| Task 1 | F5 event classifier + system event flow | Correct gesture vs system separation (logs clean). |
-| Task 2 | Case telemetry (0x2B/0x2C parse) | Case battery and lid open visible in UI. |
-| Task 3 | Heartbeat + ACK realignment | No “→ PING ← ERR”; stable link > 60 s. |
-| Task 4 | Reconnect stability | Lens reconnect reliable ≤ 2 attempts. |
-| Task 5 | Telemetry persistence merge | Unified case + lens snapshot. |
-| Task 6 | UX feedback and toast integration | Per-lens connection notices + updated HUD. |
+Validate that each gesture produces exactly one event per tap.
+Exit Criteria: No repeated or “unknown gesture” entries appear in developer console logs for single gestures.
 
----
 
-## 7. VALIDATION CHECKLIST
+Task 2 – Case Telemetry Persistence
 
-✅ 0xF5 events filtered (no idle gesture spam).  
-✅ Case battery % / lid open / charging accurate.  
-✅ Heartbeat (0x25) steady at 30 s intervals.  
-✅ No false “→ PING ← ERR” in console.  
-✅ Reconnects succeed within 2 attempts.  
-✅ Telemetry stable > 5 min runtime.  
-✅ UI reflects case and lens states accurately.
+Persist last known case battery and lid state values across reconnects.
 
----
+Retain values when no new data arrives and mark them stale after timeout.
 
-## 8. EXIT CRITERIA
-- Moncchichi Hub achieves complete parity with Even Reality v1.6.6 BLE workflow.  
-- All telemetry flows (gesture, system, case, ACK) validated in 5-minute runtime tests.  
-- Developer console and UI show synchronized lens + case data without error spam.  
+Add “CASE” log line only when changes occur or stale values are restored.
+Exit Criteria: Case values remain visible and accurate after reconnects and match actual physical lid and battery conditions.
 
----
 
-**Commit Tag:**  
-`phase4_r1i_ble_protocol_realignment_v166`
+Task 3 – Heartbeat Reset Logic
+
+Reset heartbeat timer on any received BLE frame (not only ACKs).
+
+Rebond only after no frame activity for three full heartbeat intervals.
+
+Maintain logs “[HB][L/R][OK]” or “[HB][L/R][MISS]” only when state changes.
+Exit Criteria: No false “→ PING ← ERR” or unnecessary rebonds occur under stable link conditions.
+
+
+Task 4 – Lens Connection Sequencing
+
+Enforce sequential connection order: connect left lens, wait until left ready, then connect right lens.
+
+Maintain fallback in case only one lens is available.
+Exit Criteria: Both lenses establish consistent telemetry and HUD sync, and “Reconnect to sync data” messages no longer appear.
+
+
+Task 5 – Restart and Reconnect Handling
+
+After firmware restart or five-tap events, reconnect left lens first and wait for confirmation before reconnecting right lens.
+
+Prevent concurrent reconnect attempts from overlapping.
+Exit Criteria: Both lenses reconnect successfully after restarts with no duplicate handshake errors.
+
+
+Task 6 – Developer Console Enhancement
+
+Add color-coded text rendering for log levels (INFO=white, WARN=yellow, ERROR=red, ACK=green, CASE=cyan).
+
+Enable automatic scrolling to the most recent log entry.
+
+Ensure color contrast is readable on a dark background.
+Exit Criteria: Developer console auto-scrolls to the latest log and text colors are clearly visible under dark mode.
+
+
+Validation plan
+
+Perform controlled tests for each lens under the following conditions: in case, lid open, lid closed, worn, charging, not charging, gesture input, restart event.
+
+Confirm correct persistence of telemetry, correct handling of gestures, stable heartbeat operation, and complete left/right synchronization.
+
+Verify that the console displays consistent, readable logs during all interactions.
+
+
+Completion criteria
+The patch is considered complete when:
+
+1. The BLE connection remains stable through at least three minutes of continuous runtime without “MISS” or “ERR”.
+
+
+2. Case battery and lid states remain correct after multiple reconnects.
+
+
+3. Gesture inputs register once per tap with no false positives.
+
+
+4. Developer console displays color-coded entries and always shows the latest log line automatically.
+
+
+5. Left/right synchronization is maintained across all connection and restart cycles.
+
+
