@@ -101,6 +101,8 @@ class MoncchichiBleService(
         val lastBondEventAt: Long? = null,
         val heartbeatLatencyMs: Long? = null,
         val heartbeatAckType: AckType? = null,
+        val heartbeatLastPingAt: Long? = null,
+        val heartbeatMissCount: Int = 0,
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
@@ -1189,6 +1191,10 @@ class MoncchichiBleService(
         val attemptStart = System.currentTimeMillis()
         val queued = record.client.enqueueHeartbeat(packet.sequence, packet.payload)
         val timestamp = System.currentTimeMillis()
+        if (queued) {
+            emitConsole("PING", lens, "sent", timestamp)
+            log("[BLE][PING][${lens.shortLabel}] sent seq=${packet.sequence}")
+        }
         if (!queued) {
             return HeartbeatResult(
                 sequence = packet.sequence,
@@ -1233,26 +1239,15 @@ class MoncchichiBleService(
         val latencyLabel = latencyMs?.let { "${it}ms" } ?: "n/a"
         val modeLabel = ackType.name.lowercase(Locale.US)
         val statusLabel = if (busy) "busy" else "ok"
-        val consoleMessage = buildString {
-            append("seq=")
-            append(sequence)
-            append(' ')
-            append("latency=")
-            append(latencyLabel)
-            append(' ')
-            append("interval=")
-            append(intervalLabel)
-            append(' ')
-            append("status=")
-            append(statusLabel)
-            append(' ')
-            append("mode=")
-            append(modeLabel)
-        }
-        emitConsole("PING", lens, consoleMessage, timestamp)
-        log("[BLE][PING][${lens.shortLabel}] seq=$sequence latency=$latencyLabel status=$statusLabel mode=$modeLabel")
+        emitConsole("PING", lens, "[OK] RTT=$latencyLabel", timestamp)
+        log("[BLE][PING][${lens.shortLabel}] ok seq=$sequence latency=$latencyLabel interval=$intervalLabel status=$statusLabel mode=$modeLabel")
         updateLens(lens) {
-            it.copy(heartbeatLatencyMs = latencyMs, heartbeatAckType = ackType)
+            it.copy(
+                heartbeatLatencyMs = latencyMs,
+                heartbeatAckType = ackType,
+                heartbeatLastPingAt = timestamp,
+                heartbeatMissCount = 0,
+            )
         }
         resetReconnectTimer(lens)
         emitStabilitySnapshot(timestamp)
@@ -1260,8 +1255,14 @@ class MoncchichiBleService(
 
     private fun handleHeartbeatMiss(lens: Lens, timestamp: Long, missCount: Int) {
         recordHeartbeatMiss(lens, timestamp)
-        emitConsole("PING", lens, "miss=$missCount", timestamp)
-        logWarn("[BLE][PING][${lens.shortLabel}] miss $missCount")
+        emitConsole("PING", lens, "[WARN] missed ping ($missCount)", timestamp)
+        logWarn("[BLE][PING][${lens.shortLabel}] missed ping ($missCount)")
+        updateLens(lens) {
+            it.copy(
+                heartbeatLastPingAt = timestamp,
+                heartbeatMissCount = missCount,
+            )
+        }
         emitStabilitySnapshot(timestamp)
         if (missCount >= HEARTBEAT_REBOND_THRESHOLD && rebondJob?.isActive != true) {
             if (heartbeatRebondTriggered[lens] != true) {
@@ -1992,9 +1993,9 @@ private class HeartbeatSupervisor(
         private const val CASE_BATTERY_SUBCOMMAND: Byte = 0x01
         private const val BOND_RECOVERY_GUARD_MS = 3_000L
         private const val UNBOND_REASON_REMOVED = 5
-        private const val HEARTBEAT_INTERVAL_MS = 29_000L
-        private const val HEARTBEAT_JITTER_MS = 1_000L
-        private const val HEARTBEAT_ACK_WINDOW_MS = 1_500L
+        private const val HEARTBEAT_INTERVAL_MS = 5_000L
+        private const val HEARTBEAT_JITTER_MS = 0L
+        private const val HEARTBEAT_ACK_WINDOW_MS = 2_000L
         private const val HEARTBEAT_REBOND_THRESHOLD = 3
         private const val HEARTBEAT_IDLE_POLL_MS = 1_000L
         private const val HEARTBEAT_BUSY_DEFER_MS = 3_000L
