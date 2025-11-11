@@ -248,8 +248,8 @@ class MoncchichiBleService(
         emitConsole = ::emitConsole,
         sendHeartbeat = ::performHeartbeat,
         isLensConnected = { lens -> currentLensStatus(lens).isConnected },
-        onHeartbeatSuccess = { lens, sequence, timestamp, latency, ackType, elapsedMs ->
-            handleHeartbeatSuccess(lens, sequence, timestamp, latency, ackType, elapsedMs)
+        onHeartbeatSuccess = { lens, sequence, timestamp, latency, ackType, elapsedMs, busy ->
+            handleHeartbeatSuccess(lens, sequence, timestamp, latency, ackType, elapsedMs, busy)
         },
         onHeartbeatMiss = { lens, timestamp, missCount ->
             handleHeartbeatMiss(lens, timestamp, missCount)
