@@ -1142,6 +1142,7 @@ class MoncchichiBleService(
                 sequence = packet.sequence,
                 timestamp = timestamp,
                 success = false,
+                busy = false,
                 ackType = null,
                 latencyMs = null,
             )
