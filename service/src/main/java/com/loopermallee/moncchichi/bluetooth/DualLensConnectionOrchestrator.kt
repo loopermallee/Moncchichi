@@ -1,5 +1,9 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.BATT_SUB_DETAIL
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_BATT_GET
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_CASE_GET
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -16,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.collections.ArrayDeque
 import kotlin.math.min
 
 /**
@@ -44,6 +49,12 @@ class DualLensConnectionOrchestrator(
         val client: BleClient,
     )
 
+    private data class PendingCommand(
+        val payload: ByteArray,
+        val family: CommandRouter.Family,
+        val mirror: Boolean,
+    )
+
     private val stateLock = Mutex()
 
     private val _connectionState = MutableStateFlow<State>(State.Idle)
@@ -70,6 +81,18 @@ class DualLensConnectionOrchestrator(
     private var latestLeft: LensState? = null
     private var latestRight: LensState? = null
 
+    private val commandRouter = CommandRouter()
+    private val pendingMirrors = ArrayDeque<PendingCommand>()
+    private val pendingLeftRefresh = ArrayDeque<ByteArray>()
+    private val mirrorLock = Mutex()
+    private val leftRefreshLock = Mutex()
+
+    @Volatile
+    private var rightPrimed: Boolean = false
+
+    @Volatile
+    private var leftPrimed: Boolean = false
+
     private val stateJobs: MutableMap<LensSide, Job> = mutableMapOf()
     private val eventJobs: MutableMap<LensSide, Job> = mutableMapOf()
     private val reconnectJobs: MutableMap<LensSide, Job> = mutableMapOf()
@@ -90,6 +113,11 @@ class DualLensConnectionOrchestrator(
         val rightClient = bleFactory(rightId)
         leftSession = LensSession(leftId, leftClient)
         rightSession = LensSession(rightId, rightClient)
+
+        mirrorLock.withLock { pendingMirrors.clear() }
+        leftRefreshLock.withLock { pendingLeftRefresh.clear() }
+        rightPrimed = false
+        leftPrimed = false
 
         sessionActive = true
         _connectionState.value = State.ConnectingRight
@@ -121,6 +149,13 @@ class DualLensConnectionOrchestrator(
             }
             primed
         }.getOrElse { false }
+
+        rightPrimed = rightResult
+        leftPrimed = leftResult
+        if (rightPrimed) {
+            flushPendingMirrors()
+        }
+        flushPendingLeftRefresh()
 
         when {
             rightResult && leftResult -> _connectionState.value = State.ReadyBoth
@@ -166,6 +201,11 @@ class DualLensConnectionOrchestrator(
             latestRight = rightClient?.state?.value?.withSide(LensSide.RIGHT)
             publishHeadsetState()
         }
+
+        mirrorLock.withLock { pendingMirrors.clear() }
+        leftRefreshLock.withLock { pendingLeftRefresh.clear() }
+        rightPrimed = false
+        leftPrimed = false
     }
 
     fun close() {
@@ -200,11 +240,30 @@ class DualLensConnectionOrchestrator(
         }
     }
 
+    suspend fun sendCommand(payload: ByteArray): Boolean {
+        if (payload.isEmpty()) {
+            return false
+        }
+        val opcode = payload.first().toInt() and 0xFF
+        val subOpcode = payload.getOrNull(1)?.toInt()?.and(0xFF)
+        val decision = commandRouter.classify(opcode, subOpcode)
+        return when (decision.family) {
+            CommandRouter.Family.RIGHT_ONLY -> sendRightOrQueue(payload, decision.mirror)
+            CommandRouter.Family.BOTH -> sendBothOrQueue(payload, decision.mirror)
+            CommandRouter.Family.EVENTS -> sendEventsImmediate(payload)
+            CommandRouter.Family.UNKNOWN -> sendRightOrQueue(payload, decision.mirror)
+        }
+    }
+
     private suspend fun handleClientEvent(side: LensSide, event: ClientEvent) {
         when (event) {
             is ClientEvent.Telemetry -> _telemetry.update { current -> current + (side to event) }
             is ClientEvent.ConnectionStateChanged -> {
                 if (!event.connected) {
+                    when (side) {
+                        LensSide.RIGHT -> markRightPrimed(false)
+                        LensSide.LEFT -> markLeftPrimed(false)
+                    }
                     scheduleReconnect(side)
                     _connectionState.value = when (side) {
                         LensSide.RIGHT -> if (latestLeft?.isReady == true) {
@@ -232,6 +291,25 @@ class DualLensConnectionOrchestrator(
                             State.LeftOnlineUnprimed
                         }
                     }
+                    when (side) {
+                        LensSide.RIGHT -> markRightPrimed(false)
+                        LensSide.LEFT -> {
+                            markLeftPrimed(false)
+                            scheduleLeftRefresh()
+                        }
+                    }
+                }
+            }
+
+            is ClientEvent.ReadyProbeResult -> {
+                when (side) {
+                    LensSide.RIGHT -> markRightPrimed(event.ready)
+                    LensSide.LEFT -> {
+                        markLeftPrimed(event.ready)
+                        if (event.ready) {
+                            scheduleLeftRefresh()
+                        }
+                    }
                 }
             }
 
@@ -239,6 +317,169 @@ class DualLensConnectionOrchestrator(
             else -> Unit
         }
         _clientEvents.emit(LensClientEvent(side, event))
+    }
+
+    private suspend fun sendRightOrQueue(payload: ByteArray, mirror: Boolean): Boolean {
+        val shouldQueue = mirrorLock.withLock {
+            val available = rightSession != null
+            if (!available || !rightPrimed) {
+                pendingMirrors.addLast(PendingCommand(payload.copyOf(), CommandRouter.Family.RIGHT_ONLY, mirror))
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldQueue) {
+            return true
+        }
+        return sendRightImmediate(payload, mirror)
+    }
+
+    private suspend fun sendBothOrQueue(payload: ByteArray, mirror: Boolean): Boolean {
+        val shouldQueue = mirrorLock.withLock {
+            val available = rightSession != null
+            if (!available || !rightPrimed) {
+                pendingMirrors.addLast(PendingCommand(payload.copyOf(), CommandRouter.Family.BOTH, mirror))
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldQueue) {
+            return true
+        }
+        return sendBothImmediate(payload, mirror)
+    }
+
+    private suspend fun sendEventsImmediate(payload: ByteArray): Boolean {
+        var sent = false
+        rightSession?.let {
+            sent = sendTo(LensSide.RIGHT, payload) || sent
+        }
+        leftSession?.let {
+            sent = sendTo(LensSide.LEFT, payload) || sent
+        }
+        return sent
+    }
+
+    private suspend fun sendRightImmediate(payload: ByteArray, mirror: Boolean): Boolean {
+        val success = sendTo(LensSide.RIGHT, payload)
+        if (success) {
+            mirrorToLeft(payload, mirror)
+        }
+        return success
+    }
+
+    private suspend fun sendBothImmediate(payload: ByteArray, mirror: Boolean): Boolean {
+        val rightOk = sendTo(LensSide.RIGHT, payload)
+        if (!rightOk) {
+            return false
+        }
+        mirrorToLeft(payload, true)
+        if (mirror) {
+            flushPendingLeftRefresh()
+        }
+        return true
+    }
+
+    private suspend fun processPendingImmediate(command: PendingCommand) {
+        when (command.family) {
+            CommandRouter.Family.RIGHT_ONLY -> sendRightImmediate(command.payload, command.mirror)
+            CommandRouter.Family.BOTH -> sendBothImmediate(command.payload, command.mirror)
+            CommandRouter.Family.EVENTS -> sendEventsImmediate(command.payload)
+            CommandRouter.Family.UNKNOWN -> sendRightImmediate(command.payload, command.mirror)
+        }
+    }
+
+    private suspend fun mirrorToLeft(payload: ByteArray, force: Boolean) {
+        if (!force) {
+            return
+        }
+        val shouldQueue = leftRefreshLock.withLock {
+            val available = leftSession != null
+            if (!available || !leftPrimed || !rightPrimed) {
+                pendingLeftRefresh.addLast(payload.copyOf())
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldQueue) {
+            flushPendingLeftRefresh()
+        } else {
+            sendTo(LensSide.LEFT, payload)
+        }
+    }
+
+    private suspend fun sendTo(side: LensSide, payload: ByteArray): Boolean {
+        val session = when (side) {
+            LensSide.LEFT -> leftSession
+            LensSide.RIGHT -> rightSession
+        } ?: return false
+        return runCatching { session.client.sendCommand(payload.copyOf()) }.getOrElse { false }
+    }
+
+    private suspend fun markRightPrimed(primed: Boolean) {
+        rightPrimed = primed
+        if (primed) {
+            flushPendingMirrors()
+        }
+        flushPendingLeftRefresh()
+    }
+
+    private suspend fun markLeftPrimed(primed: Boolean) {
+        leftPrimed = primed
+        if (primed) {
+            flushPendingLeftRefresh()
+        }
+    }
+
+    private suspend fun scheduleLeftRefresh() {
+        if (!sessionActive) {
+            return
+        }
+        val commands = listOf(
+            byteArrayOf(CMD_CASE_GET.toByte()),
+            byteArrayOf(CMD_BATT_GET.toByte(), BATT_SUB_DETAIL.toByte()),
+            byteArrayOf(CMD_WEAR_DETECT.toByte()),
+        )
+        leftRefreshLock.withLock {
+            pendingLeftRefresh.clear()
+            commands.forEach { pendingLeftRefresh.addLast(it) }
+        }
+        flushPendingLeftRefresh()
+    }
+
+    private suspend fun flushPendingMirrors() {
+        if (!rightPrimed) {
+            return
+        }
+        val commands = mutableListOf<PendingCommand>()
+        mirrorLock.withLock {
+            if (!rightPrimed) {
+                return@withLock
+            }
+            while (pendingMirrors.isNotEmpty()) {
+                commands += pendingMirrors.removeFirst()
+            }
+        }
+        commands.forEach { processPendingImmediate(it) }
+    }
+
+    private suspend fun flushPendingLeftRefresh() {
+        if (!rightPrimed || !leftPrimed) {
+            return
+        }
+        val commands = mutableListOf<ByteArray>()
+        leftRefreshLock.withLock {
+            if (!rightPrimed || !leftPrimed) {
+                return@withLock
+            }
+            while (pendingLeftRefresh.isNotEmpty()) {
+                commands += pendingLeftRefresh.removeFirst()
+            }
+        }
+        commands.forEach { sendTo(LensSide.LEFT, it) }
     }
 
     private fun scheduleReconnect(side: LensSide) {

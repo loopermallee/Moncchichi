@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.telemetry
 
 import android.util.Log
+import com.loopermallee.moncchichi.bluetooth.G1Protocols
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.experimental.and
@@ -60,27 +61,13 @@ object G1ReplyParser {
         val name: String,
     ) {
         companion object {
-            private val codeNames = mapOf(
-                0x00 to "Gesture 0x00",
-                0x01 to "Single Tap",
-                0x02 to "Double Tap",
-                0x03 to "Triple Tap",
-                0x04 to "Long Press",
-                0x05 to "Swipe Forward",
-                0x06 to "Wear Detected",
-                0x07 to "Wear Removed",
-                0x08 to "Case Open",
-                0x09 to "Case Closed",
-                0x0A to "Charging Started",
-                0x0B to "Charging Stopped",
-                0x1E to "Double Tap (Dashboard)",
-                0x1F to "Double Tap (Translate)",
-                0x20 to "Single Tap (Translate)",
-            )
-
             fun fromCode(code: Int): GestureEvent {
-                val name = codeNames[code]
-                    ?: String.format(Locale.US, "Gesture 0x%02X", code and 0xFF)
+                val label = G1Protocols.gestureLabel(code)
+                val name = if (label.startsWith("gesture", ignoreCase = true)) {
+                    String.format(Locale.US, "Gesture 0x%02X", code and 0xFF)
+                } else {
+                    label.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() }
+                }
                 return GestureEvent(code, name)
             }
         }

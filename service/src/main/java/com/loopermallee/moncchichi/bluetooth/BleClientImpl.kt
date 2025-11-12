@@ -57,6 +57,10 @@ class BleClientImpl(initialState: LensState) : BleClient {
         return true
     }
 
+    override suspend fun sendCommand(payload: ByteArray): Boolean {
+        return true
+    }
+
     override suspend fun sendImage(imageBytes: ByteArray): Boolean {
         BmpPacketBuilder().apply {
             buildFrames(imageBytes)

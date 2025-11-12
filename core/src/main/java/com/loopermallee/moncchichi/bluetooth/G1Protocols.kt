@@ -64,6 +64,24 @@ object G1Protocols {
     const val MTU_WARMUP_GRACE_MS = 7_500L
     const val MTU_RETRY_DELAY_MS = 200L
 
+    val GESTURE_LABELS: Map<Int, String> = mapOf(
+        0x00 to "dashboard",
+        0x01 to "tap",
+        0x02 to "double tap",
+        0x03 to "triple tap",
+        0x04 to "long press",
+        0x05 to "swipe forward",
+        0x06 to "wear detected",
+        0x07 to "wear removed",
+        0x08 to "case open",
+        0x09 to "case closed",
+        0x0A to "charging started",
+        0x0B to "charging stopped",
+        0x1E to "dashboard",
+        0x1F to "translate",
+        0x20 to "translate tap",
+    )
+
     private val opcodeLabels = mapOf(
         CMD_HELLO to "CMD_HELLO",
         CMD_KEEPALIVE to "CMD_KEEPALIVE",
@@ -107,6 +125,10 @@ object G1Protocols {
             normalized == CMD_DISPLAY ||
             normalized == CMD_SERIAL_LENS ||
             normalized == CMD_SERIAL_FRAME
+    }
+
+    fun gestureLabel(code: Int): String {
+        return GESTURE_LABELS[code] ?: "gesture 0x%02X".format(code and 0xFF)
     }
 
     enum class F5EventType {
