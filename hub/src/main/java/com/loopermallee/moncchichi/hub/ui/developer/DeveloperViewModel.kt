@@ -321,6 +321,10 @@ class DeveloperViewModel(
         val leftVoltage = left?.batteryVoltageMv?.let { "${it}mV" } ?: "–"
         val rightVoltage = right?.batteryVoltageMv?.let { "${it}mV" } ?: "–"
         val uptime = uptimeSeconds?.let { formatDuration(it) }
+        val ackSummary = listOfNotNull(
+            left?.ackMode?.let { "L ${formatAckType(it)}" },
+            right?.ackMode?.let { "R ${formatAckType(it)}" },
+        ).takeIf { it.isNotEmpty() }?.joinToString(separator = " / ")
         return buildString {
             append("Case $caseBattery ($caseState)")
             silent?.let {
@@ -343,7 +347,16 @@ class DeveloperViewModel(
                 append(" • Up ")
                 append(it)
             }
+            ackSummary?.let {
+                append(" • ACK:")
+                append(' ')
+                append(it)
+            }
         }
+    }
+
+    private fun formatAckType(type: MoncchichiBleService.AckType): String {
+        return type.name.lowercase(Locale.US).replace('_', ' ')
     }
 
     private fun StringBuilder.appendLensBlock(label: String, lens: BleTelemetryRepository.LensTelemetry) {
@@ -378,6 +391,8 @@ class DeveloperViewModel(
             "  ACK counts: ok=${lens.ackSuccessCount} fail=${lens.ackFailureCount} warmup=${lens.ackWarmupCount} drop=${lens.ackDropCount}"
         )
         appendLine("  ACK opcode: ${formatOpcode(lens.lastAckOpcode)} latency=${formatLatency(lens.lastAckLatencyMs)}")
+        appendLine("  ACK type: ${lens.ackMode?.let { formatAckType(it) } ?: "–"}")
+        appendLine("  Heartbeat misses: ${lens.heartbeatMissCount}")
         if (!lens.notes.isNullOrBlank()) {
             appendLine("  Notes: ${lens.notes}")
         }

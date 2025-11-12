@@ -8,6 +8,8 @@ import androidx.room.Insert
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.loopermallee.moncchichi.core.model.ChatMessage
 import com.loopermallee.moncchichi.core.model.MessageOrigin
 import com.loopermallee.moncchichi.core.model.MessageSource
@@ -56,6 +58,7 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "left_last_ack_timestamp") val leftLastAckTimestamp: Long?,
     @ColumnInfo(name = "left_uptime_seconds") val leftUptimeSeconds: Long?,
     @ColumnInfo(name = "left_snapshot_json") val leftSnapshotJson: String?,
+    @ColumnInfo(name = "left_heartbeat_miss_count") val leftHeartbeatMissCount: Int?,
     @ColumnInfo(name = "right_battery_percent") val rightBatteryPercent: Int?,
     @ColumnInfo(name = "right_battery_voltage_mv") val rightBatteryVoltageMv: Int?,
     @ColumnInfo(name = "right_case_battery_percent") val rightCaseBatteryPercent: Int?,
@@ -73,6 +76,7 @@ data class TelemetrySnapshot(
     @ColumnInfo(name = "right_last_ack_timestamp") val rightLastAckTimestamp: Long?,
     @ColumnInfo(name = "right_uptime_seconds") val rightUptimeSeconds: Long?,
     @ColumnInfo(name = "right_snapshot_json") val rightSnapshotJson: String?,
+    @ColumnInfo(name = "right_heartbeat_miss_count") val rightHeartbeatMissCount: Int?,
 )
 
 @Dao
@@ -101,10 +105,35 @@ interface MemoryDao {
 
 @Database(
     entities = [ConsoleLine::class, AssistantEntry::class, TelemetrySnapshot::class],
-    version = 8,
+    version = 9,
 )
 abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao
+
+    companion object {
+        val MIGRATION_6_7: Migration = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.ensureColumn("telemetry_snapshot", "left_snapshot_json", "TEXT")
+                database.ensureColumn("telemetry_snapshot", "right_snapshot_json", "TEXT")
+            }
+        }
+
+        val MIGRATION_7_8: Migration = object : Migration(7, 8) {
+            @Suppress("UNUSED_PARAMETER")
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // No schema changes between versions 7 and 8; placeholder to keep migration chain intact.
+            }
+        }
+
+        val MIGRATION_8_9: Migration = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.ensureColumn("telemetry_snapshot", "left_heartbeat_miss_count", "INTEGER")
+                database.ensureColumn("telemetry_snapshot", "right_heartbeat_miss_count", "INTEGER")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+    }
 }
 
 class MemoryRepository(private val dao: MemoryDao) {
@@ -126,6 +155,7 @@ class MemoryRepository(private val dao: MemoryDao) {
         val lastAckTimestamp: Long?,
         val uptimeSeconds: Long?,
         val snapshotJson: String?,
+        val heartbeatMissCount: Int?,
     )
 
     data class CaseSnapshot(
@@ -221,6 +251,7 @@ class MemoryRepository(private val dao: MemoryDao) {
             leftLastAckTimestamp = left.lastAckTimestamp,
             leftUptimeSeconds = left.uptimeSeconds,
             leftSnapshotJson = left.snapshotJson,
+            leftHeartbeatMissCount = left.heartbeatMissCount,
             rightBatteryPercent = right.batteryPercent,
             rightBatteryVoltageMv = right.batteryVoltageMv,
             rightCaseBatteryPercent = right.caseBatteryPercent ?: case?.batteryPercent,
@@ -238,6 +269,7 @@ class MemoryRepository(private val dao: MemoryDao) {
             rightLastAckTimestamp = right.lastAckTimestamp,
             rightUptimeSeconds = right.uptimeSeconds,
             rightSnapshotJson = right.snapshotJson,
+            rightHeartbeatMissCount = right.heartbeatMissCount,
         )
     }
 
@@ -269,6 +301,7 @@ class MemoryRepository(private val dao: MemoryDao) {
                 lastAckTimestamp = leftLastAckTimestamp,
                 uptimeSeconds = leftUptimeSeconds,
                 snapshotJson = leftSnapshotJson,
+                heartbeatMissCount = leftHeartbeatMissCount,
             ),
             right = LensSnapshot(
                 batteryPercent = rightBatteryPercent,
@@ -288,7 +321,29 @@ class MemoryRepository(private val dao: MemoryDao) {
                 lastAckTimestamp = rightLastAckTimestamp,
                 uptimeSeconds = rightUptimeSeconds,
                 snapshotJson = rightSnapshotJson,
+                heartbeatMissCount = rightHeartbeatMissCount,
             ),
         )
     }
+}
+
+private fun SupportSQLiteDatabase.ensureColumn(table: String, column: String, definition: String) {
+    if (!hasColumn(table, column)) {
+        execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+    }
+}
+
+private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
+    query("PRAGMA table_info($table)").use { cursor ->
+        val nameIndex = cursor.getColumnIndex("name")
+        if (nameIndex == -1) {
+            return false
+        }
+        while (cursor.moveToNext()) {
+            if (column.equals(cursor.getString(nameIndex), ignoreCase = true)) {
+                return true
+            }
+        }
+    }
+    return false
 }
