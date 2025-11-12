@@ -62,24 +62,32 @@
                     <com.google.android.material.chip.Chip
                         android:id="@+id/chip_filter_ping"
                         style="@style/Widget.Material3.Chip.Assist.Elevated"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
                         android:checkable="true"
                         android:text="@string/developer_console_filter_ping" />
 
                     <com.google.android.material.chip.Chip
                         android:id="@+id/chip_filter_case"
                         style="@style/Widget.Material3.Chip.Assist.Elevated"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
                         android:checkable="true"
                         android:text="@string/developer_console_filter_case" />
 
                     <com.google.android.material.chip.Chip
                         android:id="@+id/chip_filter_gesture"
                         style="@style/Widget.Material3.Chip.Assist.Elevated"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
                         android:checkable="true"
                         android:text="@string/developer_console_filter_gesture" />
 
                     <com.google.android.material.chip.Chip
                         android:id="@+id/chip_filter_ack"
                         style="@style/Widget.Material3.Chip.Assist.Elevated"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
                         android:checkable="true"
                         android:text="@string/developer_console_filter_ack" />
                 </com.google.android.material.chip.ChipGroup>
