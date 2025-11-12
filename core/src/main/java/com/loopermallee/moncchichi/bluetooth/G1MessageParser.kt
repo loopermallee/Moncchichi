@@ -49,7 +49,7 @@ fun ByteArray.toAsciiSystemFrameOrNull(): G1MessageParser.AsciiSystemFrame? {
     )
 }
 
-fun ByteArray.toAckFromAsciiOrNull(): AckOutcome? {
+internal fun ByteArray.toAckFromAsciiOrNull(): AckOutcome? {
     return when {
         G1MessageParser.isAsciiOk(this) -> AckOutcome.Success(
             opcode = G1Protocols.CMD_SYS_INFO,
