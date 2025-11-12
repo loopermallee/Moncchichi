@@ -56,28 +56,28 @@ object G1Protocols {
     const val MTU_WARMUP_GRACE_MS = 7_500L
     const val MTU_RETRY_DELAY_MS = 200L
 
-    fun opcodeName(opcode: Int?): String = when (opcode) {
-        null -> "unknown"
-        CMD_HELLO -> "CMD_HELLO"
-        CMD_KEEPALIVE -> "CMD_KEEPALIVE"
-        CMD_PING -> "CMD_PING"
-        CMD_BRIGHTNESS -> "CMD_BRIGHTNESS"
-        CMD_SYSTEM -> "CMD_SYSTEM"
-        CMD_GLASSES_INFO -> "CMD_GLASSES_INFO"
-        CMD_DISPLAY -> "CMD_DISPLAY"
-        CMD_SERIAL_LENS -> "CMD_SERIAL_LENS"
-        CMD_SERIAL_FRAME -> "CMD_SERIAL_FRAME"
-        CMD_HUD_TEXT -> "CMD_HUD_TEXT"
-        CMD_CLEAR -> "CMD_CLEAR"
-        OPC_ACK_CONTINUE -> "OPC_ACK_CONTINUE"
-        OPC_ACK_COMPLETE -> "OPC_ACK_COMPLETE"
-        OPC_DEVICE_STATUS -> "OPC_DEVICE_STATUS"
-        OPC_BATTERY -> "OPC_BATTERY"
-        OPC_UPTIME -> "OPC_UPTIME"
-        OPC_EVENT -> "OPC_EVENT"
-        OPC_SYSTEM_STATUS -> "OPC_SYSTEM_STATUS"
-        CMD_SYSTEM -> "CMD_SYSTEM"
-        else -> "0x%02X".format(opcode and 0xFF)
+    private val opcodeLabels = mapOf(
+        CMD_HELLO to "CMD_HELLO",
+        CMD_KEEPALIVE to "CMD_KEEPALIVE",
+        CMD_PING to "CMD_PING/CMD_CLEAR",
+        CMD_BRIGHTNESS to "CMD_BRIGHTNESS",
+        CMD_SYSTEM to "CMD_SYSTEM/OPC_DEBUG_REBOOT",
+        CMD_DISPLAY to "CMD_DISPLAY",
+        CMD_SERIAL_LENS to "CMD_SERIAL_LENS",
+        CMD_SERIAL_FRAME to "CMD_SERIAL_FRAME",
+        CMD_HUD_TEXT to "CMD_HUD_TEXT",
+        OPC_ACK_CONTINUE to "OPC_ACK_CONTINUE",
+        OPC_ACK_COMPLETE to "OPC_ACK_COMPLETE",
+        OPC_DEVICE_STATUS to "OPC_DEVICE_STATUS/OPC_CASE_STATE",
+        OPC_BATTERY to "OPC_BATTERY/CMD_GLASSES_INFO/OPC_CASE_BATTERY",
+        OPC_UPTIME to "OPC_UPTIME",
+        OPC_EVENT to "OPC_EVENT/OPC_GESTURE",
+        OPC_SYSTEM_STATUS to "OPC_SYSTEM_STATUS",
+    )
+
+    fun opcodeName(opcode: Int?): String {
+        val normalized = opcode?.and(0xFF) ?: return "unknown"
+        return opcodeLabels[normalized] ?: "0x%02X".format(normalized)
     }
 
     fun isAckContinuation(opcode: Int?): Boolean {

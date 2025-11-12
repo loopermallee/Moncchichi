@@ -84,6 +84,7 @@ class BleTelemetryRepository(
         val batterySourceOpcode: Int? = null,
         val batteryUpdatedAt: Long? = null,
         val caseBatteryPercent: Int? = null,
+        val caseVoltageMv: Int? = null,
         val lastUpdatedAt: Long? = null,
         val lastPowerOpcode: Int? = null,
         val lastPowerUpdatedAt: Long? = null,

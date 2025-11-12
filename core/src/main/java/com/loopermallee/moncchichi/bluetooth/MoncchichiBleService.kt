@@ -222,10 +222,9 @@ class MoncchichiBleService(
         shouldContinue = { lens -> shouldAutoReconnect(lens) },
         onAttempt = { lens, attempt, delayMs, reason ->
             recordReconnectAttempt(lens)
-            val lensLabel = lens.name.lowercase(Locale.US)
             log("[RECONNECT][${lens.shortLabel}] attempt=$attempt delay=${delayMs}ms reason=$reason")
         },
-        attempt = { lens, attempt, reason ->
+        attempt = { lens, _, _ ->
             val device = knownDevices[lens] ?: return@ReconnectCoordinator false
             connect(device, lens)
         },
@@ -1588,7 +1587,14 @@ private class HeartbeatSupervisor(
             if (!hasData) {
                 return@forEach
             }
-            val formattedTime = stabilityTimeFormatter.get().format(Date(timestamp))
+            val formatter = stabilityTimeFormatter.get()
+            val formattedTime = if (formatter != null) {
+                formatter.format(Date(timestamp))
+            } else {
+                val fallback = SimpleDateFormat("HH:mm:ss", Locale.US)
+                stabilityTimeFormatter.set(fallback)
+                fallback.format(Date(timestamp))
+            }
             val message = formatStabilityMessage(metrics, formattedTime)
             emitConsole("STABILITY", lens, message, timestamp)
             _stabilityMetrics.tryEmit(metrics)

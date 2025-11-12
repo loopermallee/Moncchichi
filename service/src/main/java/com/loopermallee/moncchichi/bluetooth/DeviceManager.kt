@@ -338,6 +338,7 @@ internal class DeviceManager(
 
     @SuppressLint("MissingPermission")
     fun connectToAddress(address: String) {
+        @Suppress("DEPRECATION")
         val adapter = BluetoothAdapter.getDefaultAdapter()
         if (adapter == null) {
             logger.w(TAG, "${tt()} BluetoothAdapter unavailable; cannot connect to $address")
@@ -862,6 +863,7 @@ internal class DeviceManager(
             return false
         }
         reconnecting.set(true)
+        @Suppress("DEPRECATION")
         val adapter = BluetoothAdapter.getDefaultAdapter()
         if (adapter == null) {
             logger.w(TAG, "${tt()} Bluetooth adapter unavailable; aborting reconnect")
@@ -1056,6 +1058,9 @@ internal class DeviceManager(
         hasConnectedSuccessfully.set(false)
     }
 
-    private fun isBluetoothEnabled(): Boolean =
-        BluetoothAdapter.getDefaultAdapter()?.isEnabled == true
+    private fun isBluetoothEnabled(): Boolean {
+        @Suppress("DEPRECATION")
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        return adapter?.isEnabled == true
+    }
 }

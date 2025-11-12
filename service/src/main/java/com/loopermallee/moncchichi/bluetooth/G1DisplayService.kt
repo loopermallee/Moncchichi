@@ -44,7 +44,10 @@ class G1DisplayService : Service() {
     private val binder = G1Binder()
     private val heartbeatStarted = AtomicBoolean(false)
     private var heartbeatJob: Job? = null
-    private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
+    private val bluetoothAdapter: BluetoothAdapter? by lazy {
+        @Suppress("DEPRECATION")
+        BluetoothAdapter.getDefaultAdapter()
+    }
     private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
     private val bluetoothManagerLazy = lazy(LazyThreadSafetyMode.NONE) { BluetoothManager(this, serviceScope) }
     private val bluetoothManager: BluetoothManager?
