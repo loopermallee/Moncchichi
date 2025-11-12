@@ -154,8 +154,10 @@ class G1BleUartClient(
         val ch = rxChar ?: return false.also { logger("[APP][WRITE] RX not ready") }
         ch.writeType = if (withResponse) BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-        ch.value = bytes
-        val ok = gatt?.writeCharacteristic(ch) == true
+        @Suppress("DEPRECATION")
+        val characteristic = ch.apply { value = bytes }
+        @Suppress("DEPRECATION")
+        val ok = gatt?.writeCharacteristic(characteristic) == true
         logger("[APP][WRITE] ${if (ok) "Queued" else "FAILED"} (${bytes.size} bytes)")
         return ok
     }
@@ -255,13 +257,16 @@ class G1BleUartClient(
         }
 
         // Legacy 2-arg variant
+        @Deprecated("Upstream API deprecated; kept for compatibility")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
             c.value?.let { onCharacteristicChanged(g, c, it) }
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
             if (d.uuid == CCCD && d.characteristic.uuid == NUS_TX) {
-                logger("[SERVICE][CCCD] Write status=$status value=${d.value?.toHex()}")
+                @Suppress("DEPRECATION")
+                val descriptorValue = d.value
+                logger("[SERVICE][CCCD] Write status=$status value=${descriptorValue?.toHex()}")
                 val armed = status == BluetoothGatt.GATT_SUCCESS
                 notifyArmed.set(armed)
                 _notificationsArmed.value = armed
@@ -269,7 +274,9 @@ class G1BleUartClient(
                     maybeSendWarmupAfterNotifyArmed()
                 }
             } else if (d.uuid == CCCD && d.characteristic.uuid == SMP_CHAR) {
-                logger("[SMP][CCCD] Write status=$status value=${d.value?.toHex()}")
+                @Suppress("DEPRECATION")
+                val descriptorValue = d.value
+                logger("[SMP][CCCD] Write status=$status value=${descriptorValue?.toHex()}")
             }
         }
 
@@ -308,9 +315,13 @@ class G1BleUartClient(
         val setOk = g.setCharacteristicNotification(tx, true)
         logger("[SERVICE][CCCD] setCharacteristicNotification=$setOk")
         val cccd = tx.getDescriptor(CCCD) ?: return false.also { logger("[ERROR] CCCD not found") }
+        @Suppress("DEPRECATION")
         cccd.value = mode
+        @Suppress("DEPRECATION")
         val writeOk = g.writeDescriptor(cccd)
-        logger("[SERVICE][CCCD] writeDescriptor queued=$writeOk value=${mode.toHex()}")
+        @Suppress("DEPRECATION")
+        val loggedValue = cccd.value
+        logger("[SERVICE][CCCD] writeDescriptor queued=$writeOk value=${loggedValue?.toHex() ?: mode.toHex()}")
         repeat(10) {
             if (notifyArmed.get()) return true
             Thread.sleep(50)
@@ -325,9 +336,13 @@ class G1BleUartClient(
             if (enabled) {
                 val descriptor = characteristic.getDescriptor(CCCD)
                 if (descriptor != null) {
+                    @Suppress("DEPRECATION")
                     descriptor.value = ENABLE_NOTIFY
+                    @Suppress("DEPRECATION")
                     val queued = g.writeDescriptor(descriptor)
-                    logger("[SMP][CCCD] writeDescriptor queued=$queued value=${descriptor.value?.toHex()}")
+                    @Suppress("DEPRECATION")
+                    val descriptorValue = descriptor.value
+                    logger("[SMP][CCCD] writeDescriptor queued=$queued value=${descriptorValue?.toHex()}")
                 } else {
                     logger("[SMP] CCCD missing; notifications unavailable")
                 }

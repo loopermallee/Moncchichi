@@ -301,6 +301,7 @@ class DeveloperViewModel(
             appendLine("Case battery: ${case.batteryPercent?.let { "$it%" } ?: "–"}")
             appendLine("Case charging: ${case.charging?.let { if (it) "yes" else "no" } ?: "–"}")
             appendLine("Case lid: ${formatCaseDoor(case.lidOpen)}")
+            appendLine("Case voltage: ${case.voltageMv?.let { "${it} mV" } ?: "–"}")
             appendLine("Silent mode: ${formatSilent(case.silentMode)}")
             val deviceSnapshots = deviceTelemetry.value
             val leftTelemetryJson = deviceSnapshots[MoncchichiBleService.Lens.LEFT]

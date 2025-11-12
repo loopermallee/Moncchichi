@@ -18,6 +18,7 @@ import java.util.UUID
 
 class G1ServiceImpl : IG1Service.Stub() {
 
+    @Suppress("DEPRECATION")
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var gatt: BluetoothGatt? = null
     private var stateCallback: IG1StateCallback? = null
@@ -143,7 +144,9 @@ class G1ServiceImpl : IG1Service.Stub() {
         val characteristic = gatt?.getService(SERVICE_UUID)?.getCharacteristic(charUuid)
         if (characteristic != null) {
             val bytes = text.toByteArray(Charsets.UTF_8)
+            @Suppress("DEPRECATION")
             characteristic.value = bytes
+            @Suppress("DEPRECATION")
             gatt?.writeCharacteristic(characteristic)
             Log.d(TAG, "Displaying text: $text")
         } else {
@@ -155,7 +158,9 @@ class G1ServiceImpl : IG1Service.Stub() {
         val charUuid = UUID.fromString("0000fff2-0000-1000-8000-00805f9b34fb")
         val characteristic = gatt?.getService(SERVICE_UUID)?.getCharacteristic(charUuid)
         if (characteristic != null) {
+            @Suppress("DEPRECATION")
             characteristic.value = byteArrayOf(0x00)
+            @Suppress("DEPRECATION")
             gatt?.writeCharacteristic(characteristic)
             Log.d(TAG, "Stopping display")
         } else {
@@ -164,6 +169,7 @@ class G1ServiceImpl : IG1Service.Stub() {
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
+        @Deprecated("Upstream API deprecated; kept for compatibility")
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,

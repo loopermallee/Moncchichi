@@ -14,7 +14,7 @@ class SubtitlesViewModel(
     private val repository: Repository
 ) : ViewModel() {
 
-    val displayService = repository.displayService
+    val displayService get() = repository.displayService
 
     data class State(
         val glasses: G1ServiceCommon.Glasses? = null,

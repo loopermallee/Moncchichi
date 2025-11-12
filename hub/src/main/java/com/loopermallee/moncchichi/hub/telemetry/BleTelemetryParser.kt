@@ -1,6 +1,10 @@
 package com.loopermallee.moncchichi.hub.telemetry
 
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_DISPLAY
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_KEEPALIVE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_SERIAL_FRAME
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_SERIAL_LENS
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_SYSTEM
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_BATTERY
@@ -12,8 +16,8 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_EVENT
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.f5EventType
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_SYSTEM_STATUS
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_UPTIME
-import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_BUSY
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.isTelemetry
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
@@ -156,9 +160,48 @@ class BleTelemetryParser(
             val caseBatteryPercent: Int?,
             val charging: Boolean?,
             val lidOpen: Boolean?,
+            val silentMode: Boolean?,
+            val caseVoltageMv: Int?,
+            override val rawFrame: ByteArray,
+        ) : TelemetryEvent
+
+        data class SystemCommandEvent(
+            override val lens: MoncchichiBleService.Lens,
+            override val timestampMs: Long,
+            val opcode: Int,
+            val subcommand: Int?,
+            val text: String?,
+            val payload: ByteArray,
+            override val rawFrame: ByteArray,
+        ) : TelemetryEvent
+
+        data class DisplayEvent(
+            override val lens: MoncchichiBleService.Lens,
+            override val timestampMs: Long,
+            val opcode: Int,
+            val subcommand: Int?,
+            val height: Int?,
+            val depth: Int?,
+            val preview: Boolean?,
+            val brightness: Int?,
+            val action: Int?,
+            val enabled: Boolean?,
+            val payload: ByteArray,
+            override val rawFrame: ByteArray,
+        ) : TelemetryEvent
+
+        data class SerialNumberEvent(
+            override val lens: MoncchichiBleService.Lens,
+            override val timestampMs: Long,
+            val opcode: Int,
+            val type: SerialType,
+            val serial: String?,
+            val payload: ByteArray,
             override val rawFrame: ByteArray,
         ) : TelemetryEvent
     }
+
+    enum class SerialType { LENS, FRAME }
 
     fun parse(
         lens: MoncchichiBleService.Lens,
@@ -184,6 +227,9 @@ class BleTelemetryParser(
             opcode == OPC_UPTIME -> parseUptime(lens, frame, timestampMs)
             opcode == OPC_SYSTEM_STATUS -> parseAck(lens, frame, timestampMs)
             opcode == OPC_EVENT -> parseF5(lens, frame, timestampMs)
+            opcode == CMD_SYSTEM -> parseSystemCommand(lens, frame, timestampMs)
+            opcode == CMD_DISPLAY -> parseDisplay(lens, frame, timestampMs)
+            opcode == CMD_SERIAL_LENS || opcode == CMD_SERIAL_FRAME -> parseSerial(lens, frame, timestampMs)
             opcode == CMD_KEEPALIVE -> parseAudio(lens, frame, timestampMs)
             else -> emptyList()
         }
@@ -201,16 +247,30 @@ class BleTelemetryParser(
         frame: G1ReplyParser.NotifyFrame,
         timestampMs: Long,
     ): List<TelemetryEvent> {
-        val flags = G1ReplyParser.parseState(frame) ?: return emptyList()
-        return listOf(
-            TelemetryEvent.DeviceStatusEvent(
+        val caseTelemetry = G1ReplyParser.parseCaseStateTelemetry(frame)
+        val flags = caseTelemetry?.flags ?: G1ReplyParser.parseState(frame) ?: return emptyList()
+        val events = mutableListOf<TelemetryEvent>()
+        events += TelemetryEvent.DeviceStatusEvent(
+            lens = lens,
+            timestampMs = timestampMs,
+            opcode = frame.opcode,
+            flags = flags,
+            rawFrame = frame.raw.copyOf(),
+        )
+        if (caseTelemetry != null && (caseTelemetry.lidOpen != null || caseTelemetry.silentMode != null)) {
+            events += TelemetryEvent.CaseUpdate(
                 lens = lens,
                 timestampMs = timestampMs,
                 opcode = frame.opcode,
-                flags = flags,
+                caseBatteryPercent = null,
+                charging = null,
+                lidOpen = caseTelemetry.lidOpen,
+                silentMode = caseTelemetry.silentMode,
+                caseVoltageMv = null,
                 rawFrame = frame.raw.copyOf(),
-            ),
-        )
+            )
+        }
+        return events
     }
 
     private fun parseBattery(
@@ -223,20 +283,37 @@ class BleTelemetryParser(
         val info = infoPayload?.let { payload ->
             runCatching { G1ReplyParser.parseBattery(payload) }.getOrNull()
         }
-        if (status == null && info == null) {
+        val caseTelemetry = G1ReplyParser.parseCaseBattery(frame)
+        if (status == null && info == null && caseTelemetry == null) {
             return emptyList()
         }
-        return listOf(
-            TelemetryEvent.BatteryEvent(
+        val events = mutableListOf<TelemetryEvent>()
+        if (status != null || info != null) {
+            events += TelemetryEvent.BatteryEvent(
                 lens = lens,
                 timestampMs = timestampMs,
                 opcode = frame.opcode,
                 batteryPercent = status?.batteryPercent,
-                caseBatteryPercent = status?.caseBatteryPercent,
+                caseBatteryPercent = status?.caseBatteryPercent ?: caseTelemetry?.percent,
                 info = info,
                 rawFrame = frame.raw.copyOf(),
-            ),
-        )
+            )
+        }
+        val casePercent = status?.caseBatteryPercent ?: caseTelemetry?.percent
+        if (casePercent != null || caseTelemetry?.charging != null || caseTelemetry?.voltageMv != null) {
+            events += TelemetryEvent.CaseUpdate(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                caseBatteryPercent = casePercent,
+                charging = caseTelemetry?.charging,
+                lidOpen = null,
+                silentMode = null,
+                caseVoltageMv = caseTelemetry?.voltageMv,
+                rawFrame = frame.raw.copyOf(),
+            )
+        }
+        return events
     }
 
     private fun parseEnvironmentSnapshot(
@@ -335,6 +412,72 @@ class BleTelemetryParser(
                 channel = channel,
                 declaredLength = declaredLength,
                 payload = audioPayload,
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseSystemCommand(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val result = G1ReplyParser.parseSystemCommand(frame)
+            ?: return emptyList()
+        return listOf(
+            TelemetryEvent.SystemCommandEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                subcommand = result.subcommand,
+                text = result.text,
+                payload = result.payload.copyOf(),
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseDisplay(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val parsed = G1ReplyParser.parseDisplaySettings(frame)
+            ?: return emptyList()
+        return listOf(
+            TelemetryEvent.DisplayEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                subcommand = parsed.subcommand,
+                height = parsed.height,
+                depth = parsed.depth,
+                preview = parsed.preview,
+                brightness = parsed.brightness,
+                action = parsed.action,
+                enabled = parsed.enabled,
+                payload = parsed.payload.copyOf(),
+                rawFrame = frame.raw.copyOf(),
+            ),
+        )
+    }
+
+    private fun parseSerial(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val parsed = G1ReplyParser.parseSerialResponse(frame)
+            ?: return emptyList()
+        val type = if (frame.opcode == CMD_SERIAL_LENS) SerialType.LENS else SerialType.FRAME
+        return listOf(
+            TelemetryEvent.SerialNumberEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                type = type,
+                serial = parsed.serial,
+                payload = parsed.payload.copyOf(),
                 rawFrame = frame.raw.copyOf(),
             ),
         )
@@ -502,7 +645,12 @@ class BleTelemetryParser(
             0x0F -> rawValue?.takeIf { it in 0..100 }
             else -> null
         }
-        if (lidOpen == null && charging == null && caseBattery == null) {
+        val silent = when (code) {
+            0x0A -> rawValue?.let { it != 0 } ?: true
+            0x0B -> rawValue?.let { it != 0 }?.not() ?: false
+            else -> null
+        }
+        if (lidOpen == null && charging == null && caseBattery == null && silent == null) {
             return null
         }
         return TelemetryEvent.CaseUpdate(
@@ -512,6 +660,8 @@ class BleTelemetryParser(
             caseBatteryPercent = caseBattery,
             charging = charging,
             lidOpen = lidOpen,
+            silentMode = silent,
+            caseVoltageMv = null,
             rawFrame = frame.raw.copyOf(),
         )
     }
@@ -525,7 +675,7 @@ class BleTelemetryParser(
     }
     private val systemEventCodes = 0x06..0x0B
     private val specialSystemCodes = setOf(0x0E, 0x0F)
-    private val caseEventCodes = setOf(0x08, 0x09, 0x0E, 0x0F)
+    private val caseEventCodes = setOf(0x08, 0x09, 0x0A, 0x0B, 0x0E, 0x0F)
 
     private fun G1ReplyParser.NotifyFrame.toEnvironmentSnapshot(): EnvironmentSnapshot? {
         val payloadCopy = payload.copyOf()

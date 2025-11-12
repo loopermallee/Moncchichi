@@ -116,6 +116,7 @@ interface MemoryDao {
 @Database(
     entities = [ConsoleLine::class, AssistantEntry::class, TelemetrySnapshot::class],
     version = 9,
+    exportSchema = false,
 )
 abstract class MemoryDb : RoomDatabase() {
     abstract fun dao(): MemoryDao

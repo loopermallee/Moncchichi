@@ -823,13 +823,8 @@ class DeveloperFragment : Fragment() {
         }
 
         private fun labelForGesture(event: LensGestureEvent): String {
-            return when (event.gesture.code) {
-                0x01 -> "single"
-                0x02 -> "double"
-                0x03 -> "triple"
-                0x04 -> "hold"
-                else -> event.gesture.name.lowercase(Locale.US).replace('_', ' ')
-            }
+            val name = event.gesture.name.ifBlank { "Gesture 0x%02X".format(Locale.US, event.gesture.code and 0xFF) }
+            return "${event.lens.shortLabel} → $name"
         }
     }
 

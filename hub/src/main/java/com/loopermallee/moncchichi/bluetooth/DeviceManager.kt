@@ -156,6 +156,7 @@ class DeviceManager(
 
     @SuppressLint("MissingPermission")
     suspend fun connect(address: String): Boolean {
+        @Suppress("DEPRECATION")
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
         return connect(adapter.getRemoteDevice(address))
     }
@@ -277,6 +278,7 @@ class DeviceManager(
 
     @SuppressLint("MissingPermission")
     fun startScanNearbyDevices() {
+        @Suppress("DEPRECATION")
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
         val scanner = adapter.bluetoothLeScanner ?: return
 
