@@ -289,7 +289,7 @@ class BleTelemetryRepository(
         val lastGesture: LensGestureEvent?,
         val reconnectAttempts: Int? = null,
         val heartbeatLatencyMs: Int? = null,
-        val lastAckMode: MoncchichiBleService.AckType? = null,
+        val ackMode: MoncchichiBleService.AckType? = null,
         val heartbeatLatencyAvgMs: Int? = null,
         val heartbeatMissCount: Int? = null,
     )
@@ -333,7 +333,7 @@ class BleTelemetryRepository(
             lastGesture = null,
             reconnectAttempts = null,
             heartbeatLatencyMs = null,
-            lastAckMode = null,
+            ackMode = null,
             heartbeatLatencyAvgMs = null,
         )
     }
@@ -389,7 +389,7 @@ class BleTelemetryRepository(
             lastGesture = mergeNonNull(previous.lastGesture, lastGesture, allowNullReset),
             reconnectAttempts = mergeNonNull(previous.reconnectAttempts, reconnectAttempts, allowNullReset),
             heartbeatLatencyMs = mergeNonNull(previous.heartbeatLatencyMs, heartbeatLatencyMs, allowNullReset),
-            lastAckMode = mergeNonNull(previous.lastAckMode, lastAckMode, allowNullReset),
+            ackMode = mergeNonNull(previous.ackMode, ackMode, allowNullReset),
             heartbeatLatencyAvgMs = mergeNonNull(previous.heartbeatLatencyAvgMs, heartbeatLatencyAvgMs, allowNullReset),
             heartbeatMissCount = mergeNonNull(previous.heartbeatMissCount, heartbeatMissCount, allowNullReset),
         )
@@ -425,7 +425,7 @@ class BleTelemetryRepository(
             append(' ')
             append("ack=")
             append(snapshot.lastAckStatus ?: "?")
-            snapshot.lastAckMode?.let { mode ->
+            snapshot.ackMode?.let { mode ->
                 append(" mode=")
                 append(mode.name)
             }
@@ -527,7 +527,7 @@ class BleTelemetryRepository(
             reconnectAttempts?.let { add("reconnect=$it") }
             heartbeatLatencyMs?.let { add("heartbeat=${it}ms") }
             heartbeatLatencyAvgMs?.let { add("heartbeatAvg=${it}ms") }
-            lastAckMode?.let { add("ackMode=${it.name}") }
+            ackMode?.let { add("ackMode=${it.name}") }
             environment?.takeIf { it.isNotEmpty() }?.let { map ->
                 add(map.entries.joinToString(prefix = "env{", postfix = "}") { (key, value) -> "$key=$value" })
             }
@@ -547,7 +547,7 @@ class BleTelemetryRepository(
             reconnectAttempts = reconnectAttempts,
             heartbeatLatencyAvgMs = heartbeatLatencyAvgMs,
             heartbeatLatencyMs = heartbeatLatencyMs,
-            lastAckMode = lastAckMode?.name,
+            lastAckMode = ackMode?.name,
             lastAckStatus = lastAckStatus,
             lastAckTimestamp = lastAckTimestamp,
             uptimeSeconds = uptimeSeconds,
@@ -612,7 +612,8 @@ class BleTelemetryRepository(
         put("firmwareVersion", firmwareVersion)
         put("lastAckStatus", lastAckStatus)
         put("lastAckTimestamp", lastAckTimestamp)
-        put("lastAckMode", lastAckMode?.name)
+        put("ackMode", ackMode?.name)
+        put("lastAckMode", ackMode?.name)
         put("reconnectAttempts", reconnectAttempts)
         put("heartbeatLatencyMs", heartbeatLatencyMs)
         put("heartbeatLatencyAvgMs", heartbeatLatencyAvgMs)
@@ -734,8 +735,8 @@ class BleTelemetryRepository(
         val uptimeLabel = uptimeSeconds?.let { "Up ${it}s" }
         val firmwareLabel = firmware?.let { "FW $it" }
         val ackLabel = listOfNotNull(
-            left.ackMode?.let { "L ${it.toSummaryLabel()}" },
-            right.ackMode?.let { "R ${it.toSummaryLabel()}" },
+            left.ackMode?.let { mode -> "L ${mode.toSummaryLabel()}" },
+            right.ackMode?.let { mode -> "R ${mode.toSummaryLabel()}" },
         ).takeIf { it.isNotEmpty() }?.joinToString(separator = " / ")
         return buildString {
             append("[TELEMETRY] ")
@@ -761,7 +762,8 @@ class BleTelemetryRepository(
                 append(it)
             }
             ackLabel?.let {
-                append(" • ACK ")
+                append(" • ACK:")
+                append(' ')
                 append(it)
             }
         }
@@ -905,7 +907,7 @@ class BleTelemetryRepository(
 
         val telemetryState = lensTelemetrySnapshots.getValue(lens)
         val previousSnapshot = telemetryState.value
-        val ackStateChanged = previousSnapshot.lastAckStatus != statusText || previousSnapshot.lastAckMode != ackType
+        val ackStateChanged = previousSnapshot.lastAckStatus != statusText || previousSnapshot.ackMode != ackType
 
         updateDeviceTelemetry(
             lens = lens,
@@ -916,7 +918,7 @@ class BleTelemetryRepository(
             snapshot.copy(
                 lastAckStatus = statusText,
                 lastAckTimestamp = timestamp,
-                lastAckMode = ackType,
+                ackMode = ackType,
             )
         }
         persistDeviceTelemetrySnapshots(timestamp)
@@ -2503,7 +2505,7 @@ class BleTelemetryRepository(
                         heartbeatLatencyMs = heartbeatLatency,
                         heartbeatLatencyAvgMs = heartbeatAverage,
                         reconnectAttempts = reconnectSnapshot,
-                        lastAckMode = status.heartbeatAckType ?: snapshot.lastAckMode,
+                        ackMode = status.heartbeatAckType ?: snapshot.ackMode,
                         heartbeatMissCount = status.heartbeatMissCount,
                     )
                 }

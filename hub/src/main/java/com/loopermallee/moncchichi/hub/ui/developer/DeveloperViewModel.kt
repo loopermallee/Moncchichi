@@ -322,8 +322,8 @@ class DeveloperViewModel(
         val rightVoltage = right?.batteryVoltageMv?.let { "${it}mV" } ?: "–"
         val uptime = uptimeSeconds?.let { formatDuration(it) }
         val ackSummary = listOfNotNull(
-            left?.lastAckMode?.let { "L ${formatAckType(it)}" },
-            right?.lastAckMode?.let { "R ${formatAckType(it)}" },
+            left?.ackMode?.let { "L ${formatAckType(it)}" },
+            right?.ackMode?.let { "R ${formatAckType(it)}" },
         ).takeIf { it.isNotEmpty() }?.joinToString(separator = " / ")
         return buildString {
             append("Case $caseBattery ($caseState)")
@@ -348,7 +348,8 @@ class DeveloperViewModel(
                 append(it)
             }
             ackSummary?.let {
-                append(" • ACK ")
+                append(" • ACK:")
+                append(' ')
                 append(it)
             }
         }
