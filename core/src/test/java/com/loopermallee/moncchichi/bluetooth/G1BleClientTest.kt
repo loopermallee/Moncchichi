@@ -231,6 +231,56 @@ class G1BleClientTest {
     }
 
     @Test
+    fun sendCommandWaitsForNotificationsBeforeWriting() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+            every { harness.uartClient.write(any<ByteArray>()) } returns true
+
+            harness.client.connect()
+            runCurrent()
+
+            val writeDeferred = async {
+                harness.client.sendCommand(
+                    payload = byteArrayOf(0x42),
+                    ackTimeoutMs = 1_000L,
+                    retries = 1,
+                    retryDelayMs = 100L,
+                    expectAck = false,
+                )
+            }
+
+            runCurrent()
+            assertFalse(writeDeferred.isCompleted)
+            verify(exactly = 0) {
+                harness.uartClient.write(match { payload -> payload.firstOrNull() == 0x42.toByte() })
+            }
+
+            harness.connectionStateFlow.value = G1BleUartClient.ConnectionState.CONNECTED
+            harness.mtuFlow.value = 498
+            runCurrent()
+
+            advanceTimeBy(500)
+            runCurrent()
+            assertFalse(writeDeferred.isCompleted)
+            verify(exactly = 0) {
+                harness.uartClient.write(match { payload -> payload.firstOrNull() == 0x42.toByte() })
+            }
+
+            harness.notificationsArmedFlow.value = true
+            runCurrent()
+
+            assertTrue(writeDeferred.await())
+            verify {
+                harness.uartClient.write(match { payload -> payload.firstOrNull() == 0x42.toByte() })
+            }
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun warmupAckWithMtuOpcodeSetsWarmupOk() = runTest {
         val harness = buildClientHarness(this)
         try {

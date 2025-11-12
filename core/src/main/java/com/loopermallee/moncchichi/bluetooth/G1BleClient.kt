@@ -365,6 +365,7 @@ class G1BleClient(
         private const val ACK_TIMEOUT_STREAK_TRIGGER = 3
         private val AUTH_FAILURE_STATUS_CODES = setOf(0x85, 0x13)
         private val GATT_RECONNECT_BACKOFF_MS = longArrayOf(500L, 1_000L, 2_000L)
+        private const val NOTIFY_READY_TIMEOUT_MS = 4_000L
     }
 
     enum class ConnectionState {
@@ -475,6 +476,8 @@ class G1BleClient(
     val incoming: SharedFlow<ByteArray> = _incoming.asSharedFlow()
     private val _audioFrames = MutableSharedFlow<AudioFrame>(extraBufferCapacity = 64)
     val audioFrames: SharedFlow<AudioFrame> = _audioFrames.asSharedFlow()
+    private val _notifyReady = MutableStateFlow(false)
+    val notifyReady: StateFlow<Boolean> = _notifyReady.asStateFlow()
     private val _state = MutableStateFlow(
         State(
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
@@ -517,6 +520,7 @@ class G1BleClient(
     private var ackWatchdogJob: Job? = null
 
     fun connect() {
+        _notifyReady.value = false
         lastAckedMtu = null
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
@@ -582,6 +586,10 @@ class G1BleClient(
                         lastAckedMtu = null
                         previousMtu = null
                         previousArmed = false
+                        if (_notifyReady.value) {
+                            _notifyReady.value = false
+                            logger.i(label, "${tt()} [BLE] Notifications disarmed (link down)")
+                        }
                         warmupExpected = false
                         _state.value = _state.value.copy(attMtu = null, warmupOk = false)
                         return@collect
@@ -591,6 +599,13 @@ class G1BleClient(
                     val armedBecameTrue = armed && !previousArmed
                     previousMtu = mtu
                     previousArmed = armed
+
+                    val notifyShouldBeReady = armed
+                    if (_notifyReady.value != notifyShouldBeReady) {
+                        _notifyReady.value = notifyShouldBeReady
+                        val statusLabel = if (notifyShouldBeReady) "armed" else "disarmed"
+                        logger.i(label, "${tt()} [BLE] Notifications $statusLabel (mtu=$mtu)")
+                    }
 
                     val alreadyAcked = lastAckedMtu == mtu
                     if (!alreadyAcked && (mtuChanged || armedBecameTrue)) {
@@ -799,6 +814,7 @@ class G1BleClient(
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
         keepAliveInFlight.set(0)
+        _notifyReady.value = false
         cancelPairingDialogWatchdog()
         dismissPairingNotification()
         _state.value = State(
@@ -923,6 +939,13 @@ class G1BleClient(
     }
 
     fun enqueueHeartbeat(sequence: Int, payload: ByteArray): Boolean {
+        if (!_notifyReady.value) {
+            logger.w(
+                label,
+                "${tt()} [BLE][PING] dropped seq=${sequence.toByteHex()} (notifications not armed)",
+            )
+            return false
+        }
         val ok = uartClient.write(payload, withResponse = false)
         logger.i(
             label,
@@ -940,6 +963,16 @@ class G1BleClient(
         onAttemptResult: ((CommandAttemptTelemetry) -> Unit)? = null,
     ): Boolean {
         val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
+        if (!_notifyReady.value) {
+            val ready = awaitNotifyReady()
+            if (!ready) {
+                logger.w(
+                    label,
+                    "${tt()} Write aborted opcode=${opcode.toLabel()} (notifications not armed)",
+                )
+                return false
+            }
+        }
         repeat(retries) { attempt ->
             if (expectAck) {
                 // Clear any stale ACK before writing.
@@ -1114,6 +1147,22 @@ class G1BleClient(
             }
         }
         return false
+    }
+
+    private suspend fun awaitNotifyReady(): Boolean {
+        if (_notifyReady.value) {
+            return true
+        }
+        val armed = withTimeoutOrNull(NOTIFY_READY_TIMEOUT_MS) {
+            notifyReady.filter { it }.first()
+        } ?: false
+        if (!armed) {
+            logger.w(
+                label,
+                "${tt()} Notifications not armed after ${NOTIFY_READY_TIMEOUT_MS}ms",
+            )
+        }
+        return armed
     }
 
     fun readRemoteRssi(): Boolean = uartClient.readRemoteRssi()
