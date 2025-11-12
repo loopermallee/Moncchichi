@@ -31,6 +31,7 @@ private const val KEY_AUDIO_SINK = "audio:audio_sink"
 private const val KEY_AUDIBLE_RESPONSES = "audio:audible_responses"
 private const val KEY_PREFER_PHONE_MIC = "audio:prefer_phone_mic"
 private const val KEY_DIAGNOSTICS_ENABLED = "diagnostics:enabled"
+private const val KEY_DEVELOPER_CONSOLE_FILTERS = "developer:console_filters"
 private const val DEFAULT_SPEED = 48
 
 object SettingsRepository {
@@ -146,4 +147,16 @@ object SettingsRepository {
     }
 
     fun isDiagnosticsEnabled(): Boolean = prefs.getBoolean(KEY_DIAGNOSTICS_ENABLED, true)
+
+    fun getDeveloperConsoleFilters(default: Set<String>): Set<String> {
+        val stored = prefs.getStringSet(KEY_DEVELOPER_CONSOLE_FILTERS, null)
+        if (stored.isNullOrEmpty()) {
+            return default
+        }
+        return stored.filter { it.isNotBlank() }.toSet().ifEmpty { default }
+    }
+
+    fun setDeveloperConsoleFilters(enabled: Set<String>) {
+        prefs.edit().putStringSet(KEY_DEVELOPER_CONSOLE_FILTERS, enabled).apply()
+    }
 }
