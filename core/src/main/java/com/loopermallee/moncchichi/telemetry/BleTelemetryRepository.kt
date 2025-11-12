@@ -1,6 +1,6 @@
 package com.loopermallee.moncchichi.telemetry
 
-import com.loopermallee.moncchichi.bluetooth.LensSide
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,7 +63,7 @@ class BleTelemetryRepository(
     private val firstTelemetryAt = AtomicLong(0L)
     private var lastPersisted: SnapshotRecord? = null
 
-    suspend fun recordTelemetry(side: LensSide, telemetry: Map<String, Any>) {
+    suspend fun recordTelemetry(side: Lens, telemetry: Map<String, Any>) {
         val now = System.currentTimeMillis()
         mutex.withLock {
             val current = _snapshot.value
@@ -95,7 +95,7 @@ class BleTelemetryRepository(
         }
     }
 
-    suspend fun updateHeartbeat(side: LensSide, lastPingAt: Long, lastAckAt: Long, missedCount: Int) {
+    suspend fun updateHeartbeat(side: Lens, lastPingAt: Long, lastAckAt: Long, missedCount: Int) {
         mutex.withLock {
             val current = _snapshot.value
             val lens = current.lens(side)
@@ -137,17 +137,17 @@ class BleTelemetryRepository(
         return if (value == 0L) null else value
     }
 
-    private fun Snapshot.lens(side: LensSide): LensSnapshot {
+    private fun Snapshot.lens(side: Lens): LensSnapshot {
         return when (side) {
-            LensSide.LEFT -> left
-            LensSide.RIGHT -> right
+            Lens.LEFT -> left
+            Lens.RIGHT -> right
         }
     }
 
-    private fun Snapshot.update(side: LensSide, lens: LensSnapshot, timestamp: Long): Snapshot {
+    private fun Snapshot.update(side: Lens, lens: LensSnapshot, timestamp: Long): Snapshot {
         return when (side) {
-            LensSide.LEFT -> copy(left = lens, recordedAt = timestamp)
-            LensSide.RIGHT -> copy(right = lens, recordedAt = timestamp)
+            Lens.LEFT -> copy(left = lens, recordedAt = timestamp)
+            Lens.RIGHT -> copy(right = lens, recordedAt = timestamp)
         }
     }
 
