@@ -2,8 +2,6 @@ package com.loopermallee.moncchichi.bluetooth
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -21,20 +19,35 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.math.min
 
 /**
- * Step 1 skeleton orchestrator that combines the per-lens client states.
- * Functional integration will follow after the legacy single-device path is refactored.
+ * Coordinates dual-lens connections while honouring Even parity requirements.
  */
-class HeadsetOrchestrator(
+class DualLensConnectionOrchestrator(
     private val pairKey: PairKey,
     private val bleFactory: (LensId) -> BleClient,
     private val scope: CoroutineScope,
 ) {
+    sealed class State {
+        data object Idle : State()
+        data object Scanning : State()
+        data object ConnectingRight : State()
+        data object ConnectingLeft : State()
+        data object RightOnlineUnprimed : State()
+        data object LeftOnlineUnprimed : State()
+        data object ReadyRight : State()
+        data object ReadyBoth : State()
+        data object DegradedRightOnly : State()
+        data object DegradedLeftOnly : State()
+    }
+
     private data class LensSession(
         val id: LensId,
         val client: BleClient,
     )
 
     private val stateLock = Mutex()
+
+    private val _connectionState = MutableStateFlow<State>(State.Idle)
+    val connectionState: StateFlow<State> = _connectionState.asStateFlow()
 
     private val _headset = MutableStateFlow(
         HeadsetState(
@@ -65,8 +78,8 @@ class HeadsetOrchestrator(
     private var sessionActive: Boolean = false
 
     suspend fun connectHeadset(pairKey: PairKey, leftMac: String, rightMac: String) = coroutineScope {
-        require(pairKey == this@HeadsetOrchestrator.pairKey) {
-            "Attempted to connect mismatched pair $pairKey for orchestrator ${this@HeadsetOrchestrator.pairKey}"
+        require(pairKey == this@DualLensConnectionOrchestrator.pairKey) {
+            "Attempted to connect mismatched pair $pairKey for orchestrator ${this@DualLensConnectionOrchestrator.pairKey}"
         }
 
         disconnectHeadset()
@@ -79,37 +92,56 @@ class HeadsetOrchestrator(
         rightSession = LensSession(rightId, rightClient)
 
         sessionActive = true
+        _connectionState.value = State.ConnectingRight
         _telemetry.value = emptyMap()
 
         startTracking(LensSide.LEFT, leftClient)
         startTracking(LensSide.RIGHT, rightClient)
 
-        awaitAll(
-            async { leftClient.ensureBonded() },
-            async { rightClient.ensureBonded() },
-        )
+        val rightResult = runCatching {
+            rightClient.ensureBonded()
+            rightClient.connectAndSetup()
+            _connectionState.value = State.RightOnlineUnprimed
+            val primed = rightClient.probeReady(LensSide.RIGHT)
+            if (primed) {
+                rightClient.startKeepAlive()
+                _connectionState.value = State.ReadyRight
+            }
+            primed
+        }.getOrElse { false }
 
-        awaitAll(
-            async { leftClient.connectAndSetup() },
-            async { rightClient.connectAndSetup() },
-        )
+        val leftResult = runCatching {
+            _connectionState.value = State.ConnectingLeft
+            leftClient.ensureBonded()
+            leftClient.connectAndSetup()
+            _connectionState.value = State.LeftOnlineUnprimed
+            val primed = leftClient.probeReady(LensSide.LEFT)
+            if (primed) {
+                leftClient.startKeepAlive()
+            }
+            primed
+        }.getOrElse { false }
 
-        val leftReady = async { leftClient.probeReady(LensSide.LEFT) }
-        val rightReady = async { rightClient.probeReady(LensSide.RIGHT) }
-
-        leftClient.startKeepAlive()
-        rightClient.startKeepAlive()
-
-        if (!leftReady.await()) {
-            scheduleReconnect(LensSide.LEFT)
-        }
-        if (!rightReady.await()) {
-            scheduleReconnect(LensSide.RIGHT)
+        when {
+            rightResult && leftResult -> _connectionState.value = State.ReadyBoth
+            rightResult && !leftResult -> {
+                _connectionState.value = State.DegradedRightOnly
+                scheduleReconnect(LensSide.LEFT)
+            }
+            !rightResult && leftResult -> {
+                _connectionState.value = State.DegradedLeftOnly
+                scheduleReconnect(LensSide.RIGHT)
+            }
+            else -> {
+                scheduleReconnect(LensSide.LEFT)
+                scheduleReconnect(LensSide.RIGHT)
+            }
         }
     }
 
     suspend fun disconnectHeadset() {
         sessionActive = false
+        _connectionState.value = State.Idle
 
         reconnectJobs.values.forEach { it.cancel() }
         reconnectJobs.clear()
@@ -174,8 +206,32 @@ class HeadsetOrchestrator(
             is ClientEvent.ConnectionStateChanged -> {
                 if (!event.connected) {
                     scheduleReconnect(side)
+                    _connectionState.value = when (side) {
+                        LensSide.RIGHT -> if (latestLeft?.isReady == true) {
+                            State.DegradedLeftOnly
+                        } else {
+                            State.ConnectingRight
+                        }
+                        LensSide.LEFT -> if (latestRight?.isReady == true) {
+                            State.DegradedRightOnly
+                        } else {
+                            State.ConnectingLeft
+                        }
+                    }
                 } else {
                     reconnectJobs.remove(side)?.cancel()
+                    _connectionState.value = when (side) {
+                        LensSide.RIGHT -> if (latestLeft?.isReady == true) {
+                            State.ReadyBoth
+                        } else {
+                            State.ReadyRight
+                        }
+                        LensSide.LEFT -> if (latestRight?.isReady == true) {
+                            State.ReadyBoth
+                        } else {
+                            State.LeftOnlineUnprimed
+                        }
+                    }
                 }
             }
 
@@ -209,6 +265,18 @@ class HeadsetOrchestrator(
                     ready
                 }.getOrElse { false }
                 if (success) {
+                    _connectionState.value = when (side) {
+                        LensSide.RIGHT -> if (latestLeft?.isReady == true) {
+                            State.ReadyBoth
+                        } else {
+                            State.ReadyRight
+                        }
+                        LensSide.LEFT -> if (latestRight?.isReady == true) {
+                            State.ReadyBoth
+                        } else {
+                            State.LeftOnlineUnprimed
+                        }
+                    }
                     reconnectJobs.remove(side)
                     return@launch
                 }
@@ -216,6 +284,10 @@ class HeadsetOrchestrator(
                 delayMs = min(delayMs * 2, MAX_RECONNECT_DELAY_MS)
             }
             reconnectJobs.remove(side)
+            when (side) {
+                LensSide.RIGHT -> _connectionState.value = State.DegradedLeftOnly
+                LensSide.LEFT -> _connectionState.value = State.DegradedRightOnly
+            }
         }
     }
 
@@ -235,8 +307,8 @@ class HeadsetOrchestrator(
     }
 
     companion object {
-        private const val INITIAL_RECONNECT_DELAY_MS = 500L
-        private const val MAX_RECONNECT_DELAY_MS = 10_000L
+        private const val INITIAL_RECONNECT_DELAY_MS = 1_000L
+        private const val MAX_RECONNECT_DELAY_MS = 8_000L
     }
 }
 
