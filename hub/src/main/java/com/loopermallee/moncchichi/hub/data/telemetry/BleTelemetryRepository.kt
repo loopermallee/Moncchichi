@@ -11,6 +11,14 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_BUSY
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SUBCMD_DISPLAY_BRIGHTNESS
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SUBCMD_DISPLAY_DOUBLE_TAP
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SUBCMD_DISPLAY_HEIGHT_DEPTH
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SUBCMD_DISPLAY_LONG_PRESS
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SUBCMD_DISPLAY_MIC_ON_LIFT
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SUBCMD_SYSTEM_DEBUG
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SUBCMD_SYSTEM_FIRMWARE
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SUBCMD_SYSTEM_REBOOT
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.hub.audio.MicStreamManager
@@ -19,6 +27,7 @@ import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.diagnostics.TelemetryConsistencyValidator
 import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
+import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser.SerialType
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -129,6 +138,7 @@ class BleTelemetryRepository(
         val charging: Boolean? = null,
         val lidOpen: Boolean? = null,
         val silentMode: Boolean? = null,
+        val voltageMv: Int? = null,
         val updatedAt: Long = System.currentTimeMillis(),
     )
 
@@ -291,6 +301,134 @@ class BleTelemetryRepository(
         }
     }
 
+    private fun handleSystemCommandEvent(event: BleTelemetryParser.TelemetryEvent.SystemCommandEvent) {
+        val sub = event.subcommand
+        val text = event.text?.trim()?.ifBlank { null }
+        val isFirmware = sub == SUBCMD_SYSTEM_FIRMWARE || (sub == null && !text.isNullOrBlank())
+        var label = when {
+            sub == SUBCMD_SYSTEM_DEBUG -> text?.let { "Debug $it" } ?: "Debug Toggle"
+            sub == SUBCMD_SYSTEM_REBOOT -> "Reboot Requested"
+            isFirmware -> text?.let { if (it.startsWith("Firmware", ignoreCase = true)) it else "Firmware $it" } ?: "Firmware Info"
+            sub != null -> "System 0x%02X".format(Locale.US, sub)
+            else -> "System"
+        }
+        if (isFirmware) {
+            val frameId = lensTelemetrySnapshots.values
+                .map { it.value.frameSerialId }
+                .firstOrNull { !it.isNullOrBlank() }
+            if (!frameId.isNullOrBlank()) {
+                label = "$label – FrameID: $frameId"
+            }
+        }
+        val prefix = event.lens?.shortLabel?.let { "$it → " } ?: ""
+        emitConsole("SYS", null, prefix + label, event.timestampMs)
+        if (isFirmware && !text.isNullOrBlank()) {
+            MoncchichiBleService.Lens.values().forEach { lens ->
+                updateDeviceTelemetry(
+                    lens = lens,
+                    eventTimestamp = event.timestampMs,
+                    logUpdate = false,
+                    persist = false,
+                ) { snapshot ->
+                    snapshot.copy(firmwareVersion = text)
+                }
+            }
+            persistDeviceTelemetrySnapshots(event.timestampMs)
+        }
+    }
+
+    private fun handleDisplayEvent(event: BleTelemetryParser.TelemetryEvent.DisplayEvent) {
+        val sub = event.subcommand
+        val label = when (sub) {
+            SUBCMD_DISPLAY_HEIGHT_DEPTH -> buildString {
+                append("Height=")
+                append(event.height?.toString() ?: "?")
+                append(" Depth=")
+                append(event.depth?.toString() ?: "?")
+                event.preview?.let { preview ->
+                    append(" ")
+                    append(if (preview) "Preview" else "Apply")
+                }
+            }
+
+            SUBCMD_DISPLAY_BRIGHTNESS -> "Brightness ${event.brightness ?: -1}"
+            SUBCMD_DISPLAY_DOUBLE_TAP -> "Double Tap Action 0x%02X".format(Locale.US, event.action ?: 0)
+            SUBCMD_DISPLAY_LONG_PRESS -> "Long Press Action 0x%02X".format(Locale.US, event.action ?: 0)
+            SUBCMD_DISPLAY_MIC_ON_LIFT -> {
+                val enabled = event.enabled ?: false
+                "Mic On Lift ${if (enabled) "Enabled" else "Disabled"}"
+            }
+
+            else -> if (sub != null) "Display 0x%02X".format(Locale.US, sub) else "Display"
+        }
+        val prefix = event.lens?.shortLabel?.let { "$it → " } ?: ""
+        emitConsole("DISPLAY", null, prefix + label, event.timestampMs)
+        updateDeviceTelemetry(
+            lens = event.lens,
+            eventTimestamp = event.timestampMs,
+            logUpdate = false,
+            persist = false,
+        ) { snapshot ->
+            val env = LinkedHashMap(snapshot.environment ?: emptyMap())
+            when (sub) {
+                SUBCMD_DISPLAY_HEIGHT_DEPTH -> {
+                    event.height?.let { env["display_height"] = it.toString() }
+                    event.depth?.let { env["display_depth"] = it.toString() }
+                    event.preview?.let { env["display_preview"] = it.toString() }
+                }
+
+                SUBCMD_DISPLAY_BRIGHTNESS -> event.brightness?.let { env["display_brightness"] = it.toString() }
+                SUBCMD_DISPLAY_DOUBLE_TAP -> event.action?.let { env["display_double_tap"] = "0x%02X".format(Locale.US, it) }
+                SUBCMD_DISPLAY_LONG_PRESS -> event.action?.let { env["display_long_press"] = "0x%02X".format(Locale.US, it) }
+                SUBCMD_DISPLAY_MIC_ON_LIFT -> event.enabled?.let { env["display_mic_on_lift"] = it.toString() }
+            }
+            snapshot.copy(environment = env)
+        }
+        persistDeviceTelemetrySnapshots(event.timestampMs)
+    }
+
+    private fun handleSerialEvent(event: BleTelemetryParser.TelemetryEvent.SerialNumberEvent) {
+        val serial = event.serial?.ifBlank { null }
+        val message = when (event.type) {
+            SerialType.LENS -> {
+                val label = serial ?: "n/a"
+                val prefix = event.lens?.shortLabel?.let { "$it → " } ?: ""
+                prefix + "LensID: $label"
+            }
+
+            SerialType.FRAME -> "FrameID: ${serial ?: "n/a"}"
+        }
+        emitConsole("SYS", null, message, event.timestampMs)
+        when (event.type) {
+            SerialType.LENS -> {
+                event.lens?.let { lens ->
+                    updateDeviceTelemetry(
+                        lens = lens,
+                        eventTimestamp = event.timestampMs,
+                        logUpdate = false,
+                        persist = false,
+                    ) { snapshot ->
+                        snapshot.copy(lensSerialId = serial ?: snapshot.lensSerialId)
+                    }
+                }
+            }
+
+            SerialType.FRAME -> {
+                MoncchichiBleService.Lens.values().forEach { lens ->
+                    updateDeviceTelemetry(
+                        lens = lens,
+                        eventTimestamp = event.timestampMs,
+                        logUpdate = false,
+                        persist = false,
+                    ) { snapshot ->
+                        snapshot.copy(frameSerialId = serial ?: snapshot.frameSerialId)
+                    }
+                }
+            }
+        }
+        persistDeviceTelemetrySnapshots(event.timestampMs)
+    }
+
     private val _wearingStatus = MutableStateFlow(DeviceStatus<Boolean>())
     val wearingStatus: StateFlow<DeviceStatus<Boolean>> = _wearingStatus.asStateFlow()
 
@@ -322,9 +460,12 @@ class BleTelemetryRepository(
         val caseOpen: Boolean?,
         val caseCharging: Boolean?,
         val caseSilentMode: Boolean?,
+        val caseVoltageMv: Int?,
         val uptimeSeconds: Long?,
         val firmwareVersion: String?,
         val environment: Map<String, String>?,
+        val lensSerialId: String?,
+        val frameSerialId: String?,
         val lastAckStatus: String?,
         val lastAckTimestamp: Long?,
         val lastGesture: LensGestureEvent?,
@@ -366,9 +507,12 @@ class BleTelemetryRepository(
             caseOpen = null,
             caseCharging = null,
             caseSilentMode = null,
+            caseVoltageMv = null,
             uptimeSeconds = null,
             firmwareVersion = null,
             environment = null,
+            lensSerialId = null,
+            frameSerialId = null,
             lastAckStatus = null,
             lastAckTimestamp = null,
             lastGesture = null,
@@ -422,9 +566,12 @@ class BleTelemetryRepository(
             caseOpen = mergeNonNull(previous.caseOpen, caseOpen, allowNullReset),
             caseCharging = mergeNonNull(previous.caseCharging, caseCharging, allowNullReset),
             caseSilentMode = mergeNonNull(previous.caseSilentMode, caseSilentMode, allowNullReset),
+            caseVoltageMv = mergeNonNull(previous.caseVoltageMv, caseVoltageMv, allowNullReset),
             uptimeSeconds = mergeNonNull(previous.uptimeSeconds, uptimeSeconds, allowNullReset),
             firmwareVersion = mergeNonNull(previous.firmwareVersion, firmwareVersion, allowNullReset),
             environment = mergeNonNull(previous.environment, environment, allowNullReset),
+            lensSerialId = mergeNonNull(previous.lensSerialId, lensSerialId, allowNullReset),
+            frameSerialId = mergeNonNull(previous.frameSerialId, frameSerialId, allowNullReset),
             lastAckStatus = mergeNonNull(previous.lastAckStatus, lastAckStatus, allowNullReset),
             lastAckTimestamp = mergeNonNull(previous.lastAckTimestamp, lastAckTimestamp, allowNullReset),
             lastGesture = mergeNonNull(previous.lastGesture, lastGesture, allowNullReset),
@@ -458,6 +605,21 @@ class BleTelemetryRepository(
                 append(' ')
                 append("fw=")
                 append(version)
+            }
+            snapshot.caseVoltageMv?.let { mv ->
+                append(' ')
+                append("caseMv=")
+                append(mv)
+            }
+            snapshot.lensSerialId?.let { serial ->
+                append(' ')
+                append("lensId=")
+                append(serial)
+            }
+            snapshot.frameSerialId?.let { serial ->
+                append(' ')
+                append("frameId=")
+                append(serial)
             }
             envSummary?.let { summary ->
                 append(' ')
@@ -562,12 +724,15 @@ class BleTelemetryRepository(
                 add(ackPart)
             }
             lastGesture?.let { event ->
-                add("gesture=${gestureLabel(event.gesture)}")
+                add("gesture=${gestureLabel(lens, event.gesture)}")
             }
             (caseBatteryPercent ?: caseStatus.batteryPercent)?.let { add("casePct=$it") }
             (caseOpen ?: caseStatus.lidOpen)?.let { add("caseOpen=$it") }
             caseCharging?.let { add("caseCharging=$it") }
             (caseSilentMode ?: caseStatus.silentMode)?.let { add("caseSilent=$it") }
+            caseVoltageMv?.let { add("caseMv=$it") }
+            lensSerialId?.let { add("lensId=$it") }
+            frameSerialId?.let { add("frameId=$it") }
             reconnectAttempts?.let { add("reconnect=$it") }
             heartbeatLatencyMs?.let { add("heartbeat=${it}ms") }
             heartbeatLatencyAvgMs?.let { add("heartbeatAvg=${it}ms") }
@@ -652,8 +817,11 @@ class BleTelemetryRepository(
         put("caseOpen", caseOpen ?: caseStatus.lidOpen)
         put("caseCharging", caseCharging ?: caseStatus.charging)
         put("caseSilentMode", caseSilentMode ?: caseStatus.silentMode)
+        put("caseVoltageMv", caseVoltageMv ?: caseStatus.voltageMv)
         put("uptimeSeconds", uptimeSeconds)
         put("firmwareVersion", firmwareVersion)
+        put("lensSerialId", lensSerialId)
+        put("frameSerialId", frameSerialId)
         put("lastAckStatus", lastAckStatus)
         put("lastAckTimestamp", lastAckTimestamp)
         val ackModeName = ackMode?.name ?: "UNKNOWN"
@@ -672,7 +840,7 @@ class BleTelemetryRepository(
             hasField = true
         }
         lastGesture?.let { event ->
-            json.put("lastGesture", gestureLabel(event.gesture))
+            json.put("lastGesture", gestureLabel(lens, event.gesture))
             hasField = true
         }
         return if (hasField) json.toString() else null
@@ -967,6 +1135,7 @@ class BleTelemetryRepository(
             charging = charging,
             lidOpen = lidOpen,
             silentMode = silentMode,
+            voltageMv = null,
             updatedAt = recordedAt,
         )
     }
@@ -1711,8 +1880,8 @@ class BleTelemetryRepository(
                 }
                 val lensGesture = LensGestureEvent(event.lens, event.gesture)
                 _gesture.tryEmit(lensGesture)
-                val label = gestureLabel(event.gesture)
-                emitConsole("GESTURE", event.lens, label, event.timestampMs)
+                val label = gestureLabel(event.lens, event.gesture)
+                emitConsole("GESTURE", null, label, event.timestampMs)
                 updateDeviceTelemetry(
                     event.lens,
                     event.timestampMs,
@@ -1738,7 +1907,18 @@ class BleTelemetryRepository(
                     batteryPercent = event.caseBatteryPercent,
                     charging = event.charging,
                     lidOpen = event.lidOpen,
+                    silentMode = event.silentMode,
+                    voltageMv = event.caseVoltageMv,
                 )
+            }
+            is BleTelemetryParser.TelemetryEvent.SystemCommandEvent -> {
+                handleSystemCommandEvent(event)
+            }
+            is BleTelemetryParser.TelemetryEvent.DisplayEvent -> {
+                handleDisplayEvent(event)
+            }
+            is BleTelemetryParser.TelemetryEvent.SerialNumberEvent -> {
+                handleSerialEvent(event)
             }
         }
     }
@@ -1781,7 +1961,7 @@ class BleTelemetryRepository(
 
     private fun logParserFallback(opcode: Int, timestamp: Long) {
         if (missingOpcodeLog.add(opcode)) {
-            emitConsole("DIAG", null, "Legacy fallback for ${opcode.toHexLabel()}", timestamp)
+            emitConsole("DIAG", null, "Unhandled opcode ${opcode.toHexLabel()}", timestamp)
         }
     }
 
@@ -2111,6 +2291,7 @@ class BleTelemetryRepository(
         charging: Boolean? = null,
         lidOpen: Boolean? = null,
         silentMode: Boolean? = null,
+        voltageMv: Int? = null,
     ) {
         val current = _caseStatus.value
         var changed = false
@@ -2118,14 +2299,17 @@ class BleTelemetryRepository(
         var lidChanged = false
         var chargingChanged = false
         var silentChanged = false
+        var voltageChanged = false
         var nextBattery = current.batteryPercent
         var nextCharging = current.charging
         var nextLid = current.lidOpen
         var nextSilent = current.silentMode
+        var nextVoltage = current.voltageMv
         val touchedBattery = batteryPercent != null
         val touchedLid = lidOpen != null
         val touchedSilent = silentMode != null
         val touchedCharging = charging != null
+        val touchedVoltage = voltageMv != null
 
         batteryPercent?.let { value ->
             if (value != nextBattery) {
@@ -2155,7 +2339,14 @@ class BleTelemetryRepository(
                 silentChanged = true
             }
         }
-        val anyTouched = touchedBattery || touchedLid || touchedSilent || touchedCharging
+        voltageMv?.let { value ->
+            if (value != nextVoltage) {
+                nextVoltage = value
+                changed = true
+                voltageChanged = true
+            }
+        }
+        val anyTouched = touchedBattery || touchedLid || touchedSilent || touchedCharging || touchedVoltage
         if (!changed && !anyTouched) {
             return
         }
@@ -2164,6 +2355,7 @@ class BleTelemetryRepository(
             charging = nextCharging,
             lidOpen = nextLid,
             silentMode = nextSilent,
+            voltageMv = nextVoltage,
             updatedAt = if (anyTouched) timestamp else current.updatedAt,
         )
         _caseStatus.value = updated
@@ -2184,20 +2376,26 @@ class BleTelemetryRepository(
                     boundService?.updateHeartbeatInCase(sourceLens, _inCaseStatus.value.valueFor(sourceLens))
                 }
             }
-            propagateCaseTelemetry(updated, timestamp, batteryChanged, lidChanged, chargingChanged, silentChanged)
+            propagateCaseTelemetry(updated, timestamp, batteryChanged, lidChanged, chargingChanged, silentChanged, voltageChanged)
         }
     }
 
     private fun emitCaseConsole(lens: Lens?, status: CaseStatus, timestamp: Long) {
-        val batteryLabel = status.batteryPercent?.let { percent -> String.format(Locale.US, "%d%%", percent) }
-        val lidLabel = status.lidOpen?.let { open -> "lid=${if (open) "open" else "closed"}" }
-        val chargingLabel = status.charging?.let { charging -> if (charging) "charging" else "not_charging" }
-        val silentLabel = status.silentMode?.let { silent -> if (silent) "silent_on" else "silent_off" }
-        val parts = listOfNotNull(batteryLabel, lidLabel, chargingLabel, silentLabel)
+        val parts = mutableListOf<String>()
+        status.lidOpen?.let { open -> parts += if (open) "Lid Open" else "Lid Closed" }
+        status.batteryPercent?.let { percent -> parts += String.format(Locale.US, "%d %%", percent) }
+        status.voltageMv?.let { mv -> parts += String.format(Locale.US, "%d mV", mv) }
+        status.charging?.let { charging -> parts += if (charging) "Charging" else "Not Charging" }
+        status.silentMode?.let { silent -> parts += "Silent = ${if (silent) "On" else "Off"}" }
         if (parts.isEmpty()) {
             return
         }
-        emitConsole("CASE", lens, parts.joinToString(separator = " "), timestamp)
+        val prefix = lens?.shortLabel?.let { "$it → " } ?: ""
+        val message = buildString {
+            append(prefix)
+            append(parts.joinToString(separator = " • "))
+        }
+        emitConsole("CASE", null, message, timestamp)
     }
 
     private fun propagateCaseTelemetry(
@@ -2207,8 +2405,9 @@ class BleTelemetryRepository(
         lidChanged: Boolean,
         chargingChanged: Boolean,
         silentChanged: Boolean,
+        voltageChanged: Boolean,
     ) {
-        if (!batteryChanged && !lidChanged && !chargingChanged && !silentChanged) {
+        if (!batteryChanged && !lidChanged && !chargingChanged && !silentChanged && !voltageChanged) {
             return
         }
         MoncchichiBleService.Lens.values().forEach { lens ->
@@ -2231,10 +2430,13 @@ class BleTelemetryRepository(
                 if (silentChanged) {
                     updated = updated.copy(caseSilentMode = status.silentMode)
                 }
+                if (voltageChanged) {
+                    updated = updated.copy(caseVoltageMv = status.voltageMv)
+                }
                 updated
             }
         }
-        if (batteryChanged || lidChanged || silentChanged) {
+        if (batteryChanged || lidChanged || silentChanged || voltageChanged) {
             updateSnapshot(eventTimestamp = timestamp) { current ->
                 var left = current.left
                 var right = current.right
@@ -2261,6 +2463,14 @@ class BleTelemetryRepository(
                 }
                 if (silentChanged && status.silentMode != null && right.silentMode != status.silentMode) {
                     right = right.copy(silentMode = status.silentMode, lastUpdatedAt = timestamp)
+                    snapshotChanged = true
+                }
+                if (voltageChanged && left.caseVoltageMv != status.voltageMv) {
+                    left = left.copy(caseVoltageMv = status.voltageMv, lastUpdatedAt = timestamp)
+                    snapshotChanged = true
+                }
+                if (voltageChanged && right.caseVoltageMv != status.voltageMv) {
+                    right = right.copy(caseVoltageMv = status.voltageMv, lastUpdatedAt = timestamp)
                     snapshotChanged = true
                 }
                 if (!snapshotChanged) {
@@ -2308,14 +2518,9 @@ class BleTelemetryRepository(
         }
     }
 
-    private fun gestureLabel(gesture: G1ReplyParser.GestureEvent): String {
-        return when (gesture.code) {
-            0x01 -> "single"
-            0x02 -> "double"
-            0x03 -> "triple"
-            0x04 -> "hold"
-            else -> "unknown 0x%02X".format(Locale.US, gesture.code and 0xFF)
-        }
+    private fun gestureLabel(lens: Lens, gesture: G1ReplyParser.GestureEvent): String {
+        val name = gesture.name.ifBlank { "Gesture 0x%02X".format(Locale.US, gesture.code and 0xFF) }
+        return "%s → %s".format(Locale.US, lens.shortLabel, name)
     }
 
     private fun describeEvenAi(event: G1ReplyParser.EvenAiEvent): String {

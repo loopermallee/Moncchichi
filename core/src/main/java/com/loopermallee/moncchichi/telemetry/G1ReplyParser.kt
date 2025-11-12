@@ -61,22 +61,65 @@ object G1ReplyParser {
     ) {
         companion object {
             private val codeNames = mapOf(
-                0x00 to "unknown",
-                0x01 to "single_tap",
-                0x02 to "double_tap",
-                0x03 to "triple_tap",
-                0x04 to "long_press",
-                0x05 to "swipe_forward",
-                0x06 to "swipe_backward",
+                0x00 to "Gesture 0x00",
+                0x01 to "Single Tap",
+                0x02 to "Double Tap",
+                0x03 to "Triple Tap",
+                0x04 to "Long Press",
+                0x05 to "Swipe Forward",
+                0x06 to "Wear Detected",
+                0x07 to "Wear Removed",
+                0x08 to "Case Open",
+                0x09 to "Case Closed",
+                0x0A to "Charging Started",
+                0x0B to "Charging Stopped",
+                0x1E to "Double Tap (Dashboard)",
+                0x1F to "Double Tap (Translate)",
+                0x20 to "Single Tap (Translate)",
             )
 
             fun fromCode(code: Int): GestureEvent {
                 val name = codeNames[code]
-                    ?: String.format(Locale.US, "code_0x%02X", code and 0xFF)
+                    ?: String.format(Locale.US, "Gesture 0x%02X", code and 0xFF)
                 return GestureEvent(code, name)
             }
         }
     }
+
+    data class CaseStateTelemetry(
+        val flags: StateFlags?,
+        val silentMode: Boolean?,
+        val lidOpen: Boolean?,
+    )
+
+    data class CaseBatteryTelemetry(
+        val percent: Int?,
+        val voltageMv: Int?,
+        val charging: Boolean?,
+    )
+
+    data class DisplaySettings(
+        val subcommand: Int?,
+        val height: Int?,
+        val depth: Int?,
+        val preview: Boolean?,
+        val brightness: Int?,
+        val action: Int?,
+        val enabled: Boolean?,
+        val payload: ByteArray,
+    )
+
+    data class SystemCommandResult(
+        val subcommand: Int?,
+        val text: String?,
+        val payload: ByteArray,
+    )
+
+    data class SerialResponse(
+        val opcode: Int,
+        val serial: String?,
+        val payload: ByteArray,
+    )
 
     data class F5Payload(
         val subcommand: Int?,
@@ -254,6 +297,152 @@ object G1ReplyParser {
     fun parseGesture(payload: ByteArray): GestureEvent {
         val code = payload.firstOrNull()?.toUnsignedInt() ?: 0
         return GestureEvent.fromCode(code)
+    }
+
+    fun parseCaseStateTelemetry(frame: NotifyFrame): CaseStateTelemetry? {
+        val flags = parseState(frame)
+        val payload = frame.payload
+        if (flags == null && payload.isEmpty()) return null
+        var silent = flags?.silentMode
+        var lid = flags?.caseOpen
+        if (payload.size > 1) {
+            var index = 1
+            while (index + 1 < payload.size) {
+                val key = payload[index].toUnsignedInt()
+                val value = payload[index + 1].toUnsignedInt()
+                when (key) {
+                    0x0A -> silent = when (value) {
+                        0 -> false
+                        1 -> true
+                        else -> silent
+                    }
+
+                    0x0B -> lid = when (value) {
+                        0 -> false
+                        1 -> true
+                        else -> lid
+                    }
+                }
+                index += 2
+            }
+        }
+        return CaseStateTelemetry(flags, silent, lid)
+    }
+
+    fun parseCaseBattery(frame: NotifyFrame): CaseBatteryTelemetry? {
+        val payload = frame.payload
+        if (payload.isEmpty()) return null
+        val startIndex = when (payload.first().toUnsignedInt()) {
+            0x01, 0x02 -> 1
+            else -> 0
+        }
+        val percent = payload.getOrNull(startIndex + 1)?.toUnsignedInt()?.takeIf { it in 0..100 }
+        val voltageLow = payload.getOrNull(startIndex + 2)?.toUnsignedInt()
+        val voltageHigh = payload.getOrNull(startIndex + 3)?.toUnsignedInt()
+        val voltage = if (voltageLow != null && voltageHigh != null) {
+            val candidate = voltageLow or (voltageHigh shl 8)
+            candidate.takeIf { it in 1_000..6_000 }
+        } else {
+            null
+        }
+        val charging = payload.getOrNull(startIndex + 4)?.toUnsignedInt()?.let { value ->
+            when (value) {
+                0 -> false
+                1 -> true
+                else -> null
+            }
+        }
+        if (percent == null && voltage == null && charging == null) return null
+        return CaseBatteryTelemetry(percent, voltage, charging)
+    }
+
+    fun parseDisplaySettings(frame: NotifyFrame): DisplaySettings? {
+        if (frame.opcode != 0x26) return null
+        val payload = frame.payload
+        if (payload.isEmpty()) {
+            return DisplaySettings(null, null, null, null, null, null, null, payload.copyOf())
+        }
+        val subcommand = payload.first().toUnsignedInt()
+        var height: Int? = null
+        var depth: Int? = null
+        var preview: Boolean? = null
+        var brightness: Int? = null
+        var action: Int? = null
+        var enabled: Boolean? = null
+        when (subcommand) {
+            0x02 -> {
+                val heightLow = payload.getOrNull(1)?.toUnsignedInt()
+                val heightHigh = payload.getOrNull(2)?.toUnsignedInt()
+                val depthLow = payload.getOrNull(3)?.toUnsignedInt()
+                val depthHigh = payload.getOrNull(4)?.toUnsignedInt()
+                val previewFlag = payload.getOrNull(5)?.toUnsignedInt()
+                height = if (heightLow != null && heightHigh != null) {
+                    heightLow or (heightHigh shl 8)
+                } else {
+                    null
+                }
+                depth = if (depthLow != null && depthHigh != null) {
+                    depthLow or (depthHigh shl 8)
+                } else {
+                    null
+                }
+                preview = previewFlag?.let { (it and 0x01) == 0x01 }
+            }
+
+            0x04 -> {
+                brightness = payload.getOrNull(1)?.toUnsignedInt()
+            }
+
+            0x05, 0x07 -> {
+                action = payload.getOrNull(1)?.toUnsignedInt()
+            }
+
+            0x08 -> {
+                enabled = payload.getOrNull(1)?.toUnsignedInt()?.let { value ->
+                    when (value) {
+                        0 -> false
+                        1 -> true
+                        else -> null
+                    }
+                }
+            }
+        }
+        return DisplaySettings(
+            subcommand = subcommand,
+            height = height,
+            depth = depth,
+            preview = preview,
+            brightness = brightness,
+            action = action,
+            enabled = enabled,
+            payload = payload.copyOf(),
+        )
+    }
+
+    fun parseSystemCommand(frame: NotifyFrame): SystemCommandResult? {
+        if (frame.opcode != 0x23) return null
+        val payload = frame.payload
+        if (payload.isEmpty()) {
+            return SystemCommandResult(frame.status?.toUnsignedInt(), null, ByteArray(0))
+        }
+        val asciiPayload = payload.decodeTelemetryAsciiOrNull()
+        return if (asciiPayload != null && asciiPayload.length == payload.size) {
+            SystemCommandResult(frame.status?.toUnsignedInt(), asciiPayload, payload.copyOf())
+        } else {
+            val subcommand = payload.firstOrNull()?.toUnsignedInt()
+            val tail = if (payload.size > 1) payload.copyOfRange(1, payload.size) else ByteArray(0)
+            val text = tail.decodeTelemetryAsciiOrNull()
+            SystemCommandResult(subcommand, text, payload.copyOf())
+        }
+    }
+
+    fun parseSerialResponse(frame: NotifyFrame): SerialResponse? {
+        if (frame.opcode != 0x33 && frame.opcode != 0x34) return null
+        val payload = frame.payload
+        val serial = payload.decodeTelemetryAsciiOrNull()
+            ?: if (payload.size > 1) payload.copyOfRange(1, payload.size).decodeTelemetryAsciiOrNull() else null
+        val normalized = serial?.trim()?.takeIf { it.isNotEmpty() }
+        return SerialResponse(frame.opcode, normalized, payload.copyOf())
     }
 
     fun parseF5Payload(frame: NotifyFrame): F5Payload? {
@@ -722,6 +911,16 @@ object G1ReplyParser {
 
     private fun ByteArray.toHexString(): String = joinToString(separator = "") { byte ->
         "%02X".format(byte.toInt() and 0xFF)
+    }
+
+    private fun ByteArray.decodeTelemetryAsciiOrNull(): String? {
+        if (isEmpty()) return null
+        if (!all { it.toInt().isAsciiOrTerminator() }) {
+            return null
+        }
+        return toString(Charsets.UTF_8)
+            .trim { it <= ' ' || it == '\u0000' }
+            .takeIf { it.isNotEmpty() }
     }
 
     data class NotifyFrame(
