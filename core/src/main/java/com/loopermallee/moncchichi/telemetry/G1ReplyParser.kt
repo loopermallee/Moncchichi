@@ -39,6 +39,7 @@ object G1ReplyParser {
         val inCradle: Boolean,
         val silentMode: Boolean,
         val caseOpen: Boolean,
+        val charging: Boolean = false,
     )
 
     data class BatteryStatus(
@@ -77,6 +78,7 @@ object G1ReplyParser {
         val flags: StateFlags?,
         val silentMode: Boolean?,
         val lidOpen: Boolean?,
+        val charging: Boolean?,
     )
 
     data class CaseBatteryTelemetry(
@@ -235,6 +237,7 @@ object G1ReplyParser {
             inCradle = (flags and 0x01) != 0,
             silentMode = (flags and 0x04) != 0,
             caseOpen = (flags and 0x08) != 0,
+            charging = (flags and 0x10) != 0,
         )
     }
 
@@ -313,7 +316,8 @@ object G1ReplyParser {
                 index += 2
             }
         }
-        return CaseStateTelemetry(flags, silent, lid)
+        val charging = flags?.charging
+        return CaseStateTelemetry(flags, silent, lid, charging)
     }
 
     fun parseCaseBattery(frame: NotifyFrame): CaseBatteryTelemetry? {

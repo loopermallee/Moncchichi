@@ -1,9 +1,10 @@
 package com.loopermallee.moncchichi.hub.ui.developer
 
-import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.bluetooth.BluetoothDevice
+import android.os.SystemClock
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -130,6 +131,8 @@ class DeveloperViewModel(
     private val _telemetrySummary = MutableStateFlow("")
     val telemetrySummary: StateFlow<String> = _telemetrySummary.asStateFlow()
     private val telemetrySummaryInputs = MutableStateFlow<TelemetrySummaryInputs?>(null)
+    private var telemetryConsoleStartAt: Long? = null
+    private var lastTelemetryConsoleLine: String? = null
 
     val snapshotLine: StateFlow<BleTelemetryRepository.SnapshotLog?> = telemetry.snapshotLine
 
@@ -196,17 +199,31 @@ class DeveloperViewModel(
                     leftPercent = snapshot.left.batteryPercent,
                     rightPercent = snapshot.right.batteryPercent,
                     uptimeSeconds = snapshot.uptimeSeconds,
+                    leftRssi = snapshot.left.rssi,
+                    rightRssi = snapshot.right.rssi,
                 )
             }.collect { inputs ->
                 telemetrySummaryInputs.value = inputs
-                _telemetrySummary.value = formatTelemetrySummary(inputs)
+                if (inputs != null && telemetryConsoleStartAt == null) {
+                    telemetryConsoleStartAt = SystemClock.elapsedRealtime()
+                }
+                val summary = formatTelemetrySummary(inputs)
+                val severity = inputs?.let { resolveTelemetrySeverityTag(it) }
+                _telemetrySummary.value = when {
+                    summary.isBlank() -> ""
+                    severity.isNullOrBlank() -> summary
+                    else -> "$severity $summary"
+                }
             }
         }
         viewModelScope.launch {
             while (isActive) {
                 val current = telemetrySummaryInputs.value
                 if (current != null) {
-                    _telemetrySummary.value = formatTelemetrySummary(current)
+                    emitTelemetryConsoleLine(current)
+                    val summary = formatTelemetrySummary(current)
+                    val severity = resolveTelemetrySeverityTag(current)
+                    _telemetrySummary.value = if (summary.isNotBlank()) "$severity $summary" else ""
                 }
                 delay(30_000L)
             }
@@ -552,6 +569,33 @@ class DeveloperViewModel(
         null -> "–"
     }
 
+    private fun emitTelemetryConsoleLine(inputs: TelemetrySummaryInputs) {
+        val summary = formatTelemetrySummary(inputs)
+        if (summary.isBlank()) return
+        val start = telemetryConsoleStartAt ?: SystemClock.elapsedRealtime().also { telemetryConsoleStartAt = it }
+        val elapsedSeconds = ((SystemClock.elapsedRealtime() - start) / 1_000L).coerceAtLeast(0L)
+        val severity = resolveTelemetrySeverityTag(inputs)
+        val line = "[T+${elapsedSeconds}s] $severity $summary"
+        if (lastTelemetryConsoleLine == line) return
+        lastTelemetryConsoleLine = line
+        hubViewModel.logSystemEvent("[TELEMETRY] $line")
+    }
+
+    private fun resolveTelemetrySeverityTag(inputs: TelemetrySummaryInputs): String {
+        val levels = mutableListOf<Int>()
+        inputs.leftPercent?.let { levels += it }
+        inputs.rightPercent?.let { levels += it }
+        inputs.case.batteryPercent?.let { levels += it }
+        val minBattery = levels.minOrNull() ?: 100
+        val missCounts = listOfNotNull(inputs.left?.heartbeatMissCount, inputs.right?.heartbeatMissCount)
+        val maxMiss = missCounts.maxOrNull() ?: 0
+        return when {
+            minBattery <= 10 || maxMiss >= 3 -> "[ERR]"
+            minBattery <= 25 || inputs.case.lidOpen == true -> "[WARN]"
+            else -> "[OK]"
+        }
+    }
+
     private fun formatTelemetrySummary(inputs: TelemetrySummaryInputs?): String {
         if (inputs == null) return ""
         val caseBattery = inputs.case.batteryPercent
@@ -595,6 +639,8 @@ class DeveloperViewModel(
             "Up $uptimeLabel",
         )
         latency?.let { parts += "RTT ${it} ms" }
+        val rssi = inputs.leftRssi ?: inputs.rightRssi
+        rssi?.let { parts += "RSSI ${it} dBm" }
         return parts.joinToString(separator = " • ")
     }
 
@@ -620,6 +666,8 @@ class DeveloperViewModel(
         val leftPercent: Int?,
         val rightPercent: Int?,
         val uptimeSeconds: Long?,
+        val leftRssi: Int?,
+        val rightRssi: Int?,
     )
 
     private fun formatCaseState(value: Boolean?): String = when (value) {

@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.core.BmpPacketBuilder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -39,14 +40,14 @@ class BleClientImpl(initialState: LensState) : BleClient {
         _events.emit(ClientEvent.ServicesReady(mtu = mtu))
     }
 
-    override suspend fun probeReady(side: LensSide): Boolean {
+    override suspend fun probeReady(lens: Lens): Boolean {
         val ready = _state.value.copy(
             status = LinkStatus.READY,
             readyProbePassed = true,
             lastSeenRssi = _state.value.lastSeenRssi ?: -58,
         )
         _state.value = ready
-        _events.emit(ClientEvent.ReadyProbeResult(side = side, ready = true))
+        _events.emit(ClientEvent.ReadyProbeResult(lens = lens, ready = true))
         _events.emit(
             ClientEvent.Telemetry(
                 batteryPct = ready.batteryPct,
