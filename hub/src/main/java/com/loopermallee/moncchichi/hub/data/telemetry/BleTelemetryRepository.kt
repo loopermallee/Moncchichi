@@ -291,6 +291,7 @@ class BleTelemetryRepository(
         val heartbeatLatencyMs: Int? = null,
         val lastAckMode: MoncchichiBleService.AckType? = null,
         val heartbeatLatencyAvgMs: Int? = null,
+        val heartbeatMissCount: Int? = null,
     )
 
     private val deviceTelemetryScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -390,6 +391,7 @@ class BleTelemetryRepository(
             heartbeatLatencyMs = mergeNonNull(previous.heartbeatLatencyMs, heartbeatLatencyMs, allowNullReset),
             lastAckMode = mergeNonNull(previous.lastAckMode, lastAckMode, allowNullReset),
             heartbeatLatencyAvgMs = mergeNonNull(previous.heartbeatLatencyAvgMs, heartbeatLatencyAvgMs, allowNullReset),
+            heartbeatMissCount = mergeNonNull(previous.heartbeatMissCount, heartbeatMissCount, allowNullReset),
         )
     }
 
@@ -550,6 +552,7 @@ class BleTelemetryRepository(
             lastAckTimestamp = lastAckTimestamp,
             uptimeSeconds = uptimeSeconds,
             snapshotJson = snapshotJson,
+            heartbeatMissCount = heartbeatMissCount,
         )
     }
 
@@ -584,6 +587,7 @@ class BleTelemetryRepository(
             lastAckTimestamp,
             uptimeSeconds,
             snapshotJson,
+            heartbeatMissCount,
         ).any { it != null }
     }
 
@@ -612,6 +616,7 @@ class BleTelemetryRepository(
         put("reconnectAttempts", reconnectAttempts)
         put("heartbeatLatencyMs", heartbeatLatencyMs)
         put("heartbeatLatencyAvgMs", heartbeatLatencyAvgMs)
+        put("heartbeatMissCount", heartbeatMissCount)
         environment?.takeIf { it.isNotEmpty() }?.let { map ->
             val envJson = JSONObject()
             map.entries.sortedBy { it.key }.forEach { (key, value) ->
@@ -704,6 +709,10 @@ class BleTelemetryRepository(
         if (!hasCaseData && !hasLensData) {
             return null
         }
+        fun MoncchichiBleService.AckType.toSummaryLabel(): String {
+            val raw = name.lowercase(Locale.US)
+            return raw.replace('_', ' ')
+        }
         val caseLabel = buildString {
             append("Case ")
             append(case.batteryPercent?.let { "$it%" } ?: "–")
@@ -724,6 +733,10 @@ class BleTelemetryRepository(
         val rightLabel = right.batteryVoltageMv?.let { "R ${it}mV" } ?: "R ?"
         val uptimeLabel = uptimeSeconds?.let { "Up ${it}s" }
         val firmwareLabel = firmware?.let { "FW $it" }
+        val ackLabel = listOfNotNull(
+            left.ackMode?.let { "L ${it.toSummaryLabel()}" },
+            right.ackMode?.let { "R ${it.toSummaryLabel()}" },
+        ).takeIf { it.isNotEmpty() }?.joinToString(separator = " / ")
         return buildString {
             append("[TELEMETRY] ")
             append(caseLabel)
@@ -745,6 +758,10 @@ class BleTelemetryRepository(
             }
             uptimeLabel?.let {
                 append(" • ")
+                append(it)
+            }
+            ackLabel?.let {
+                append(" • ACK ")
                 append(it)
             }
         }
@@ -902,6 +919,7 @@ class BleTelemetryRepository(
                 lastAckMode = ackType,
             )
         }
+        persistDeviceTelemetrySnapshots(timestamp)
 
         updateSnapshot(eventTimestamp = timestamp, persist = false) { current ->
             val existing = current.lens(lens)
@@ -2486,6 +2504,7 @@ class BleTelemetryRepository(
                         heartbeatLatencyAvgMs = heartbeatAverage,
                         reconnectAttempts = reconnectSnapshot,
                         lastAckMode = status.heartbeatAckType ?: snapshot.lastAckMode,
+                        heartbeatMissCount = status.heartbeatMissCount,
                     )
                 }
                 telemetryChanged = true
@@ -2787,6 +2806,7 @@ class BleTelemetryRepository(
             lastAckTimestamp = null,
             uptimeSeconds = null,
             snapshotJson = null,
+            heartbeatMissCount = heartbeatMissCount,
         )
 
     private fun MoncchichiBleService.Target.toLensOrNull(): Lens? = when (this) {
