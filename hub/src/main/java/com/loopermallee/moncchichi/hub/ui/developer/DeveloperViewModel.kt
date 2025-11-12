@@ -34,11 +34,18 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 private const val PREF_KEY_MODE = "developer_mode_selection"
+private const val TIMESTAMP_SEPARATOR = "] "
+private const val FALLBACK_TIMESTAMP = "[--:--:--]"
+private val SUCCESS_KEYWORDS = arrayOf("[ACK]", " ACK", "[OK]", "SUCCESS", "CONNECTED", "RECONNECTED")
+private val WARNING_KEYWORDS = arrayOf("[WARN]", " WARN", "WARNING", "MISSED", "RETRY", "DROPPED", "STALL")
+private val ERROR_KEYWORDS = arrayOf("[ERR]", "[ERROR]", "FAILED", "FAILURE", "DISCONNECT", "TIMEOUT", "EXCEPTION", "CRASH")
 
 class DeveloperViewModel(
     private val appContext: Context,
@@ -55,11 +62,62 @@ class DeveloperViewModel(
         data class Notify(val message: String) : DeveloperEvent
     }
 
+    enum class ConsoleSeverity { NORMAL, SUCCESS, WARNING, ERROR }
+
+    enum class ConsoleFilterTag(val storageKey: String, private val tokens: List<String>) {
+        PING("PING", listOf("[PING]")),
+        CASE("CASE", listOf("[CASE]")),
+        GESTURE("GESTURE", listOf("[GESTURE]")),
+        ACK("ACK", listOf("[ACK]", "ACK:", "[OK]")),
+        ;
+
+        fun matches(message: String): Boolean {
+            return tokens.any { token -> message.contains(token, ignoreCase = true) }
+        }
+
+        companion object {
+            fun fromStorageKey(key: String): ConsoleFilterTag? = values().firstOrNull { it.storageKey == key }
+
+            fun defaultStorageKeys(): Set<String> = values().mapTo(mutableSetOf()) { it.storageKey }
+        }
+    }
+
+    data class ConsoleEntry(
+        val id: String,
+        val raw: String,
+        val timestamp: String,
+        val message: String,
+        val tag: ConsoleFilterTag?,
+        val severity: ConsoleSeverity,
+    )
+
     private val _mode = MutableStateFlow(loadInitialMode())
     val mode: StateFlow<DeveloperMode> = _mode.asStateFlow()
 
     private val _consoleLines = MutableStateFlow(hubViewModel.state.value.consoleLines)
     val consoleLines: StateFlow<List<String>> = _consoleLines.asStateFlow()
+
+    private val _consoleFilters = MutableStateFlow(loadInitialConsoleFilters())
+    val consoleFilterSelection: StateFlow<Set<ConsoleFilterTag>> = _consoleFilters.asStateFlow()
+
+    val consoleFilterState: StateFlow<Map<ConsoleFilterTag, Boolean>> = _consoleFilters
+        .map { selection ->
+            ConsoleFilterTag.values().associateWith { it in selection }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = ConsoleFilterTag.values().associateWith { tag -> tag in _consoleFilters.value },
+        )
+
+    val filteredConsoleEntries: StateFlow<List<ConsoleEntry>> =
+        combine(_consoleLines, _consoleFilters) { lines, selection ->
+            val active = selection.ifEmpty { emptySet() }
+            lines.map { parseConsoleLine(it) }
+                .filter { entry -> entry.tag == null || entry.tag in active }
+        }
+            .flowOn(ioDispatcher)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _snapshot = MutableStateFlow(telemetry.snapshot.value)
     val snapshot: StateFlow<BleTelemetryRepository.Snapshot> = _snapshot.asStateFlow()
@@ -146,6 +204,61 @@ class DeveloperViewModel(
         if (_mode.value == mode) return
         _mode.value = mode
         prefs.edit().putString(PREF_KEY_MODE, mode.name).apply()
+    }
+
+    fun setConsoleFilterEnabled(tag: ConsoleFilterTag, enabled: Boolean) {
+        val current = _consoleFilters.value
+        val updated = current.toMutableSet().apply {
+            if (enabled) add(tag) else remove(tag)
+        }.toSet()
+        if (updated == current) return
+        _consoleFilters.value = updated
+        SettingsRepository.setDeveloperConsoleFilters(updated.mapTo(mutableSetOf()) { it.storageKey })
+    }
+
+    private fun loadInitialConsoleFilters(): Set<ConsoleFilterTag> {
+        val stored = SettingsRepository.getDeveloperConsoleFilters(ConsoleFilterTag.defaultStorageKeys())
+        val resolved = stored.mapNotNull { ConsoleFilterTag.fromStorageKey(it) }.toMutableSet()
+        ConsoleFilterTag.values().forEach { tag ->
+            if (tag !in resolved) {
+                resolved += tag
+            }
+        }
+        return resolved
+    }
+
+    private fun parseConsoleLine(raw: String): ConsoleEntry {
+        val separatorIndex = raw.indexOf(TIMESTAMP_SEPARATOR)
+        val timestamp = if (separatorIndex >= 0) {
+            raw.substring(0, separatorIndex + 1)
+        } else {
+            ""
+        }
+        val message = if (separatorIndex >= 0 && separatorIndex + TIMESTAMP_SEPARATOR.length < raw.length) {
+            raw.substring(separatorIndex + TIMESTAMP_SEPARATOR.length).trimStart()
+        } else {
+            raw
+        }
+        val tag = ConsoleFilterTag.values().firstOrNull { it.matches(message) }
+        val severity = resolveSeverity(message)
+        return ConsoleEntry(
+            id = raw,
+            raw = raw,
+            timestamp = if (timestamp.isNotEmpty()) timestamp else FALLBACK_TIMESTAMP,
+            message = message,
+            tag = tag,
+            severity = severity,
+        )
+    }
+
+    private fun resolveSeverity(message: String): ConsoleSeverity {
+        val normalized = message.uppercase(Locale.US)
+        return when {
+            ERROR_KEYWORDS.any { keyword -> normalized.contains(keyword) } -> ConsoleSeverity.ERROR
+            WARNING_KEYWORDS.any { keyword -> normalized.contains(keyword) } -> ConsoleSeverity.WARNING
+            SUCCESS_KEYWORDS.any { keyword -> normalized.contains(keyword) } -> ConsoleSeverity.SUCCESS
+            else -> ConsoleSeverity.NORMAL
+        }
     }
 
     fun copy(mode: DeveloperMode) {

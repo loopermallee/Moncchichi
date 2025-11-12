@@ -53,6 +53,13 @@
     <string name="permission_notifications_title">Notifications</string>
     <string name="permission_notifications_description">Keeps you informed when your glasses connect, disconnect, or need attention.</string>
     <string name="developer_console_title">Developer Console</string>
+    <string name="developer_console_paused">📄 Paused</string>
+    <string name="developer_console_paused_new">📄 Paused • %1$d new</string>
+    <string name="developer_console_filter_ping">PING</string>
+    <string name="developer_console_filter_case">CASE</string>
+    <string name="developer_console_filter_gesture">GESTURE</string>
+    <string name="developer_console_filter_ack">ACK</string>
+    <string name="developer_console_timestamp_highlight">⚡ %1$s</string>
     <string name="developer_mode_console">Console</string>
     <string name="developer_mode_diagnostics">Diagnostics</string>
     <string name="developer_section_overview">System overview</string>

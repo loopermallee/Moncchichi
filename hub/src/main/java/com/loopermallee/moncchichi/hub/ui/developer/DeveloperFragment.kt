@@ -10,10 +10,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
-import android.text.Spannable
-import android.text.SpannableString
-import android.text.SpannableStringBuilder
-import android.text.style.ForegroundColorSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -25,7 +21,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.isVisible
-import androidx.core.widget.NestedScrollView
 import androidx.core.widget.TextViewCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
@@ -33,10 +28,13 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.chip.Chip
 import com.google.android.material.R as MaterialR
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.hub.R
@@ -45,7 +43,6 @@ import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.Dev
 import com.loopermallee.moncchichi.hub.data.telemetry.LensGestureEvent
 import com.loopermallee.moncchichi.hub.di.AppLocator
 import com.loopermallee.moncchichi.hub.handlers.SystemEventHandler
-import com.loopermallee.moncchichi.hub.util.LogFormatter
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
 import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
 import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
@@ -110,10 +107,14 @@ class DeveloperFragment : Fragment() {
         val toggleGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.toggle_modes)
         val consoleButtonId = R.id.button_mode_console
         val diagnosticsButtonId = R.id.button_mode_diagnostics
-        val consoleScroll = view.findViewById<NestedScrollView>(R.id.console_scroll)
+        val consoleContainer = view.findViewById<View>(R.id.console_container)
+        val consoleRecycler = view.findViewById<RecyclerView>(R.id.list_console_logs)
+        val pauseButton = view.findViewById<MaterialButton>(R.id.button_console_paused)
         val diagnosticsScroll = view.findViewById<ScrollView>(R.id.diagnostics_scroll)
-        val logsView = view.findViewById<TextView>(R.id.text_console_logs)
-        val jumpLatest = view.findViewById<MaterialButton>(R.id.button_jump_latest)
+        val chipPing = view.findViewById<Chip>(R.id.chip_filter_ping)
+        val chipCase = view.findViewById<Chip>(R.id.chip_filter_case)
+        val chipGesture = view.findViewById<Chip>(R.id.chip_filter_gesture)
+        val chipAck = view.findViewById<Chip>(R.id.chip_filter_ack)
         val uptimeView = view.findViewById<TextView>(R.id.text_overview_uptime)
         val lensLastView = view.findViewById<TextView>(R.id.text_overview_last_lens)
         val sequenceView = view.findViewById<TextView>(R.id.text_overview_sequence)
@@ -208,27 +209,76 @@ class DeveloperFragment : Fragment() {
         )
         lensCards = listOf(leftCardController, rightCardController)
 
-        var autoScrollEnabled = true
-        var latestSnapshot: BleTelemetryRepository.Snapshot? = null
-
-        consoleScroll.setOnScrollChangeListener { _, _, _, _, _ ->
-            val atBottom = !consoleScroll.canScrollVertically(1)
-            if (atBottom) {
-                if (!autoScrollEnabled) {
-                    autoScrollEnabled = true
-                    jumpLatest.isVisible = false
-                }
-            } else if (autoScrollEnabled) {
-                autoScrollEnabled = false
-                jumpLatest.isVisible = true
+        val filterChips = mapOf(
+            DeveloperViewModel.ConsoleFilterTag.PING to chipPing,
+            DeveloperViewModel.ConsoleFilterTag.CASE to chipCase,
+            DeveloperViewModel.ConsoleFilterTag.GESTURE to chipGesture,
+            DeveloperViewModel.ConsoleFilterTag.ACK to chipAck,
+        )
+        var suppressFilterListener = false
+        filterChips.forEach { (tag, chip) ->
+            chip.setOnCheckedChangeListener { _, isChecked ->
+                if (suppressFilterListener) return@setOnCheckedChangeListener
+                viewModel.setConsoleFilterEnabled(tag, isChecked)
             }
         }
 
-        jumpLatest.setOnClickListener {
-            autoScrollEnabled = true
-            jumpLatest.isVisible = false
-            consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
+        val consoleAdapter = DeveloperConsoleAdapter()
+        val consoleLayoutManager = LinearLayoutManager(context).apply { stackFromEnd = true }
+        consoleRecycler.layoutManager = consoleLayoutManager
+        consoleRecycler.adapter = consoleAdapter
+        consoleRecycler.itemAnimator = null
+        consoleRecycler.setHasFixedSize(false)
+        consoleRecycler.setItemViewCacheSize(64)
+
+        var autoScrollEnabled = true
+        var latestSnapshot: BleTelemetryRepository.Snapshot? = null
+        var lastRenderedEntries: List<DeveloperViewModel.ConsoleEntry> = emptyList()
+        val highlightedEntryIds = mutableSetOf<String>()
+
+        fun renderConsole(entries: List<DeveloperViewModel.ConsoleEntry>, shouldScroll: Boolean) {
+            val items = entries.map { entry ->
+                DeveloperConsoleAdapter.ConsoleItem(entry, highlightedEntryIds.contains(entry.id))
+            }
+            consoleAdapter.submitList(items) {
+                if (shouldScroll) {
+                    val target = consoleAdapter.itemCount - 1
+                    if (target >= 0) {
+                        consoleRecycler.scrollToPosition(target)
+                    }
+                }
+            }
         }
+
+        fun resumeAutoScroll(forceScroll: Boolean) {
+            if (autoScrollEnabled) return
+            autoScrollEnabled = true
+            highlightedEntryIds.clear()
+            pauseButton.text = getString(R.string.developer_console_paused)
+            pauseButton.isVisible = false
+            renderConsole(lastRenderedEntries, forceScroll)
+        }
+
+        consoleRecycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                val total = consoleAdapter.itemCount
+                if (total == 0) return
+                val lastVisible = consoleLayoutManager.findLastVisibleItemPosition()
+                if (lastVisible == RecyclerView.NO_POSITION) return
+                val remaining = (total - 1) - lastVisible
+                if (autoScrollEnabled) {
+                    if (remaining > CONSOLE_PAUSE_THRESHOLD && dy < 0) {
+                        autoScrollEnabled = false
+                        pauseButton.text = getString(R.string.developer_console_paused)
+                        pauseButton.isVisible = true
+                    }
+                } else if (remaining <= CONSOLE_RESUME_THRESHOLD) {
+                    resumeAutoScroll(false)
+                }
+            }
+        })
+
+        pauseButton.setOnClickListener { resumeAutoScroll(true) }
 
         leftPowerButton.setOnClickListener {
             val snapshot = latestSnapshot ?: return@setOnClickListener
@@ -268,27 +318,53 @@ class DeveloperFragment : Fragment() {
                         DeveloperMode.CONSOLE -> toggleGroup.check(consoleButtonId)
                         DeveloperMode.DIAGNOSTICS -> toggleGroup.check(diagnosticsButtonId)
                     }
-                    applyMode(root, consoleScroll, diagnosticsScroll, jumpLatest, mode)
+                    applyMode(root, consoleContainer, diagnosticsScroll, pauseButton, mode, autoScrollEnabled)
                 }
             }
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.consoleLines.collectLatest { lines ->
-                    val context = requireContext()
-                    val formatted = lines.map { formatConsoleLine(context, it) }
-                    logsView.text = SpannableStringBuilder().apply {
-                        formatted.forEachIndexed { index, span ->
-                            append(span)
-                            if (index < formatted.lastIndex) append('\n')
+                viewModel.consoleFilterState.collectLatest { state ->
+                    suppressFilterListener = true
+                    filterChips.forEach { (tag, chip) ->
+                        chip.isChecked = state[tag] ?: true
+                    }
+                    suppressFilterListener = false
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.filteredConsoleEntries.collectLatest { entries ->
+                    val previousSize = lastRenderedEntries.size
+                    lastRenderedEntries = entries
+
+                    if (!autoScrollEnabled) {
+                        val entryIds = entries.mapTo(mutableSetOf()) { it.id }
+                        highlightedEntryIds.retainAll(entryIds)
+                    }
+
+                    val delta = entries.size - previousSize
+                    if (!autoScrollEnabled && delta > 0) {
+                        entries.takeLast(delta).forEach { entry ->
+                            highlightedEntryIds.add(entry.id)
+                        }
+                    } else if (autoScrollEnabled) {
+                        highlightedEntryIds.clear()
+                    }
+
+                    if (!autoScrollEnabled) {
+                        val highlightCount = highlightedEntryIds.size
+                        pauseButton.text = if (highlightCount > 0) {
+                            getString(R.string.developer_console_paused_new, highlightCount)
+                        } else {
+                            getString(R.string.developer_console_paused)
                         }
                     }
-                    if (autoScrollEnabled) {
-                        consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
-                    } else {
-                        jumpLatest.isVisible = true
-                    }
+
+                    renderConsole(entries, autoScrollEnabled)
                 }
             }
         }
@@ -843,10 +919,11 @@ class DeveloperFragment : Fragment() {
 
     private fun applyMode(
         root: View,
-        consoleScroll: NestedScrollView,
+        consoleContainer: View,
         diagnosticsScroll: ScrollView,
-        jumpLatest: MaterialButton,
+        pauseButton: MaterialButton,
         mode: DeveloperMode,
+        autoScrollEnabled: Boolean,
     ) {
         val context = requireContext()
         val consoleColor = ContextCompat.getColor(context, R.color.developer_console_background)
@@ -854,15 +931,18 @@ class DeveloperFragment : Fragment() {
         when (mode) {
             DeveloperMode.CONSOLE -> {
                 root.setBackgroundColor(consoleColor)
-                consoleScroll.isVisible = true
+                consoleContainer.isVisible = true
                 diagnosticsScroll.isVisible = false
-                jumpLatest.isVisible = false
+                pauseButton.isVisible = !autoScrollEnabled
+                if (!autoScrollEnabled && pauseButton.text.isBlank()) {
+                    pauseButton.text = getString(R.string.developer_console_paused)
+                }
             }
             DeveloperMode.DIAGNOSTICS -> {
                 root.setBackgroundColor(diagnosticsColor)
-                consoleScroll.isVisible = false
+                consoleContainer.isVisible = false
                 diagnosticsScroll.isVisible = true
-                jumpLatest.isVisible = false
+                pauseButton.isVisible = false
             }
         }
     }
@@ -1030,29 +1110,6 @@ class DeveloperFragment : Fragment() {
         return AckSummary(text, colorRes)
     }
 
-    private fun formatConsoleLine(context: Context, raw: String): CharSequence {
-        if (!raw.startsWith("[SNAPSHOT]")) {
-            return LogFormatter.format(context, raw)
-        }
-        val color = resolveSnapshotLineColor(raw)
-        return SpannableString(raw).apply {
-            setSpan(ForegroundColorSpan(color), 0, raw.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-    }
-
-    private fun resolveSnapshotLineColor(raw: String): Int {
-        val ack = SNAPSHOT_ACK_REGEX.find(raw)?.groupValues?.getOrNull(1)?.trim()
-        val status = SNAPSHOT_STATUS_REGEX.find(raw)?.groupValues?.getOrNull(1)?.trim()
-        return when {
-            status != null && status.equals("OK", true) -> SNAPSHOT_COLOR_OK
-            status != null && status.equals("BUSY", true) -> SNAPSHOT_COLOR_WARN
-            status != null && status.isNotEmpty() -> SNAPSHOT_COLOR_ERROR
-            ack != null && ack.equals("Unknown", true) -> SNAPSHOT_COLOR_WARN
-            ack != null && ack.isNotEmpty() && ack != "–" -> SNAPSHOT_COLOR_OK
-            else -> SNAPSHOT_COLOR_NORMAL
-        }
-    }
-
     private fun resolveSnapshotLineColor(log: BleTelemetryRepository.SnapshotLog): Int {
         return when (log.severity) {
             BleTelemetryRepository.SnapshotSeverity.OK -> SNAPSHOT_COLOR_OK
@@ -1067,11 +1124,11 @@ class DeveloperFragment : Fragment() {
         private const val ACK_OK_THRESHOLD_MS = 15_000L
         private const val ACK_DELAY_THRESHOLD_MS = 60_000L
         private const val LINK_CRITICAL_MISS_THRESHOLD = 3
+        private const val CONSOLE_PAUSE_THRESHOLD = 20
+        private const val CONSOLE_RESUME_THRESHOLD = 1
         private val SNAPSHOT_COLOR_NORMAL = Color.parseColor("#DDDDDD")
         private val SNAPSHOT_COLOR_OK = Color.parseColor("#9BE37B")
         private val SNAPSHOT_COLOR_WARN = Color.parseColor("#FFC107")
         private val SNAPSHOT_COLOR_ERROR = Color.parseColor("#FF6B6B")
-        private val SNAPSHOT_ACK_REGEX = Regex("ACK:\\s*([^\\s]+)")
-        private val SNAPSHOT_STATUS_REGEX = Regex("Status:\\s*([^\\s]+)")
     }
 }

@@ -36,33 +36,77 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <androidx.core.widget.NestedScrollView
-            android:id="@+id/console_scroll"
+        <LinearLayout
+            android:id="@+id/console_container"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:fadeScrollbars="false"
-            android:fillViewport="true">
+            android:orientation="vertical"
+            android:background="@color/developer_console_background">
 
-            <TextView
-                android:id="@+id/text_console_logs"
+            <HorizontalScrollView
+                android:id="@+id/console_filter_scroll"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:lineSpacingExtra="4dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="4dp"
+                android:scrollbars="none">
+
+                <com.google.android.material.chip.ChipGroup
+                    android:id="@+id/group_console_filters"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    app:chipSpacingHorizontal="8dp">
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chip_filter_ping"
+                        style="@style/Widget.Material3.Chip.Assist.Elevated"
+                        android:checkable="true"
+                        android:text="@string/developer_console_filter_ping" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chip_filter_case"
+                        style="@style/Widget.Material3.Chip.Assist.Elevated"
+                        android:checkable="true"
+                        android:text="@string/developer_console_filter_case" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chip_filter_gesture"
+                        style="@style/Widget.Material3.Chip.Assist.Elevated"
+                        android:checkable="true"
+                        android:text="@string/developer_console_filter_gesture" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chip_filter_ack"
+                        style="@style/Widget.Material3.Chip.Assist.Elevated"
+                        android:checkable="true"
+                        android:text="@string/developer_console_filter_ack" />
+                </com.google.android.material.chip.ChipGroup>
+            </HorizontalScrollView>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/list_console_logs"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:overScrollMode="never"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
                 android:paddingBottom="32dp"
-                android:textColor="@color/er_text_secondary"
-                android:textIsSelectable="true"
-                android:typeface="monospace"
-                android:textSize="14sp" />
-        </androidx.core.widget.NestedScrollView>
+                android:scrollbarStyle="outsideOverlay"
+                android:verticalScrollbarPosition="defaultPosition" />
+        </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/button_jump_latest"
+            android:id="@+id/button_console_paused"
             style="?attr/materialButtonOutlinedStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom|end"
+            android:layout_gravity="top|end"
             android:layout_margin="16dp"
-            android:text="@string/developer_jump_latest"
+            android:text="@string/developer_console_paused"
             android:visibility="gone" />
     </FrameLayout>
 
