@@ -1,17 +1,15 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+
 /**
  * Step 1 of pair-aware BLE orchestration: data model definitions for dual-lens headsets.
  * These stubs do not yet integrate with the legacy single-device path.
  */
-enum class LensSide {
-    LEFT,
-    RIGHT,
-}
 
 data class LensId(
     val mac: String,
-    val side: LensSide? = null,
+    val side: Lens? = null,
 )
 
 data class PairKey(

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.core.BleNameParser
 import java.util.Locale
 
@@ -527,13 +528,13 @@ internal class BluetoothManager(
         return PairKey(token)
     }
 
-    private fun inferSide(name: String?): LensSide? {
+    private fun inferSide(name: String?): Lens? {
         if (name.isNullOrEmpty()) {
             return null
         }
         return when (BleNameParser.inferLensSide(name)) {
-            BleNameParser.Lens.LEFT -> LensSide.LEFT
-            BleNameParser.Lens.RIGHT -> LensSide.RIGHT
+            BleNameParser.Lens.LEFT -> Lens.LEFT
+            BleNameParser.Lens.RIGHT -> Lens.RIGHT
             BleNameParser.Lens.UNKNOWN -> null
         }
     }
@@ -554,8 +555,8 @@ internal class BluetoothManager(
 
     private fun buildDiscoveryState(window: PairCorrelationWindow): HeadsetState {
         val (left, right) = selectLensObservations(window)
-        val leftState = left?.toLensState(LensSide.LEFT)
-        val rightState = right?.toLensState(LensSide.RIGHT)
+        val leftState = left?.toLensState(Lens.LEFT)
+        val rightState = right?.toLensState(Lens.RIGHT)
         return HeadsetState(
             pair = window.key,
             left = leftState,
@@ -587,7 +588,7 @@ internal class BluetoothManager(
         )
     }
 
-    private fun LensObservation.toLensState(forceSide: LensSide): LensState {
+    private fun LensObservation.toLensState(forceSide: Lens): LensState {
         val assignedSide = forceSide
         val idWithSide = LensId(id.mac, assignedSide)
         return LensState(
@@ -655,8 +656,8 @@ internal class BluetoothManager(
 
     private fun selectLensObservations(window: PairCorrelationWindow): Pair<LensObservation?, LensObservation?> {
         val observations = window.lenses.values.sortedBy { it.firstSeenAt }
-        var left = observations.firstOrNull { it.id.side == LensSide.LEFT }
-        var right = observations.firstOrNull { it.id.side == LensSide.RIGHT }
+        var left = observations.firstOrNull { it.id.side == Lens.LEFT }
+        var right = observations.firstOrNull { it.id.side == Lens.RIGHT }
         val remaining = observations
             .filterNot { it == left || it == right }
             .toMutableList()

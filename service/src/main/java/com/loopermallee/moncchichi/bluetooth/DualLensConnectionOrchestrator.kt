@@ -5,6 +5,7 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.BATT_SUB_DETAIL
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_BATT_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_CASE_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.telemetry.BleTelemetryRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -81,8 +82,8 @@ class DualLensConnectionOrchestrator(
     private val _clientEvents = MutableSharedFlow<LensClientEvent>(extraBufferCapacity = 32)
     val clientEvents: SharedFlow<LensClientEvent> = _clientEvents.asSharedFlow()
 
-    private val _telemetry = MutableStateFlow<Map<LensSide, ClientEvent.Telemetry>>(emptyMap())
-    val telemetry: StateFlow<Map<LensSide, ClientEvent.Telemetry>> = _telemetry.asStateFlow()
+    private val _telemetry = MutableStateFlow<Map<Lens, ClientEvent.Telemetry>>(emptyMap())
+    val telemetry: StateFlow<Map<Lens, ClientEvent.Telemetry>> = _telemetry.asStateFlow()
 
     private var leftSession: LensSession? = null
     private var rightSession: LensSession? = null
@@ -102,24 +103,24 @@ class DualLensConnectionOrchestrator(
     @Volatile
     private var leftPrimed: Boolean = false
 
-    private val stateJobs: MutableMap<LensSide, Job> = mutableMapOf()
-    private val eventJobs: MutableMap<LensSide, Job> = mutableMapOf()
-    private val reconnectJobs: MutableMap<LensSide, Job> = mutableMapOf()
-    private val heartbeatStates: MutableMap<LensSide, HeartbeatState> = mutableMapOf(
-        LensSide.LEFT to HeartbeatState(),
-        LensSide.RIGHT to HeartbeatState(),
+    private val stateJobs: MutableMap<Lens, Job> = mutableMapOf()
+    private val eventJobs: MutableMap<Lens, Job> = mutableMapOf()
+    private val reconnectJobs: MutableMap<Lens, Job> = mutableMapOf()
+    private val heartbeatStates: MutableMap<Lens, HeartbeatState> = mutableMapOf(
+        Lens.LEFT to HeartbeatState(),
+        Lens.RIGHT to HeartbeatState(),
     )
-    private val reconnectDelayMs: MutableMap<LensSide, Long> = mutableMapOf(
-        LensSide.LEFT to INITIAL_RECONNECT_DELAY_MS,
-        LensSide.RIGHT to INITIAL_RECONNECT_DELAY_MS,
+    private val reconnectDelayMs: MutableMap<Lens, Long> = mutableMapOf(
+        Lens.LEFT to INITIAL_RECONNECT_DELAY_MS,
+        Lens.RIGHT to INITIAL_RECONNECT_DELAY_MS,
     )
-    private val reconnectFailures: MutableMap<LensSide, ArrayDeque<Long>> = mutableMapOf(
-        LensSide.LEFT to ArrayDeque(),
-        LensSide.RIGHT to ArrayDeque(),
+    private val reconnectFailures: MutableMap<Lens, ArrayDeque<Long>> = mutableMapOf(
+        Lens.LEFT to ArrayDeque(),
+        Lens.RIGHT to ArrayDeque(),
     )
-    private val bondLossCounters: MutableMap<LensSide, Int> = mutableMapOf(
-        LensSide.LEFT to 0,
-        LensSide.RIGHT to 0,
+    private val bondLossCounters: MutableMap<Lens, Int> = mutableMapOf(
+        Lens.LEFT to 0,
+        Lens.RIGHT to 0,
     )
 
     @Volatile
@@ -134,8 +135,8 @@ class DualLensConnectionOrchestrator(
 
         disconnectHeadset()
 
-        val leftId = LensId(leftMac, LensSide.LEFT)
-        val rightId = LensId(rightMac, LensSide.RIGHT)
+        val leftId = LensId(leftMac, Lens.LEFT)
+        val rightId = LensId(rightMac, Lens.RIGHT)
         val leftClient = bleFactory(leftId)
         val rightClient = bleFactory(rightId)
         leftSession = LensSession(leftId, leftClient)
@@ -151,14 +152,14 @@ class DualLensConnectionOrchestrator(
         _telemetry.value = emptyMap()
         startHeartbeat()
 
-        startTracking(LensSide.LEFT, leftClient)
-        startTracking(LensSide.RIGHT, rightClient)
+        startTracking(Lens.LEFT, leftClient)
+        startTracking(Lens.RIGHT, rightClient)
 
         val rightResult = runCatching {
             rightClient.ensureBonded()
             rightClient.connectAndSetup()
             _connectionState.value = State.RightOnlineUnprimed
-            val primed = rightClient.probeReady(LensSide.RIGHT)
+            val primed = rightClient.probeReady(Lens.RIGHT)
             if (primed) {
                 rightClient.startKeepAlive()
                 _connectionState.value = State.ReadyRight
@@ -171,7 +172,7 @@ class DualLensConnectionOrchestrator(
             leftClient.ensureBonded()
             leftClient.connectAndSetup()
             _connectionState.value = State.LeftOnlineUnprimed
-            val primed = leftClient.probeReady(LensSide.LEFT)
+            val primed = leftClient.probeReady(Lens.LEFT)
             if (primed) {
                 leftClient.startKeepAlive()
             }
@@ -192,15 +193,15 @@ class DualLensConnectionOrchestrator(
             }
             rightResult && !leftResult -> {
                 _connectionState.value = State.DegradedRightOnly
-                scheduleReconnect(LensSide.LEFT)
+                scheduleReconnect(Lens.LEFT)
             }
             !rightResult && leftResult -> {
                 _connectionState.value = State.DegradedLeftOnly
-                scheduleReconnect(LensSide.RIGHT)
+                scheduleReconnect(Lens.RIGHT)
             }
             else -> {
-                scheduleReconnect(LensSide.LEFT)
-                scheduleReconnect(LensSide.RIGHT)
+                scheduleReconnect(Lens.LEFT)
+                scheduleReconnect(Lens.RIGHT)
             }
         }
     }
@@ -234,8 +235,8 @@ class DualLensConnectionOrchestrator(
         rightSession = null
 
         stateLock.withLock {
-            latestLeft = leftClient?.state?.value?.withSide(LensSide.LEFT)
-            latestRight = rightClient?.state?.value?.withSide(LensSide.RIGHT)
+            latestLeft = leftClient?.state?.value?.withSide(Lens.LEFT)
+            latestRight = rightClient?.state?.value?.withSide(Lens.RIGHT)
             publishHeadsetState()
         }
 
@@ -249,23 +250,23 @@ class DualLensConnectionOrchestrator(
         runBlocking { disconnectHeadset() }
     }
 
-    private fun startTracking(side: LensSide, client: BleClient) {
+    private fun startTracking(side: Lens, client: BleClient) {
         stateJobs.remove(side)?.cancel()
         eventJobs.remove(side)?.cancel()
 
         stateJobs[side] = scope.launch {
             stateLock.withLock {
                 when (side) {
-                    LensSide.LEFT -> latestLeft = client.state.value.withSide(side)
-                    LensSide.RIGHT -> latestRight = client.state.value.withSide(side)
+                    Lens.LEFT -> latestLeft = client.state.value.withSide(side)
+                    Lens.RIGHT -> latestRight = client.state.value.withSide(side)
                 }
                 publishHeadsetState()
             }
             client.state.collect { state ->
                 stateLock.withLock {
                     when (side) {
-                        LensSide.LEFT -> latestLeft = state.withSide(side)
-                        LensSide.RIGHT -> latestRight = state.withSide(side)
+                        Lens.LEFT -> latestLeft = state.withSide(side)
+                        Lens.RIGHT -> latestRight = state.withSide(side)
                     }
                     publishHeadsetState()
                 }
@@ -292,23 +293,23 @@ class DualLensConnectionOrchestrator(
         }
     }
 
-    private suspend fun handleClientEvent(side: LensSide, event: ClientEvent) {
+    private suspend fun handleClientEvent(side: Lens, event: ClientEvent) {
         when (event) {
             is ClientEvent.Telemetry -> _telemetry.update { current -> current + (side to event) }
             is ClientEvent.ConnectionStateChanged -> {
                 if (!event.connected) {
                     when (side) {
-                        LensSide.RIGHT -> markRightPrimed(false)
-                        LensSide.LEFT -> markLeftPrimed(false)
+                        Lens.RIGHT -> markRightPrimed(false)
+                        Lens.LEFT -> markLeftPrimed(false)
                     }
                     scheduleReconnect(side)
                     _connectionState.value = when (side) {
-                        LensSide.RIGHT -> when {
+                        Lens.RIGHT -> when {
                             latestLeft?.connected == true -> State.RecoveringRight
                             latestLeft?.isReady == true -> State.DegradedLeftOnly
                             else -> State.ConnectingRight
                         }
-                        LensSide.LEFT -> when {
+                        Lens.LEFT -> when {
                             latestRight?.connected == true -> State.RecoveringLeft
                             latestRight?.isReady == true -> State.DegradedRightOnly
                             else -> State.ConnectingLeft
@@ -325,13 +326,13 @@ class DualLensConnectionOrchestrator(
                 } else {
                     reconnectJobs.remove(side)?.cancel()
                     val nextState = when (side) {
-                        LensSide.RIGHT -> if (latestLeft?.isReady == true) {
+                        Lens.RIGHT -> if (latestLeft?.isReady == true) {
                             _connectionState.value = State.ReadyBoth
                             State.Stable
                         } else {
                             State.ReadyRight
                         }
-                        LensSide.LEFT -> if (latestRight?.isReady == true) {
+                        Lens.LEFT -> if (latestRight?.isReady == true) {
                             _connectionState.value = State.ReadyBoth
                             State.Stable
                         } else {
@@ -340,8 +341,8 @@ class DualLensConnectionOrchestrator(
                     }
                     _connectionState.value = nextState
                     when (side) {
-                        LensSide.RIGHT -> markRightPrimed(false)
-                        LensSide.LEFT -> {
+                        Lens.RIGHT -> markRightPrimed(false)
+                        Lens.LEFT -> {
                             markLeftPrimed(false)
                             scheduleLeftRefresh()
                         }
@@ -352,8 +353,8 @@ class DualLensConnectionOrchestrator(
 
             is ClientEvent.ReadyProbeResult -> {
                 when (side) {
-                    LensSide.RIGHT -> markRightPrimed(event.ready)
-                    LensSide.LEFT -> {
+                    Lens.RIGHT -> markRightPrimed(event.ready)
+                    Lens.LEFT -> {
                         markLeftPrimed(event.ready)
                         if (event.ready) {
                             scheduleLeftRefresh()
@@ -434,16 +435,16 @@ class DualLensConnectionOrchestrator(
     private suspend fun sendEventsImmediate(payload: ByteArray): Boolean {
         var sent = false
         rightSession?.let {
-            sent = sendTo(LensSide.RIGHT, payload) || sent
+            sent = sendTo(Lens.RIGHT, payload) || sent
         }
         leftSession?.let {
-            sent = sendTo(LensSide.LEFT, payload) || sent
+            sent = sendTo(Lens.LEFT, payload) || sent
         }
         return sent
     }
 
     private suspend fun sendRightImmediate(payload: ByteArray, mirror: Boolean): Boolean {
-        val success = sendTo(LensSide.RIGHT, payload)
+        val success = sendTo(Lens.RIGHT, payload)
         if (success) {
             mirrorToLeft(payload, mirror)
         }
@@ -451,7 +452,7 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendBothImmediate(payload: ByteArray, mirror: Boolean): Boolean {
-        val rightOk = sendTo(LensSide.RIGHT, payload)
+        val rightOk = sendTo(Lens.RIGHT, payload)
         if (!rightOk) {
             return false
         }
@@ -487,14 +488,14 @@ class DualLensConnectionOrchestrator(
         if (shouldQueue) {
             flushPendingLeftRefresh()
         } else {
-            sendTo(LensSide.LEFT, payload)
+            sendTo(Lens.LEFT, payload)
         }
     }
 
-    private suspend fun sendTo(side: LensSide, payload: ByteArray): Boolean {
+    private suspend fun sendTo(side: Lens, payload: ByteArray): Boolean {
         val session = when (side) {
-            LensSide.LEFT -> leftSession
-            LensSide.RIGHT -> rightSession
+            Lens.LEFT -> leftSession
+            Lens.RIGHT -> rightSession
         } ?: return false
         return runCatching { session.client.sendCommand(payload.copyOf()) }.getOrElse { false }
     }
@@ -559,10 +560,10 @@ class DualLensConnectionOrchestrator(
                 commands += pendingLeftRefresh.removeFirst()
             }
         }
-        commands.forEach { sendTo(LensSide.LEFT, it) }
+        commands.forEach { sendTo(Lens.LEFT, it) }
     }
 
-    private fun scheduleReconnect(side: LensSide, fromHeartbeat: Boolean = false) {
+    private fun scheduleReconnect(side: Lens, fromHeartbeat: Boolean = false) {
         if (!sessionActive) {
             return
         }
@@ -570,14 +571,14 @@ class DualLensConnectionOrchestrator(
             return
         }
         val session = when (side) {
-            LensSide.LEFT -> leftSession
-            LensSide.RIGHT -> rightSession
+            Lens.LEFT -> leftSession
+            Lens.RIGHT -> rightSession
         } ?: return
 
         if (fromHeartbeat) {
             _connectionState.value = when (side) {
-                LensSide.LEFT -> State.RecoveringLeft
-                LensSide.RIGHT -> State.RecoveringRight
+                Lens.LEFT -> State.RecoveringLeft
+                Lens.RIGHT -> State.RecoveringRight
             }
         }
 
@@ -608,12 +609,12 @@ class DualLensConnectionOrchestrator(
                     reconnectFailures[side]?.clear()
                     requestTelemetryRefresh(side)
                     _connectionState.value = when (side) {
-                        LensSide.RIGHT -> if (latestLeft?.isReady == true) {
+                        Lens.RIGHT -> if (latestLeft?.isReady == true) {
                             State.Stable
                         } else {
                             State.ReadyRight
                         }
-                        LensSide.LEFT -> if (latestRight?.isReady == true) {
+                        Lens.LEFT -> if (latestRight?.isReady == true) {
                             State.Stable
                         } else {
                             State.LeftOnlineUnprimed
@@ -629,19 +630,19 @@ class DualLensConnectionOrchestrator(
             }
             reconnectJobs.remove(side)
             when (side) {
-                LensSide.RIGHT -> _connectionState.value = State.DegradedLeftOnly
-                LensSide.LEFT -> _connectionState.value = State.DegradedRightOnly
+                Lens.RIGHT -> _connectionState.value = State.DegradedLeftOnly
+                Lens.LEFT -> _connectionState.value = State.DegradedRightOnly
             }
         }
     }
 
     private suspend fun publishHeadsetState() {
-        val left = latestLeft?.withSide(LensSide.LEFT)
-        val right = latestRight?.withSide(LensSide.RIGHT)
+        val left = latestLeft?.withSide(Lens.LEFT)
+        val right = latestRight?.withSide(Lens.RIGHT)
         _headset.value = HeadsetState(pairKey, left, right)
     }
 
-    private fun LensState.withSide(side: LensSide): LensState {
+    private fun LensState.withSide(side: Lens): LensState {
         val id = id
         return if (id.side == side) {
             this
@@ -683,11 +684,11 @@ class DualLensConnectionOrchestrator(
                     break
                 }
                 val now = SystemClock.elapsedRealtime()
-                LensSide.values().forEach { side ->
+                Lens.values().forEach { side ->
                     val state = heartbeatStates[side] ?: return@forEach
                     val session = when (side) {
-                        LensSide.LEFT -> leftSession
-                        LensSide.RIGHT -> rightSession
+                        Lens.LEFT -> leftSession
+                        Lens.RIGHT -> rightSession
                     }
                     if (session == null) {
                         state.reset()
@@ -728,13 +729,13 @@ class DualLensConnectionOrchestrator(
         }
     }
 
-    private fun markHeartbeatAck(side: LensSide) {
+    private fun markHeartbeatAck(side: Lens) {
         val state = heartbeatStates[side] ?: return
         state.lastAckAt = SystemClock.elapsedRealtime()
         state.missedPingCount = 0
     }
 
-    private fun handleBondEvent(side: LensSide, event: ClientEvent.BondStateChanged) {
+    private fun handleBondEvent(side: Lens, event: ClientEvent.BondStateChanged) {
         if (event.bonded) {
             bondLossCounters[side] = 0
             return
@@ -748,8 +749,8 @@ class DualLensConnectionOrchestrator(
         scope.launch {
             _connectionState.value = State.Repriming
             val session = when (side) {
-                LensSide.LEFT -> leftSession
-                LensSide.RIGHT -> rightSession
+                Lens.LEFT -> leftSession
+                Lens.RIGHT -> rightSession
             } ?: return@launch
             try {
                 session.client.ensureBonded()
@@ -768,7 +769,7 @@ class DualLensConnectionOrchestrator(
         }
     }
 
-    private suspend fun requestTelemetryRefresh(side: LensSide) {
+    private suspend fun requestTelemetryRefresh(side: Lens) {
         if (!sessionActive) return
         val commands = listOf(
             byteArrayOf(CMD_CASE_GET.toByte()),
@@ -776,19 +777,19 @@ class DualLensConnectionOrchestrator(
             byteArrayOf(CMD_WEAR_DETECT.toByte()),
         )
         val primary = when (side) {
-            LensSide.RIGHT -> LensSide.RIGHT
-            LensSide.LEFT -> if (rightSession != null) LensSide.RIGHT else LensSide.LEFT
+            Lens.RIGHT -> Lens.RIGHT
+            Lens.LEFT -> if (rightSession != null) Lens.RIGHT else Lens.LEFT
         }
         commands.forEach { payload ->
             when (primary) {
-                LensSide.RIGHT -> sendRightOrQueue(payload, mirror = true)
-                LensSide.LEFT -> sendTo(LensSide.LEFT, payload)
+                Lens.RIGHT -> sendRightOrQueue(payload, mirror = true)
+                Lens.LEFT -> sendTo(Lens.LEFT, payload)
             }
         }
         telemetryRepository.persistSnapshot()
     }
 
-    private fun shouldRefreshGatt(side: LensSide, now: Long): Boolean {
+    private fun shouldRefreshGatt(side: Lens, now: Long): Boolean {
         val failures = reconnectFailures[side] ?: return false
         while (failures.isNotEmpty() && now - failures.first() > FAILURE_WINDOW_MS) {
             failures.removeFirst()
@@ -796,7 +797,7 @@ class DualLensConnectionOrchestrator(
         return failures.size > 3
     }
 
-    private fun recordReconnectFailure(side: LensSide, timestamp: Long) {
+    private fun recordReconnectFailure(side: Lens, timestamp: Long) {
         val failures = reconnectFailures[side] ?: return
         failures.addLast(timestamp)
         while (failures.isNotEmpty() && timestamp - failures.first() > FAILURE_WINDOW_MS) {
@@ -806,6 +807,6 @@ class DualLensConnectionOrchestrator(
 }
 
 data class LensClientEvent(
-    val side: LensSide,
+    val side: Lens,
     val event: ClientEvent,
 )

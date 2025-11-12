@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.bluetooth
 
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.core.BmpPacketBuilder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -17,7 +18,7 @@ interface BleClient {
 
     suspend fun ensureBonded()
     suspend fun connectAndSetup(targetMtu: Int = 251)
-    suspend fun probeReady(side: LensSide): Boolean
+    suspend fun probeReady(lens: Lens): Boolean
     suspend fun sendCommand(payload: ByteArray): Boolean
     suspend fun sendImage(imageBytes: ByteArray): Boolean
     fun startKeepAlive()
@@ -28,7 +29,7 @@ sealed interface ClientEvent {
     data class BondStateChanged(val bonded: Boolean) : ClientEvent
     data class ConnectionStateChanged(val connected: Boolean) : ClientEvent
     data class ServicesReady(val mtu: Int) : ClientEvent
-    data class ReadyProbeResult(val side: LensSide, val ready: Boolean) : ClientEvent
+    data class ReadyProbeResult(val lens: Lens, val ready: Boolean) : ClientEvent
     data class Telemetry(val batteryPct: Int?, val firmware: String?, val rssi: Int?) : ClientEvent
     data class AsciiSystemFrame(val text: String) : ClientEvent
     data class Gesture(val code: Int, val label: String) : ClientEvent
@@ -64,7 +65,7 @@ class BleClientStub(private val initial: LensState) : BleClient {
         _events.emit(ClientEvent.ServicesReady(mtu = mtu))
     }
 
-    override suspend fun probeReady(side: LensSide): Boolean {
+    override suspend fun probeReady(lens: Lens): Boolean {
         val readyState = _state.value.copy(
             status = LinkStatus.READY,
             readyProbePassed = true,
@@ -73,7 +74,7 @@ class BleClientStub(private val initial: LensState) : BleClient {
             firmware = _state.value.firmware ?: "stub-1.0",
         )
         _state.value = readyState
-        _events.emit(ClientEvent.ReadyProbeResult(side = side, ready = true))
+        _events.emit(ClientEvent.ReadyProbeResult(lens = lens, ready = true))
         _events.emit(
             ClientEvent.Telemetry(
                 batteryPct = readyState.batteryPct,
