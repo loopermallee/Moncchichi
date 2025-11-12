@@ -49,3 +49,9 @@ class CommandRouter {
         }
     }
 }
+
+fun requiresAsciiAckNormalization(opcode: Int, sub: Int?): Boolean {
+    val normalizedOpcode = opcode and 0xFF
+    val normalizedSub = sub?.and(0xFF) ?: -1
+    return normalizedOpcode == CMD_SYS_INFO && normalizedSub == SYS_SUB_INFO
+}

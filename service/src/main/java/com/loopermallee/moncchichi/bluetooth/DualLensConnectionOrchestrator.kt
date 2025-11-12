@@ -103,6 +103,9 @@ class DualLensConnectionOrchestrator(
     @Volatile
     private var leftPrimed: Boolean = false
 
+    @Volatile
+    private var leftRefreshRequested: Boolean = false
+
     private val stateJobs: MutableMap<Lens, Job> = mutableMapOf()
     private val eventJobs: MutableMap<Lens, Job> = mutableMapOf()
     private val reconnectJobs: MutableMap<Lens, Job> = mutableMapOf()
@@ -146,6 +149,7 @@ class DualLensConnectionOrchestrator(
         leftRefreshLock.withLock { pendingLeftRefresh.clear() }
         rightPrimed = false
         leftPrimed = false
+        leftRefreshRequested = false
 
         sessionActive = true
         _connectionState.value = State.ConnectingRight
@@ -284,6 +288,11 @@ class DualLensConnectionOrchestrator(
         }
         val opcode = payload.first().toInt() and 0xFF
         val subOpcode = payload.getOrNull(1)?.toInt()?.and(0xFF)
+        if (rightPrimed) {
+            flushPendingMirrors()
+        }
+        flushPendingLeftRefresh()
+
         val decision = commandRouter.classify(opcode, subOpcode)
         return when (decision.family) {
             CommandRouter.Family.RIGHT_ONLY -> sendRightOrQueue(payload, decision.mirror)
@@ -342,25 +351,22 @@ class DualLensConnectionOrchestrator(
                     _connectionState.value = nextState
                     when (side) {
                         Lens.RIGHT -> markRightPrimed(false)
-                        Lens.LEFT -> {
-                            markLeftPrimed(false)
-                            scheduleLeftRefresh()
-                        }
+                        Lens.LEFT -> markLeftPrimed(false)
                     }
                     heartbeatStates[side]?.reset()
                 }
             }
 
             is ClientEvent.ReadyProbeResult -> {
-                when (side) {
-                    Lens.RIGHT -> markRightPrimed(event.ready)
-                    Lens.LEFT -> {
-                        markLeftPrimed(event.ready)
-                        if (event.ready) {
-                            scheduleLeftRefresh()
+                    when (side) {
+                        Lens.RIGHT -> markRightPrimed(event.ready)
+                        Lens.LEFT -> {
+                            markLeftPrimed(event.ready)
+                            if (event.ready) {
+                                scheduleLeftRefresh()
+                            }
                         }
                     }
-                }
                 if (event.ready && latestLeft?.isReady == true && latestRight?.isReady == true) {
                     _connectionState.value = State.ReadyBoth
                     _connectionState.value = State.Stable
@@ -497,13 +503,19 @@ class DualLensConnectionOrchestrator(
             Lens.LEFT -> leftSession
             Lens.RIGHT -> rightSession
         } ?: return false
-        return runCatching { session.client.sendCommand(payload.copyOf()) }.getOrElse { false }
+        val success = runCatching { session.client.sendCommand(payload.copyOf()) }.getOrElse { false }
+        if (!success) {
+            scheduleReconnect(side)
+        }
+        return success
     }
 
     private suspend fun markRightPrimed(primed: Boolean) {
         rightPrimed = primed
         if (primed) {
             flushPendingMirrors()
+        } else {
+            leftRefreshRequested = false
         }
         flushPendingLeftRefresh()
     }
@@ -512,11 +524,17 @@ class DualLensConnectionOrchestrator(
         leftPrimed = primed
         if (primed) {
             flushPendingLeftRefresh()
+        } else {
+            leftRefreshRequested = false
         }
     }
 
     private suspend fun scheduleLeftRefresh() {
         if (!sessionActive) {
+            return
+        }
+        if (leftRefreshRequested) {
+            flushPendingLeftRefresh()
             return
         }
         val commands = listOf(
@@ -528,6 +546,7 @@ class DualLensConnectionOrchestrator(
             pendingLeftRefresh.clear()
             commands.forEach { pendingLeftRefresh.addLast(it) }
         }
+        leftRefreshRequested = true
         flushPendingLeftRefresh()
     }
 

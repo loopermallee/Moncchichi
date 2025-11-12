@@ -15,6 +15,18 @@ object G1MessageParser {
         val subOpcode: Int,
         val text: String,
     )
+
+    fun isAsciiOk(payload: ByteArray): Boolean {
+        return payload.normalizedAsciiTokens().any { token -> token.equals("OK", ignoreCase = true) }
+    }
+
+    fun isAsciiBusy(payload: ByteArray): Boolean {
+        return payload.normalizedAsciiTokens().any { token -> token.equals("BUSY", ignoreCase = true) }
+    }
+
+    fun isAsciiError(payload: ByteArray): Boolean {
+        return payload.normalizedAsciiTokens().any { token -> token.equals("ERROR", ignoreCase = true) }
+    }
 }
 
 /**
@@ -35,4 +47,39 @@ fun ByteArray.toAsciiSystemFrameOrNull(): G1MessageParser.AsciiSystemFrame? {
         subOpcode = G1Protocols.SYS_SUB_INFO,
         text = trimmed,
     )
+}
+
+fun ByteArray.toAckFromAsciiOrNull(): AckOutcome? {
+    return when {
+        G1MessageParser.isAsciiOk(this) -> AckOutcome.Success(
+            opcode = G1Protocols.CMD_SYS_INFO,
+            status = G1Protocols.STATUS_OK,
+        )
+        G1MessageParser.isAsciiBusy(this) -> AckOutcome.Busy(
+            opcode = G1Protocols.CMD_SYS_INFO,
+            status = G1Protocols.STATUS_BUSY,
+        )
+        G1MessageParser.isAsciiError(this) -> AckOutcome.Failure(
+            opcode = G1Protocols.CMD_SYS_INFO,
+            status = null,
+        )
+        else -> null
+    }
+}
+
+private fun ByteArray.normalizedAsciiTokens(): List<String> {
+    if (isEmpty()) return emptyList()
+    val ascii = runCatching { String(this, Charsets.UTF_8) }.getOrNull() ?: return emptyList()
+    return ascii
+        .split('\r', '\n')
+        .asSequence()
+        .map { candidate ->
+            candidate
+                .replace("\u0000", "")
+                .trim { it <= ' ' }
+                .trimStart { it == '>' }
+                .trim { it <= ' ' }
+        }
+        .filter { it.isNotEmpty() }
+        .toList()
 }

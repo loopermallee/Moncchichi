@@ -24,6 +24,9 @@ interface BleTool {
     suspend fun connect(deviceId: String): Boolean
     suspend fun disconnect()
     suspend fun send(command: String): String
+    suspend fun rearmNotifications(): Boolean
+    suspend fun triggerHello(lens: Lens): Boolean
+    suspend fun requestLeftRefresh(): Boolean
     suspend fun battery(): Int?
     suspend fun caseBattery(): Int?
     suspend fun firmware(): String?

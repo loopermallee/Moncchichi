@@ -477,11 +477,22 @@ class BleTelemetryRepository(
         val heartbeatMissCount: Int? = null,
     )
 
+    data class LinkPrimingSnapshot(
+        val lens: MoncchichiBleService.Lens,
+        val notifyArmed: Boolean,
+        val warmupOk: Boolean,
+        val attMtu: Int?,
+    )
+
     private val deviceTelemetryScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val lensTelemetrySnapshots = mapOf(
         Lens.LEFT to MutableStateFlow(initialDeviceTelemetrySnapshot(Lens.LEFT)),
         Lens.RIGHT to MutableStateFlow(initialDeviceTelemetrySnapshot(Lens.RIGHT)),
     )
+
+    private val _linkPriming = MutableStateFlow(initialLinkPriming())
+    val linkPriming: StateFlow<Map<MoncchichiBleService.Lens, LinkPrimingSnapshot>> =
+        _linkPriming.asStateFlow()
 
     val deviceTelemetryFlow: Flow<List<DeviceTelemetrySnapshot>> =
         combine(
@@ -522,6 +533,12 @@ class BleTelemetryRepository(
             ackMode = null,
             heartbeatLatencyAvgMs = null,
         )
+    }
+
+    private fun initialLinkPriming(): Map<MoncchichiBleService.Lens, LinkPrimingSnapshot> {
+        return MoncchichiBleService.Lens.values().associateWith { lens ->
+            LinkPrimingSnapshot(lens, notifyArmed = false, warmupOk = false, attMtu = null)
+        }
     }
 
     private fun updateDeviceTelemetry(
@@ -1537,6 +1554,7 @@ class BleTelemetryRepository(
         _inCaseStatus.value = DeviceStatus()
         _chargingStatus.value = DeviceStatus()
         _caseStatus.value = CaseStatus()
+        _linkPriming.value = initialLinkPriming()
         lensTelemetrySnapshots.forEach { (lens, flow) ->
             flow.value = initialDeviceTelemetrySnapshot(lens)
         }
@@ -1624,6 +1642,20 @@ class BleTelemetryRepository(
                 updateConnectionSequence(state.connectionOrder)
                 handleLensConnectionTransition(Lens.LEFT, state.left.isConnected)
                 handleLensConnectionTransition(Lens.RIGHT, state.right.isConnected)
+                _linkPriming.value = mapOf(
+                    Lens.LEFT to LinkPrimingSnapshot(
+                        lens = Lens.LEFT,
+                        notifyArmed = state.left.notificationsArmed,
+                        warmupOk = state.left.warmupOk,
+                        attMtu = state.left.attMtu,
+                    ),
+                    Lens.RIGHT to LinkPrimingSnapshot(
+                        lens = Lens.RIGHT,
+                        notifyArmed = state.right.notificationsArmed,
+                        warmupOk = state.right.warmupOk,
+                        attMtu = state.right.attMtu,
+                    ),
+                )
             }
         }
         ackJob = scope.launch {
@@ -1654,6 +1686,7 @@ class BleTelemetryRepository(
         lastConnected = false
         clearBuffers()
         keepAliveSnapshots.clear()
+        _linkPriming.value = initialLinkPriming()
         synchronized(stabilityHistory) { stabilityHistory.clear() }
         synchronized(snapshotPersistLock) { lastPersistedSnapshotContent = null }
         validationController.stop("service unbound")

@@ -6,9 +6,13 @@ import android.os.SystemClock
 import com.loopermallee.moncchichi.MoncchichiLogger
 import com.loopermallee.moncchichi.bluetooth.BondAwaitResult
 import com.loopermallee.moncchichi.bluetooth.BondResult
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.BATT_SUB_DETAIL
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_BATT_GET
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_CASE_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_PING
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_EVENT
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.STATUS_OK
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.isAckComplete
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.isAckContinuation
 import com.loopermallee.moncchichi.core.MicControlPacket
@@ -77,6 +81,7 @@ class MoncchichiBleService(
         val lastAckAt: Long? = null,
         val degraded: Boolean = false,
         val attMtu: Int? = null,
+        val notificationsArmed: Boolean = false,
         val warmupOk: Boolean = false,
         val lastKeepAliveAt: Long? = null,
         val keepAliveRttMs: Long? = null,
@@ -626,6 +631,68 @@ class MoncchichiBleService(
         return success
     }
 
+    suspend fun rearmNotifications(target: Target = Target.Both): Boolean {
+        val records = when (target) {
+            Target.Left -> listOfNotNull(clientRecords[Lens.LEFT]?.takeIf { it.clientState().isConnected })
+            Target.Right -> listOfNotNull(clientRecords[Lens.RIGHT]?.takeIf { it.clientState().isConnected })
+            Target.Both -> ALL_LENSES.mapNotNull { lens ->
+                clientRecords[lens]?.takeIf { it.clientState().isConnected }
+            }
+        }
+        if (records.isEmpty()) {
+            logWarn("No connected lenses for notify re-arm ($target)")
+            return false
+        }
+        var success = true
+        records.forEachIndexed { index, record ->
+            val armed = record.client.rearmNotifications()
+            if (!armed) {
+                success = false
+            }
+            if (index < records.lastIndex) {
+                delay(CHANNEL_STAGGER_DELAY_MS)
+            }
+        }
+        return success
+    }
+
+    suspend fun triggerHello(lens: Lens): Boolean {
+        val record = clientRecords[lens]?.takeIf { it.clientState().isConnected }
+        if (record == null) {
+            logWarn("[PAIRING] HELLO quick action skipped – ${lens.name.lowercase(Locale.US)} lens not connected")
+            return false
+        }
+        val result = record.client.forceHelloHandshake()
+        if (!result) {
+            updateLens(lens) { status -> status.copy(degraded = true) }
+        }
+        return result
+    }
+
+    suspend fun requestLeftRefresh(): Boolean {
+        val commands = listOf(
+            byteArrayOf(CMD_CASE_GET.toByte()),
+            byteArrayOf(CMD_BATT_GET.toByte(), BATT_SUB_DETAIL.toByte()),
+            byteArrayOf(CMD_WEAR_DETECT.toByte()),
+        )
+        var overall = true
+        commands.forEachIndexed { index, payload ->
+            val ok = send(payload, Target.Left)
+            if (!ok) {
+                overall = false
+            }
+            if (index < commands.lastIndex) {
+                delay(CHANNEL_STAGGER_DELAY_MS)
+            }
+        }
+        if (overall) {
+            log("[BLE][L] Left refresh dispatched (${commands.size} cmds)")
+        } else {
+            logWarn("[BLE][L] Left refresh encountered failures")
+        }
+        return overall
+    }
+
     suspend fun setMicEnabled(
         lens: Lens,
         enabled: Boolean,
@@ -715,6 +782,7 @@ class MoncchichiBleService(
                         state = state.status,
                         rssi = state.rssi,
                         attMtu = state.attMtu,
+                        notificationsArmed = client.notifyReady.value,
                         warmupOk = state.warmupOk,
                         bonded = state.bonded,
                         disconnectStatus = state.lastDisconnectStatus,
@@ -744,6 +812,13 @@ class MoncchichiBleService(
                 handleBondTransitions(lens, previousStatus, state)
                 handleReconnectStateChange(lens, previousStatus.state, state)
                 updateRssiAverage(lens, state.rssi)
+            }
+        }
+        jobs += scope.launch {
+            client.notifyReady.collect { armed ->
+                updateLens(lens) { current ->
+                    if (current.notificationsArmed == armed) current else current.copy(notificationsArmed = armed)
+                }
             }
         }
         jobs += scope.launch {

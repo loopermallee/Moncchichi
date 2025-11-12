@@ -420,6 +420,9 @@ class G1BleClient(
         scope,
     )
     private val ackSignals = Channel<AckOutcome>(capacity = Channel.CONFLATED)
+    private val lastWriteRealtime = AtomicLong(0L)
+    private val lastAckTimeoutReported = AtomicLong(0L)
+    @Volatile private var pendingAsciiAck: Boolean = false
     private val refreshOnConnect = AtomicBoolean(false)
     private val bondMutex = Mutex()
     data class BondEvent(val state: Int, val reason: Int, val timestampMs: Long)
@@ -586,6 +589,7 @@ class G1BleClient(
         mtuJob = scope.launch {
             var previousMtu: Int? = null
             var previousArmed = false
+            var pendingMtu: Int? = null
             combine(
                 uartClient.connectionState,
                 uartClient.mtu,
@@ -596,6 +600,7 @@ class G1BleClient(
                         lastAckedMtu = null
                         previousMtu = null
                         previousArmed = false
+                        pendingMtu = null
                         if (_notifyReady.value) {
                             _notifyReady.value = false
                             logger.i(label, "${tt()} [BLE] Notifications disarmed (link down)")
@@ -619,8 +624,23 @@ class G1BleClient(
 
                     val alreadyAcked = lastAckedMtu == mtu
                     if (!alreadyAcked && (mtuChanged || armedBecameTrue)) {
-                        sendMtuCommandIfNeeded(mtu)
-                    } else if (alreadyAcked) {
+                        pendingMtu = mtu
+                    }
+
+                    if (!armed) {
+                        return@collect
+                    }
+
+                    if (!alreadyAcked) {
+                        val targetMtu = pendingMtu ?: mtu
+                        if (targetMtu != null) {
+                            sendMtuCommandIfNeeded(targetMtu)
+                            if (lastAckedMtu == targetMtu) {
+                                pendingMtu = null
+                            }
+                        }
+                    } else {
+                        pendingMtu = null
                         _state.value = _state.value.copy(attMtu = mtu)
                     }
                 }
@@ -679,44 +699,59 @@ class G1BleClient(
 
         scope.launch {
             uartClient.observeNotifications { payload ->
-                payload.parseAckOutcome()?.let { ack ->
-                    if (ack is AckOutcome.Continue || ack is AckOutcome.Complete) {
-                        return@let
-                    }
+                val copy = payload.copyOf()
+                var ack = copy.parseAckOutcome()
+                if (ack == null && pendingAsciiAck) {
+                    ack = copy.toAckFromAsciiOrNull()
+                }
+                if (ack != null && ack !is AckOutcome.Continue && ack !is AckOutcome.Complete) {
+                    pendingAsciiAck = false
                     val readyBefore = _state.value.isReady()
                     val now = System.currentTimeMillis()
                     var deliverAck = true
                     var keepAlivePrompt: KeepAlivePrompt? = null
                     val warmupAck = ack is AckOutcome.Success && ack.satisfiesWarmupAck()
-                    if (ack is AckOutcome.Success) {
-                        onAckEvent(now, AckState.OK, evaluateDelay = true)
-                        if (warmupExpected && ack.satisfiesWarmupAck()) {
-                            warmupExpected = false
-                            val negotiatedMtu = runCatching { uartClient.mtu.value }.getOrNull()
-                            if (lastAckedMtu == null && negotiatedMtu != null) {
-                                lastAckedMtu = negotiatedMtu
+                    when (ack) {
+                        is AckOutcome.Success -> {
+                            onAckEvent(now, AckState.OK, evaluateDelay = true)
+                            if (warmupExpected && ack.satisfiesWarmupAck()) {
+                                warmupExpected = false
+                                val negotiatedMtu = runCatching { uartClient.mtu.value }.getOrNull()
+                                if (lastAckedMtu == null && negotiatedMtu != null) {
+                                    lastAckedMtu = negotiatedMtu
+                                }
+                                val current = _state.value
+                                val attMtuCandidate = lastAckedMtu ?: negotiatedMtu ?: current.attMtu
+                                _state.value = current.copy(
+                                    attMtu = attMtuCandidate,
+                                    warmupOk = true,
+                                )
                             }
-                            val current = _state.value
-                            val attMtuCandidate = lastAckedMtu ?: negotiatedMtu ?: current.attMtu
-                            _state.value = current.copy(
-                                attMtu = attMtuCandidate,
-                                warmupOk = true,
-                            )
+                            if (warmupAck) {
+                                val source = when {
+                                    ack.opcode == G1Protocols.CMD_HELLO -> "ack"
+                                    ack.opcode == null && ack.warmupPrompt -> "text"
+                                    else -> "signal"
+                                }
+                                logger.i(label, "${tt()} [BLE][HELLO] Warm-up acknowledged via $source")
+                            }
+                            when {
+                                ack.keepAlivePrompt -> {
+                                    keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Token)
+                                    deliverAck = false
+                                }
+                                ack.opcode == KEEP_ALIVE_OPCODE -> {
+                                    val previous = decrementKeepAliveInFlight()
+                                    if (previous <= 0) {
+                                        keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
+                                        deliverAck = false
+                                    }
+                                }
+                            }
                         }
-                        if (warmupAck) {
-                            val source = when {
-                                ack.opcode == G1Protocols.CMD_HELLO -> "opcode"
-                                ack.opcode == null && ack.warmupPrompt -> "text"
-                                else -> "signal"
-                            }
-                            logger.i(label, "${tt()} [BLE][HELLO] Warm-up acknowledged via $source")
-                        }
-                        when {
-                            ack.keepAlivePrompt -> {
-                                keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Token)
-                                deliverAck = false
-                            }
-                            ack.opcode == KEEP_ALIVE_OPCODE -> {
+                        is AckOutcome.Busy -> {
+                            onAckEvent(now, AckState.Delayed, evaluateDelay = false)
+                            if (ack.opcode == KEEP_ALIVE_OPCODE) {
                                 val previous = decrementKeepAliveInFlight()
                                 if (previous <= 0) {
                                     keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
@@ -724,24 +759,17 @@ class G1BleClient(
                                 }
                             }
                         }
-                    } else if (ack is AckOutcome.Busy && ack.opcode == KEEP_ALIVE_OPCODE) {
-                        onAckEvent(now, AckState.Delayed, evaluateDelay = false)
-                        val previous = decrementKeepAliveInFlight()
-                        if (previous <= 0) {
-                            keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
-                            deliverAck = false
+                        is AckOutcome.Failure -> {
+                            onAckEvent(now, AckState.Delayed, evaluateDelay = false)
+                            if (ack.opcode == KEEP_ALIVE_OPCODE) {
+                                val previous = decrementKeepAliveInFlight()
+                                if (previous <= 0) {
+                                    keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
+                                    deliverAck = false
+                                }
+                            }
                         }
-                    } else if (ack is AckOutcome.Busy) {
-                        onAckEvent(now, AckState.Delayed, evaluateDelay = false)
-                    } else if (ack is AckOutcome.Failure && ack.opcode == KEEP_ALIVE_OPCODE) {
-                        onAckEvent(now, AckState.Delayed, evaluateDelay = false)
-                        val previous = decrementKeepAliveInFlight()
-                        if (previous <= 0) {
-                            keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
-                            deliverAck = false
-                        }
-                    } else if (ack is AckOutcome.Failure) {
-                        onAckEvent(now, AckState.Delayed, evaluateDelay = false)
+                        else -> Unit
                     }
                     val event = AckEvent(
                         timestampMs = now,
@@ -766,7 +794,6 @@ class G1BleClient(
                         )
                     }
                 }
-                val copy = payload.copyOf()
                 copy.toAsciiSystemFrameOrNull()?.let { frame -> _asciiSystemFrames.tryEmit(frame) }
                 copy.toAudioFrameOrNull()?.let { frame -> _audioFrames.tryEmit(frame) }
                 _incoming.tryEmit(copy)
@@ -825,6 +852,8 @@ class G1BleClient(
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
         keepAliveInFlight.set(0)
+        lastWriteRealtime.set(0L)
+        lastAckTimeoutReported.set(0L)
         _notifyReady.value = false
         cancelPairingDialogWatchdog()
         dismissPairingNotification()
@@ -950,7 +979,8 @@ class G1BleClient(
     }
 
     suspend fun enqueueHeartbeat(sequence: Int, payload: ByteArray): Boolean {
-        if (!_notifyReady.value) {
+        val ready = if (_notifyReady.value) true else awaitNotifyReady()
+        if (!ready) {
             logger.w(
                 label,
                 "${tt()} [BLE][PING] dropped seq=${sequence.toByteHex()} (notifications not armed)",
@@ -971,6 +1001,49 @@ class G1BleClient(
         return queued
     }
 
+    suspend fun rearmNotifications(): Boolean {
+        val armed = runCatching { uartClient.armNotificationsWithRetry() }.getOrElse { false }
+        val labelText = if (armed) "armed" else "failed"
+        logger.i(label, "${tt()} [BLE] Manual notify re-arm $labelText")
+        if (!armed) {
+            scheduleGattReconnect("manual notify re-arm")
+        }
+        return armed
+    }
+
+    suspend fun forceHelloHandshake(): Boolean {
+        val ready = if (_notifyReady.value) true else awaitNotifyReady()
+        if (!ready) {
+            logger.w(
+                label,
+                "${tt()} [PAIRING] HELLO quick action skipped (notifications not armed)",
+            )
+            return false
+        }
+        val negotiatedMtu = runCatching { uartClient.mtu.value }.getOrNull()
+        val fallbackMtu = _state.value.attMtu ?: G1Protocols.DEFAULT_MTU
+        val targetMtu = negotiatedMtu ?: fallbackMtu
+        val warmupBefore = _state.value.warmupOk
+        mtuCommandMutex.withLock {
+            lastAckedMtu = null
+        }
+        requestWarmupOnNextNotify()
+        sendMtuCommandIfNeeded(targetMtu)
+        if (warmupBefore && _state.value.warmupOk) {
+            logger.i(label, "${tt()} [PAIRING] HELLO quick action acknowledged (already warm)")
+            return true
+        }
+        val event = awaitHelloAckEvent(G1Protocols.HELLO_TIMEOUT_MS)
+        val success = event != null || _state.value.warmupOk
+        if (success) {
+            val source = event?.let { describeHelloAck(it) } ?: "state"
+            logger.i(label, "${tt()} [PAIRING] HELLO quick action completed via $source")
+        } else {
+            logger.w(label, "${tt()} [PAIRING] HELLO quick action timed out (mtu=$targetMtu)")
+        }
+        return success
+    }
+
     private suspend fun sendCommandLocked(
         payload: ByteArray,
         ackTimeoutMs: Long,
@@ -980,6 +1053,8 @@ class G1BleClient(
         onAttemptResult: ((CommandAttemptTelemetry) -> Unit)? = null,
     ): Boolean {
         val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
+        val subOpcode = payload.getOrNull(1)?.toInt()?.and(0xFF)
+        val asciiAckRequired = expectAck && requiresAsciiAckNormalization(opcode, subOpcode)
         if (!_notifyReady.value) {
             val ready = awaitNotifyReady()
             if (!ready) {
@@ -1016,6 +1091,7 @@ class G1BleClient(
                 return@repeat
             }
             if (!expectAck) {
+                pendingAsciiAck = false
                 onAttemptResult?.invoke(
                     CommandAttemptTelemetry(
                         attemptIndex = attempt + 1,
@@ -1027,6 +1103,9 @@ class G1BleClient(
                 )
                 return true
             }
+            pendingAsciiAck = asciiAckRequired
+            lastWriteRealtime.set(SystemClock.elapsedRealtime())
+            lastAckTimeoutReported.set(0L)
             val ackResult = withTimeoutOrNull(ackTimeoutMs) {
                 while (true) {
                     val ack = ackSignals.receive()
@@ -1147,6 +1226,7 @@ class G1BleClient(
                         label,
                         "${tt()} ACK timeout opcode=${opcode.toLabel()} (attempt ${attempt + 1})",
                     )
+                    pendingAsciiAck = false
                     handleAckTimeout(ackTimeoutMs)
                     onAttemptResult?.invoke(
                         CommandAttemptTelemetry(
@@ -1163,6 +1243,7 @@ class G1BleClient(
                 delay(retryDelayMs)
             }
         }
+        pendingAsciiAck = false
         return false
     }
 
@@ -1170,14 +1251,23 @@ class G1BleClient(
         if (_notifyReady.value) {
             return true
         }
-        val armed = withTimeoutOrNull(NOTIFY_READY_TIMEOUT_MS) {
-            notifyReady.filter { it }.first()
-        } ?: false
+        val armResult = runCatching { uartClient.armNotificationsWithRetry() }.getOrElse { false }
+        val result = withTimeoutOrNull(NOTIFY_READY_TIMEOUT_MS) {
+            combine(notifyReady, state) { ready, snapshot -> ready to snapshot.status }
+                .filter { (ready, status) -> ready || status == ConnectionState.DISCONNECTED }
+                .first()
+        }
+        val armed = result?.first ?: false
         if (!armed) {
+            val status = result?.second ?: state.value.status
             logger.w(
                 label,
-                "${tt()} Notifications not armed after ${NOTIFY_READY_TIMEOUT_MS}ms",
+                "${tt()} Notifications not armed after ${NOTIFY_READY_TIMEOUT_MS}ms " +
+                    "(status=$status retryResult=$armResult)",
             )
+            if (_state.value.bonded) {
+                scheduleGattReconnect("notify gate timeout")
+            }
         }
         return armed
     }
@@ -1195,6 +1285,7 @@ class G1BleClient(
         val previous = lastAckRealtime.getAndSet(realtimeNow)
         val delay = if (previous == 0L) null else realtimeNow - previous
         lastAckTimestamp.set(wallClockNow)
+        lastAckTimeoutReported.set(0L)
         ackTimeoutStreak.set(0)
         val derivedState = if (evaluateDelay && delay != null && delay > ACK_DELAY_THRESHOLD_MS) {
             AckState.Delayed
@@ -1214,8 +1305,13 @@ class G1BleClient(
         if (ackTimeoutMs <= ACK_DELAY_THRESHOLD_MS) return
         val streak = ackTimeoutStreak.incrementAndGet()
         val lastRealtime = lastAckRealtime.get().takeIf { it != 0L }
+        val targetState = if (ackTimeoutMs >= G1Protocols.ACK_TIMEOUT_MS) {
+            AckState.Missing
+        } else {
+            AckState.Delayed
+        }
         updateAckStateInternal(
-            ackState = AckState.Delayed,
+            ackState = targetState,
             lastAckRealtimeMs = lastRealtime,
             ackDelayMs = _state.value.ackDelayMs,
             timeoutStreak = streak,
@@ -1241,6 +1337,19 @@ class G1BleClient(
                     elapsed != null && elapsed > ACK_MISSING_THRESHOLD_MS -> AckState.Missing
                     elapsed != null && elapsed > ACK_DELAY_THRESHOLD_MS -> AckState.Delayed
                     else -> AckState.OK
+                }
+                val writeRealtime = lastWriteRealtime.get()
+                if (writeRealtime != 0L) {
+                    val ackSatisfied = lastRealtime != 0L && lastRealtime >= writeRealtime
+                    val sinceWrite = nowRealtime - writeRealtime
+                    if (!ackSatisfied && sinceWrite > G1Protocols.ACK_TIMEOUT_MS) {
+                        val previousReported = lastAckTimeoutReported.get()
+                        if (previousReported != writeRealtime &&
+                            lastAckTimeoutReported.compareAndSet(previousReported, writeRealtime)
+                        ) {
+                            handleAckTimeout(G1Protocols.ACK_TIMEOUT_MS)
+                        }
+                    }
                 }
                 updateAckStateInternal(
                     ackState = state,
@@ -1427,6 +1536,7 @@ class G1BleClient(
                     )
                 } else {
                     logger.w(label, "${tt()} MTU command failed mtu=$mtu")
+                    scheduleGattReconnect("HELLO timeout")
                 }
             }
         }
@@ -1439,6 +1549,7 @@ class G1BleClient(
                     label,
                     "${tt()} Warm-up prompt missing after ${MTU_COMMAND_WARMUP_GRACE_MS}ms mtu=$mtu",
                 )
+                scheduleGattReconnect("HELLO timeout")
             }
         }
     }
@@ -1448,7 +1559,7 @@ class G1BleClient(
         val mtuHigh = ((mtu ushr 8) and 0xFF).toByte()
         val payload = byteArrayOf(G1Protocols.CMD_HELLO.toByte(), mtuLow, mtuHigh)
         val ackTimeout = if (warmupInProgress) {
-            MTU_COMMAND_WARMUP_GRACE_MS
+            G1Protocols.HELLO_TIMEOUT_MS
         } else {
             MTU_COMMAND_ACK_TIMEOUT_MS
         }
@@ -1723,6 +1834,12 @@ class G1BleClient(
         val sequence = this.getOrNull(1)?.toUByte()?.toInt() ?: 0
         val payload = if (size > 2) copyOfRange(2, size) else ByteArray(0)
         return AudioFrame(sequence, payload)
+    }
+
+    private fun requiresAsciiAckNormalization(opcode: Int?, subOpcode: Int?): Boolean {
+        val normalizedOpcode = opcode?.and(0xFF) ?: return false
+        val normalizedSub = subOpcode?.and(0xFF) ?: return false
+        return normalizedOpcode == G1Protocols.CMD_SYS_INFO && normalizedSub == G1Protocols.SYS_SUB_INFO
     }
 
     private fun Int?.toLabel(): String = this?.let { "${G1Protocols.opcodeName(it)}(${String.format("0x%02X", it)})" } ?: "unknown"
