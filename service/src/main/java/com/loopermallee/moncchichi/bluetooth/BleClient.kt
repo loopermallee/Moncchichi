@@ -18,6 +18,7 @@ interface BleClient {
     suspend fun ensureBonded()
     suspend fun connectAndSetup(targetMtu: Int = 251)
     suspend fun probeReady(side: LensSide): Boolean
+    suspend fun sendCommand(payload: ByteArray): Boolean
     suspend fun sendImage(imageBytes: ByteArray): Boolean
     fun startKeepAlive()
     fun close()
@@ -29,6 +30,8 @@ sealed interface ClientEvent {
     data class ServicesReady(val mtu: Int) : ClientEvent
     data class ReadyProbeResult(val side: LensSide, val ready: Boolean) : ClientEvent
     data class Telemetry(val batteryPct: Int?, val firmware: String?, val rssi: Int?) : ClientEvent
+    data class AsciiSystemFrame(val text: String) : ClientEvent
+    data class Gesture(val code: Int, val label: String) : ClientEvent
     object KeepAliveStarted : ClientEvent
     data class Error(val message: String, val cause: Throwable? = null) : ClientEvent
 }
@@ -78,6 +81,10 @@ class BleClientStub(private val initial: LensState) : BleClient {
                 rssi = readyState.lastSeenRssi,
             ),
         )
+        return true
+    }
+
+    override suspend fun sendCommand(payload: ByteArray): Boolean {
         return true
     }
 

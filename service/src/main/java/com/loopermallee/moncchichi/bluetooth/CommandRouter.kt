@@ -36,7 +36,12 @@ class CommandRouter {
                 RoutingDecision(Family.RIGHT_ONLY, mirror = mirror)
             }
             CMD_CASE_GET, CMD_BATT_GET, CMD_WEAR_DETECT -> {
-                val mirror = opcode == CMD_BATT_GET && subOpcode?.and(0xFF) == BATT_SUB_DETAIL
+                val normalizedSub = subOpcode?.and(0xFF)
+                val mirror = when (opcode) {
+                    CMD_CASE_GET, CMD_WEAR_DETECT -> true
+                    CMD_BATT_GET -> normalizedSub == BATT_SUB_DETAIL
+                    else -> false
+                }
                 RoutingDecision(Family.BOTH, mirror = mirror)
             }
             OPC_EVENT, EVT_GESTURE -> RoutingDecision(Family.EVENTS, mirror = false)
