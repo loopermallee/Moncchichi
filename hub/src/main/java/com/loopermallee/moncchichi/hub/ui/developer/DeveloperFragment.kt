@@ -76,6 +76,7 @@ class DeveloperFragment : Fragment() {
             requireContext().applicationContext,
             hubViewModel,
             AppLocator.telemetry,
+            AppLocator.ble,
             AppLocator.mic,
             AppLocator.prefs,
         )
@@ -116,6 +117,11 @@ class DeveloperFragment : Fragment() {
         val chipCase = view.findViewById<Chip>(R.id.chip_filter_case)
         val chipGesture = view.findViewById<Chip>(R.id.chip_filter_gesture)
         val chipAck = view.findViewById<Chip>(R.id.chip_filter_ack)
+        val chipStatusRight = view.findViewById<Chip>(R.id.chip_status_right)
+        val chipStatusLeft = view.findViewById<Chip>(R.id.chip_status_left)
+        val actionRearm = view.findViewById<MaterialButton>(R.id.button_action_rearm)
+        val actionHello = view.findViewById<MaterialButton>(R.id.button_action_hello)
+        val actionLeftRefresh = view.findViewById<MaterialButton>(R.id.button_action_left_refresh)
         val uptimeView = view.findViewById<TextView>(R.id.text_overview_uptime)
         val lensLastView = view.findViewById<TextView>(R.id.text_overview_last_lens)
         val sequenceView = view.findViewById<TextView>(R.id.text_overview_sequence)
@@ -173,6 +179,10 @@ class DeveloperFragment : Fragment() {
         val audioGapsView = view.findViewById<TextView>(R.id.text_audio_gaps)
         val audioSeqView = view.findViewById<TextView>(R.id.text_audio_last_seq)
         val dashboardStatusView = view.findViewById<TextView>(R.id.text_dashboard_status)
+
+        actionRearm.setOnClickListener { viewModel.rearmNotifications() }
+        actionHello.setOnClickListener { viewModel.sendHello() }
+        actionLeftRefresh.setOnClickListener { viewModel.requestLeftRefresh() }
 
         val caseController = CaseCardController(
             card = view.findViewById(R.id.card_case),
@@ -368,6 +378,19 @@ class DeveloperFragment : Fragment() {
                     }
 
                     renderConsole(entries, autoScrollEnabled)
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.linkPriming.collectLatest { priming ->
+                    val rightStatus = priming[MoncchichiBleService.Lens.RIGHT]
+                        ?: DeveloperViewModel.LinkPrimingStatus()
+                    val leftStatus = priming[MoncchichiBleService.Lens.LEFT]
+                        ?: DeveloperViewModel.LinkPrimingStatus()
+                    chipStatusRight.text = rightStatus.formatLabel(MoncchichiBleService.Lens.RIGHT)
+                    chipStatusLeft.text = leftStatus.formatLabel(MoncchichiBleService.Lens.LEFT)
                 }
             }
         }

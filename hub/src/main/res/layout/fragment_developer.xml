@@ -31,6 +31,65 @@
             android:text="@string/developer_mode_diagnostics" />
     </com.google.android.material.button.MaterialButtonToggleGroup>
 
+    <com.google.android.material.chip.ChipGroup
+        android:id="@+id/group_link_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
+        app:singleLine="false"
+        app:chipSpacingHorizontal="8dp"
+        app:chipSpacingVertical="4dp">
+
+        <com.google.android.material.chip.Chip
+            android:id="@+id/chip_status_right"
+            style="@style/Widget.Material3.Chip.Assist.Elevated"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Right: notify idle / warm-up pending / mtu=–" />
+
+        <com.google.android.material.chip.Chip
+            android:id="@+id/chip_status_left"
+            style="@style/Widget.Material3.Chip.Assist.Elevated"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Left: notify idle / warm-up pending / mtu=–" />
+    </com.google.android.material.chip.ChipGroup>
+
+    <LinearLayout
+        android:id="@+id/layout_quick_actions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/button_action_rearm"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Re-arm notify" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/button_action_hello"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="HELLO" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/button_action_left_refresh"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Left refresh" />
+    </LinearLayout>
+
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"

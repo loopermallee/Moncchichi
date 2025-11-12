@@ -21,8 +21,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -48,6 +51,8 @@ class G1BleUartClient(
         private val ENABLE_NOTIFY_IND = byteArrayOf(0x03, 0x00)
         private const val DEFAULT_ATT_MTU = 23
         private const val DESIRED_ATT_MTU = 498
+        private const val NOTIFY_ARM_TIMEOUT_MS = 1_000L
+        private const val EVEN_STEP_DELAY_MS = 200L
     }
 
     enum class ConnectionState {
@@ -119,6 +124,10 @@ class G1BleUartClient(
         _connectionState.value = ConnectionState.DISCONNECTED
         _rssi.value = null
         _mtu.value = DEFAULT_ATT_MTU
+        if (_notificationsArmed.value) {
+            _notificationsArmed.value = false
+            logger("[BLE][CCCD] Notifications disarmed (client closed)")
+        }
     }
 
     private fun maybeSendWarmupAfterNotifyArmed() {
@@ -211,8 +220,6 @@ class G1BleUartClient(
                 logger("[SERVICE] Service discovery failed with status=$status")
                 return
             }
-            val requested = g.requestMtu(DESIRED_ATT_MTU)
-            logger("[BLE][MTU] requestMtu($DESIRED_ATT_MTU) queued=$requested")
             val svc = g.getService(NUS_SERVICE)
             if (svc == null) {
                 logger("[ERROR] NUS service not found")
@@ -224,17 +231,9 @@ class G1BleUartClient(
                 logger("[ERROR] Missing RX/TX chars")
                 return
             }
-            logger("[SERVICE] Found NUS RX/TX; arming TX notifications…")
-            armNotificationsWithRetry(g, txChar!!)
-
             val smpService = g.getService(SMP_SERVICE)
             smpChar = smpService?.getCharacteristic(SMP_CHAR)
-            if (smpChar != null) {
-                logger("[SMP] Service discovered; enabling notifications")
-                enableSmpNotifications(g, smpChar!!)
-            } else {
-                logger("[SMP] Service not present on peripheral")
-            }
+            scope.launch { performEvenBringUp(g) }
         }
 
         // Android 13+ variant
@@ -269,7 +268,11 @@ class G1BleUartClient(
                 logger("[SERVICE][CCCD] Write status=$status value=${descriptorValue?.toHex()}")
                 val armed = status == BluetoothGatt.GATT_SUCCESS
                 notifyArmed.set(armed)
-                _notificationsArmed.value = armed
+                if (_notificationsArmed.value != armed) {
+                    _notificationsArmed.value = armed
+                    val stateLabel = if (armed) "armed" else "disarmed"
+                    logger("[SERVICE][CCCD] Notifications $stateLabel (status=$status)")
+                }
                 if (armed) {
                     maybeSendWarmupAfterNotifyArmed()
                 }
@@ -294,39 +297,93 @@ class G1BleUartClient(
         }
     }
 
-    private fun armNotificationsWithRetry(g: BluetoothGatt, tx: BluetoothGattCharacteristic) {
-        scope.launch {
-            val attempts = listOf(ENABLE_NOTIFY, ENABLE_NOTIFY_IND)
-            var ok = false
-            for (mode in attempts) {
-                ok = enableNotifyOnce(g, tx, mode)
-                if (ok) break
-                delay(200)
-            }
-            if (!ok) repeat(3) {
-                if (enableNotifyOnce(g, tx, ENABLE_NOTIFY)) return@launch
-                delay(300)
-            }
-            logger(if (notifyArmed.get()) "[SERVICE] TX notifications armed ✔" else "[ERROR] Failed to arm TX notifications ❌")
+    suspend fun armNotificationsWithRetry(retries: Int = 3, delayMs: Long = 300): Boolean {
+        val gattRef = gatt ?: return false.also {
+            logger("[SERVICE][CCCD] armNotifications skipped – no active GATT")
         }
+        val tx = txChar ?: return false.also {
+            logger("[SERVICE][CCCD] armNotifications skipped – RX characteristic missing")
+        }
+        if (_notificationsArmed.value) {
+            logger("[SERVICE][CCCD] Notifications already armed")
+            return true
+        }
+        var attempt = 0
+        while (attempt <= retries) {
+            val modes = if (attempt == 0) {
+                listOf(ENABLE_NOTIFY, ENABLE_NOTIFY_IND)
+            } else {
+                listOf(ENABLE_NOTIFY)
+            }
+            for (mode in modes) {
+                if (tryArmNotifications(gattRef, tx, mode)) {
+                    logger("[SERVICE][CCCD] Notifications armed via mode=${mode.toHex()}")
+                    return true
+                }
+            }
+            attempt += 1
+            if (attempt <= retries) {
+                delay(delayMs)
+            }
+        }
+        val armed = _notificationsArmed.value
+        if (!armed) {
+            logger("[ERROR] Failed to arm TX notifications after ${retries + 1} attempts")
+        }
+        return armed
     }
 
-    private fun enableNotifyOnce(g: BluetoothGatt, tx: BluetoothGattCharacteristic, mode: ByteArray): Boolean {
+    private suspend fun tryArmNotifications(
+        g: BluetoothGatt,
+        tx: BluetoothGattCharacteristic,
+        mode: ByteArray,
+    ): Boolean {
         val setOk = g.setCharacteristicNotification(tx, true)
         logger("[SERVICE][CCCD] setCharacteristicNotification=$setOk")
-        val cccd = tx.getDescriptor(CCCD) ?: return false.also { logger("[ERROR] CCCD not found") }
+        if (!setOk) {
+            return false
+        }
+        val cccd = tx.getDescriptor(CCCD) ?: run {
+            logger("[ERROR] CCCD not found")
+            return false
+        }
         @Suppress("DEPRECATION")
         cccd.value = mode
         @Suppress("DEPRECATION")
-        val writeOk = g.writeDescriptor(cccd)
+        val queued = g.writeDescriptor(cccd)
         @Suppress("DEPRECATION")
         val loggedValue = cccd.value
-        logger("[SERVICE][CCCD] writeDescriptor queued=$writeOk value=${loggedValue?.toHex() ?: mode.toHex()}")
-        repeat(10) {
-            if (notifyArmed.get()) return true
-            Thread.sleep(50)
+        logger("[SERVICE][CCCD] writeDescriptor queued=$queued value=${loggedValue?.toHex() ?: mode.toHex()}")
+        if (!queued) {
+            return false
         }
-        return notifyArmed.get()
+        val armed = withTimeoutOrNull(NOTIFY_ARM_TIMEOUT_MS) {
+            notificationsArmed.filter { armed -> armed }.first()
+        } ?: false
+        if (!armed) {
+            logger("[SERVICE][CCCD] Arm attempt timed out after ${NOTIFY_ARM_TIMEOUT_MS}ms")
+        }
+        return armed
+    }
+
+    private suspend fun performEvenBringUp(gatt: BluetoothGatt) {
+        delay(EVEN_STEP_DELAY_MS)
+        val requested = withContext(Dispatchers.Main) { gatt.requestMtu(DESIRED_ATT_MTU) }
+        logger("[BLE][MTU] requestMtu($DESIRED_ATT_MTU) queued=$requested")
+        delay(EVEN_STEP_DELAY_MS)
+        logger("[SERVICE] Found NUS RX/TX; arming TX notifications…")
+        val armed = armNotificationsWithRetry()
+        if (!armed) {
+            return
+        }
+        delay(EVEN_STEP_DELAY_MS)
+        val smp = smpChar
+        if (smp != null) {
+            logger("[SMP] Service discovered; enabling notifications")
+            enableSmpNotifications(gatt, smp)
+        } else {
+            logger("[SMP] Service not present on peripheral")
+        }
     }
 
     private fun enableSmpNotifications(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {

@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.tools.ScanResult
 
@@ -45,6 +46,18 @@ class BleToolImpl(@Suppress("UNUSED_PARAMETER") context: Context) : BleTool {
         } else {
             "NOT_CONNECTED"
         }
+    }
+
+    override suspend fun rearmNotifications(): Boolean {
+        return connectedId != null
+    }
+
+    override suspend fun triggerHello(lens: Lens): Boolean {
+        return connectedId != null
+    }
+
+    override suspend fun requestLeftRefresh(): Boolean {
+        return connectedId != null
     }
 
     override suspend fun battery(): Int? {

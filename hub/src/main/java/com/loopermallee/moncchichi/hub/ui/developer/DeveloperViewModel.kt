@@ -19,8 +19,10 @@ import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.data.telemetry.LensGestureEvent
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.DeviceTelemetrySnapshot
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.LinkPrimingSnapshot
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperViewModel.DeveloperEvent
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
+import com.loopermallee.moncchichi.hub.tools.BleTool
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import java.io.File
@@ -55,6 +57,7 @@ class DeveloperViewModel(
     private val appContext: Context,
     private val hubViewModel: HubViewModel,
     private val telemetry: BleTelemetryRepository,
+    private val bleTool: BleTool,
     private val micManager: MicStreamManager,
     private val prefs: SharedPreferences,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -176,6 +179,28 @@ class DeveloperViewModel(
     private val _events = MutableSharedFlow<DeveloperEvent>(extraBufferCapacity = 1)
     val events: SharedFlow<DeveloperEvent> = _events.asSharedFlow()
 
+    data class LinkPrimingStatus(
+        val notifyArmed: Boolean = false,
+        val warmupOk: Boolean = false,
+        val mtu: Int? = null,
+    ) {
+        fun formatLabel(lens: MoncchichiBleService.Lens): String {
+            val name = when (lens) {
+                MoncchichiBleService.Lens.LEFT -> "Left"
+                MoncchichiBleService.Lens.RIGHT -> "Right"
+            }
+            val notifyLabel = if (notifyArmed) "notify armed" else "notify idle"
+            val warmupLabel = if (warmupOk) "warm-up OK" else "warm-up pending"
+            val mtuLabel = mtu?.let { "mtu=$it" } ?: "mtu=–"
+            return "$name: $notifyLabel / $warmupLabel / $mtuLabel"
+        }
+    }
+
+    private val _linkPriming = MutableStateFlow(
+        telemetry.linkPriming.value.mapValues { (_, snapshot) -> snapshot.toStatus() },
+    )
+    val linkPriming: StateFlow<Map<MoncchichiBleService.Lens, LinkPrimingStatus>> = _linkPriming.asStateFlow()
+
     private val snapshotTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
     private val exportTimestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
 
@@ -246,6 +271,11 @@ class DeveloperViewModel(
         viewModelScope.launch {
             telemetry.dashboardStatus.collect { status ->
                 _dashboardStatus.value = status
+            }
+        }
+        viewModelScope.launch {
+            telemetry.linkPriming.collect { snapshots ->
+                _linkPriming.value = snapshots.mapValues { (_, snapshot) -> snapshot.toStatus() }
             }
         }
     }
@@ -346,6 +376,48 @@ class DeveloperViewModel(
                 "Validation test started"
             } else {
                 "Validation already running"
+            }
+            _events.emit(DeveloperEvent.Notify(message))
+        }
+    }
+
+    fun rearmNotifications() {
+        viewModelScope.launch {
+            val success = bleTool.rearmNotifications()
+            val message = if (success) {
+                "Notifications re-armed"
+            } else {
+                "Failed to re-arm notifications"
+            }
+            _events.emit(DeveloperEvent.Notify(message))
+        }
+    }
+
+    fun sendHello() {
+        viewModelScope.launch {
+            val lens = selectHelloLens()
+            if (lens == null) {
+                _events.emit(DeveloperEvent.Notify("No primed lens available for HELLO"))
+                return@launch
+            }
+            val success = bleTool.triggerHello(lens)
+            val label = lens.name.lowercase(Locale.US)
+            val message = if (success) {
+                "HELLO sent to $label lens"
+            } else {
+                "HELLO failed on $label lens"
+            }
+            _events.emit(DeveloperEvent.Notify(message))
+        }
+    }
+
+    fun requestLeftRefresh() {
+        viewModelScope.launch {
+            val success = bleTool.requestLeftRefresh()
+            val message = if (success) {
+                "Left refresh queued"
+            } else {
+                "Left refresh failed"
             }
             _events.emit(DeveloperEvent.Notify(message))
         }
@@ -486,6 +558,27 @@ class DeveloperViewModel(
 
     private fun formatAckType(type: MoncchichiBleService.AckType): String {
         return type.name.lowercase(Locale.US).replace('_', ' ')
+    }
+
+    private fun LinkPrimingSnapshot.toStatus(): LinkPrimingStatus {
+        return LinkPrimingStatus(
+            notifyArmed = notifyArmed,
+            warmupOk = warmupOk,
+            mtu = attMtu,
+        )
+    }
+
+    private fun selectHelloLens(): MoncchichiBleService.Lens? {
+        val priming = _linkPriming.value
+        val right = priming[MoncchichiBleService.Lens.RIGHT]
+        val left = priming[MoncchichiBleService.Lens.LEFT]
+        return when {
+            right?.notifyArmed == true -> MoncchichiBleService.Lens.RIGHT
+            left?.notifyArmed == true -> MoncchichiBleService.Lens.LEFT
+            right?.warmupOk == true -> MoncchichiBleService.Lens.RIGHT
+            left?.warmupOk == true -> MoncchichiBleService.Lens.LEFT
+            else -> null
+        }
     }
 
     private fun StringBuilder.appendLensBlock(label: String, lens: BleTelemetryRepository.LensTelemetry) {
@@ -722,13 +815,14 @@ class DeveloperViewModel(
         private val appContext: Context,
         private val hubViewModel: HubViewModel,
         private val telemetry: BleTelemetryRepository,
+        private val bleTool: BleTool,
         private val micManager: MicStreamManager,
         private val prefs: SharedPreferences,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(DeveloperViewModel::class.java))
-            return DeveloperViewModel(appContext, hubViewModel, telemetry, micManager, prefs) as T
+            return DeveloperViewModel(appContext, hubViewModel, telemetry, bleTool, micManager, prefs) as T
         }
     }
 }

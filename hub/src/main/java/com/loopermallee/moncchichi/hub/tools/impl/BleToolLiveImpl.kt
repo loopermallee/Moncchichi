@@ -242,6 +242,18 @@ class BleToolLiveImpl(
         return "OK"
     }
 
+    override suspend fun rearmNotifications(): Boolean {
+        return service.rearmNotifications()
+    }
+
+    override suspend fun triggerHello(lens: Lens): Boolean {
+        return service.triggerHello(lens)
+    }
+
+    override suspend fun requestLeftRefresh(): Boolean {
+        return service.requestLeftRefresh()
+    }
+
     override suspend fun battery(): Int? = telemetry.snapshot.value.left.batteryPercent
         ?: telemetry.snapshot.value.right.batteryPercent
 

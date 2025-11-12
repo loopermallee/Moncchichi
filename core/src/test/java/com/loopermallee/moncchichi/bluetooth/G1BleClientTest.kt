@@ -281,6 +281,46 @@ class G1BleClientTest {
     }
 
     @Test
+    fun enqueueHeartbeatWaitsForNotifications() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+            every { harness.uartClient.write(any<ByteArray>()) } returns true
+
+            harness.client.connect()
+            runCurrent()
+
+            val heartbeat = async {
+                harness.client.enqueueHeartbeat(
+                    sequence = 0x10,
+                    payload = byteArrayOf(G1Protocols.CMD_KEEPALIVE.toByte(), 0x10),
+                )
+            }
+
+            runCurrent()
+            assertFalse(heartbeat.isCompleted)
+            verify(exactly = 0) { harness.uartClient.write(any<ByteArray>()) }
+
+            harness.connectionStateFlow.value = G1BleUartClient.ConnectionState.CONNECTED
+            harness.mtuFlow.value = 498
+            runCurrent()
+
+            harness.notificationsArmedFlow.value = true
+            runCurrent()
+
+            assertTrue(heartbeat.await())
+            verify {
+                harness.uartClient.write(match { payload ->
+                    payload.firstOrNull() == G1Protocols.CMD_KEEPALIVE.toByte()
+                })
+            }
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun warmupAckWithMtuOpcodeSetsWarmupOk() = runTest {
         val harness = buildClientHarness(this)
         try {
@@ -823,6 +863,8 @@ class G1BleClientTest {
             every { connectionEvents } returns connectionEvents
             every { write(any()) } returns true
         }
+        coEvery { uartClient.armNotificationsWithRetry(any(), any()) } returns true
+        coEvery { uartClient.armNotificationsWithRetry() } returns true
         coEvery { uartClient.observeNotifications(capture(notificationCollectorSlot)) } coAnswers { }
         val client = G1BleClient(
             context = context,
