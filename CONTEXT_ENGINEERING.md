@@ -1,267 +1,353 @@
-CONTEXT_ENGINEERING.md – Phase 4.10 / BLE Stability Alignment
+Context Engineering — Pairing & Connection Parity (Even Reality)
+
+Scope
+
+Goal: make Moncchichi Hub connect and stay connected exactly like Even’s app.
+
+Out of scope: UI polish, DFU, subtitles/teleprompter, assistant features.
 
 
----
+References (project-local)
 
-Goal
+G1 Protocol (updated today) — the command set & event semantics your repo tracks.
 
-Stabilize BLE communication between the Moncchichi Hub app and Even G1 glasses so that pairing, telemetry, and gestures behave identically to the official Even Reality app (v1.6.6).
-All known issues—dropped ACKs, “→ PING ← ERR”, phantom gestures, and missing case values—stem from command overlap, premature reconnects, and outdated ACK semantics.
+Even v1.6.6 bundle analysis — confirms dual-lens UART model and “Right as control link”.
 
-
----
-
-Logic Overview
-
-Current app is reactive: each BLE notification triggers immediate response.
-Even Reality app is state-driven: commands are serialized through a queue and progress only after explicit ACK completion.
-This phase introduces a deterministic state machine per lens and a unified command queue that enforces pacing, retries, and orderly handshake.
+Your runtime notes — ASCII system replies (0x23 0x74) and 0xF5 gesture/event stream.
 
 
----
+Core Parity Principles
 
-Task 1 – Session State Machine and Command Queue
+Two UART links (Left, Right) over BLE; treat them as distinct but coordinated.
 
-Purpose:
-Prevent overlapping writes by enforcing “one in-flight command per lens”.
+Right is the control link for Right-only getters/setters (e.g., brightness 0x29, display settings 0x26); “Both” queries must be mirrored to both lenses.
 
-Logic:
+Do not rely on Left-first. Prefer Right-first when available, but remain robust if Left connects first.
 
-States = Idle → Handshake → Ready → Reconnecting.
+Prime on Right once it’s up; Left can attach before or after without breaking flow.
 
-Each lens maintains CommandQueue<FirmwareOp> with enqueue(), dequeue(), inFlight.
+Events first. Subscribe to notifications and 0xF5 event stream immediately upon connection (whichever lens arrives first), so taps/wear/case signals aren’t lost.
 
-When sending a command, mark it as in-flight until ACK completion.
-
-Only after receiving 0xC9, "OK", or 0xC0 does the next command start.
-
-
-Exit criteria
-
-No concurrent TX frames.
-
-Dev console shows at most one “in-flight” operation per lens.
-
-No → PING ← ERR during idle.
+ASCII vs ACK. Some system commands return ASCII text (e.g., 0x23 0x74 firmware line). Do not force binary ACK (C9/CA/CB) on those.
 
 
 
 ---
 
-Task 2 – ACK Assembler and Retry Behavior
+State Machine (connection-only)
 
-Purpose:
-Decode multi-frame replies and handle Busy (0xCA) correctly.
+State	Trigger	Action	Exit
 
-Logic:
+Idle	User requests connect	Start scan (filtered by G1 names/UUIDs)	Scanning
+Scanning	Lens ADV found	Rank devices (prefer Right if present)	Connecting(X)
+Connecting(R)	Start GATT to Right	On success: Discover services → Enable UART notify	RightOnline (Unprimed)
+Connecting(L)	Start GATT to Left	On success: Discover services → Enable UART notify	LeftOnline (Unprimed)
+RightOnline (Unprimed)	Right notify ready	Run Priming Sequence (Right)	ReadyRight
+LeftOnline (Unprimed)	Left notify ready	If Right not ready → Events only; else → Mirror “Both” queries	ReadyBoth or WaitingRight
+WaitingRight	Right not yet online	Hold Right-only queue; continue events on Left	RightOnline → Priming
+ReadyRight	Right primed	Send Right-only cmds freely; mirror “Both” to Left when online	ReadyBoth (once Left up)
+ReadyBoth	Both online	Normal ops; keep queues drained	…
+DegradedRightDown	Right drops	Re-queue Right-only; keep Left events; reconnect Right	RightOnline → Priming
+DegradedLeftDown	Left drops	Continue on Right; reconnect Left; mirror “Both” on return	ReadyBoth
 
-ACK	Meaning	Action
 
-0xC9 or ASCII "OK"	Success	Complete current command
-0xCA	Busy	Wait 250–300 ms (+jitter), retry up to 5 times
-0xCB	Continue	Append payload; stay in-flight
-0xC0	Complete	Emit assembled payload; mark done
+Transitions on errors: If connect/discover/notify fails → backoff (1s, 2s, 4s, 8s capped), refresh GATT, retry.
 
 
-Assembler merges 0xCB chunks until 0xC0, then delivers a single parsed object to the telemetry layer.
+---
 
-Exit criteria
+Device Selection & Connect Policy
 
-At least one Busy retry succeeds without ERR.
+Scan filter: target the G1 advertised names and known service UUID(s) you already use for UART.
 
-Multi-frame commands (0x11/0x2C) assemble correctly across 100 runs.
+Ranking: If both seen, connect Right first; if only Left appears, connect it (events OK), then attach Right as soon as it’s discovered.
 
-No duplicate ACK logs.
+Do not block on Left if Right is available; do not block on Right if only Left is visible.
 
 
 
 ---
 
-Task 3 – Handshake Sequencing and Initialization
+Notification Subscription (must happen before any priming)
 
-Purpose:
-Mirror Even Reality’s connection order to avoid ignored telemetry requests.
+Enable UART notifications (CCC descriptor 0x2902) on the RX/Notify characteristic for whichever lens is connected.
 
-Sequence:
-
-1. HELLO
-
-
-2. System Init (0x23)
-
-
-3. Get Info (0x11) or Glasses Info (0x2C)
-
-
-4. Subscribe Telemetry (0x2B–0x39)
-
-
-5. Heartbeat Start (PING)
-
-
-
-Telemetry subscription must wait for System ACK completion.
-
-Exit criteria
-
-No telemetry timeout after HELLO.
-
-Case and battery values populate within 3 s of Ready state.
-
-Handshake logs always show HELLO → OK → 23 → OK → 2C → OK.
+Begin decoding 0xF5 immediately to capture gestures, wear, case state, silent mode. Show human labels, not “unknown gesture”.
 
 
 
 ---
 
-Task 4 – Heartbeat and Rebond Policy
+Priming Sequence (Right-anchored)
 
-Purpose:
-Prevent unnecessary disconnects by allowing tolerances.
+Run only when Right’s notifications are enabled:
 
-Logic:
-
-Heartbeat interval ≈ 30 s.
-
-Consider connection lost only after 3 missed ACKs (≈ 90 s).
-
-On loss, reconnect → Handshake → Telemetry.
-
-Keep Android bond; do not unpair.
+1. Subscribe (already done) — ensure 0xF5 arriving.
 
 
-Exit criteria
+2. System/Firmware line: 0x23 0x74 → expect ASCII text; parse version/build/time/DeviceID.
 
-Stable session ≥ 5 min with no forced reconnects.
 
-After 3 reconnect cycles, bond still present in Bluetooth settings.
+3. Brightness (Right): 0x29 getter to seed UI/state.
 
-No “Bond missing ⚠️” in logs.
+
+4. Wear/Case/Silent: 0x2B getter (protocol’s consolidated status) — treat as Both semantic; read on Right first.
+
+
+5. Battery detail: 0x2C 0x01 getter — collect Right; mirror to Left later.
+
+
+6. Wear detection: 0x27 toggle/get as required by user setting (don’t force a change on connect).
 
 
 
----
+After Right priming:
 
-Task 5 – Protocol Expansion (Silent Mode + New Gestures)
+If Left is already online → mirror “Both” queries to Left.
 
-Purpose:
-Adopt latest G1 spec fields for parity with Even Reality v1.6.6.
-
-Logic:
-
-Case telemetry (0x2B / 0x2C) → parse silentMode, lidState.
-
-Gesture map (0xF5) → include codes 0x1E–0x20 (dashboard, translate), 0x06–0x0B (wear/case).
-
-System commands (0x23) → support 6C (debug), 72 (reboot), 74 (firmware info).
-
-Display settings (0x26) → brightness, depth, preview, double-tap, long-press, mic-on-lift.
-
-Wear detection (0x27) → enable/disable.
-
-
-Exit criteria
-
-No “unknown gesture” warnings.
-
-Case UI shows silent mode flag.
-
-Firmware info and display settings commands ack successfully.
+If Left isn’t online → set mirror-pending flags and fulfill once Left connects.
 
 
 
 ---
 
-Task 6 – Telemetry Persistence and Snapshot Update
+Command Routing Rules
 
-Purpose:
-Ensure battery, case, lid, uptime, RTT, ACK status persist across disconnects.
+Command	Category	Route	Notes
 
-Logic:
-
-MemoryDb v7 with leftSnapshotJson / rightSnapshotJson.
-
-On every telemetry update, persist snapshot.
-
-DeveloperViewModel observes flow and summarizes:
-Case 80 % (Open) • L 3980 mV • R 3975 mV • FW 1.6.6 • Up 112 s.
-
-Auto-log every 30 s.
+0x23 0x74	System (ASCII)	Right	Treat as text line; no binary ACK expected.
+0x29	Brightness	Right-only	Get/set on Right; Left does not own brightness in Even’s pattern.
+0x26	Display Settings	Right-only	Ensure Seq/ACK discipline; fail fast on CB.
+0x27	Wear Detect	Both (config)	Apply on Right, then Left (idempotent).
+0x2B	Wear/Case/Silent status	Both	Read Right first, mirror Left; keep a merged snapshot.
+0x2C 0x01	Battery detail	Both	Collect per lens; show combined view.
+0xF5	Events stream	Both	Decode on whichever lens is connected first; unify into one event bus.
 
 
-Exit criteria
+ACK handling:
 
-Snapshots survive reconnect and app restart.
+Binary ACKs: C9/CA = success; CB = failure.
 
-30-s telemetry log visible in console.
-
-Database migration v6→v7 safe.
+ASCII responses (system lines): don’t expect C9/CA/CB; accept printable lines.
 
 
 
 ---
 
-Task 7 – Developer Console UX Refinement
+Queues & Concurrency
 
-Purpose:
-Improve debug visibility for testing.
+Two queues + a mirror buffer:
 
-Logic:
+RightOnlyQueue — enqueue if Right not ready; drain once Right = Ready.
 
-Auto-scroll to latest log entry unless paused.
+BothQueue — enqueue on whichever lens is online; mirror to the other when it appears.
 
-Color scheme against dark background:
-
-Normal = light gray
-
-Success = green
-
-Warning = yellow
-
-Error = red
+MirrorPending flags — per command family (status, battery, wearDetect) to resend to Left when it connects, avoiding duplicates.
 
 
-Optional filter by tag (“PING”, “CASE”, “GESTURE”, “ACK”).
+In-flight limits
 
-Highlight timestamp when paused.
+One outstanding write per lens; next command waits for ACK/timeout.
+
+Timeouts: 800–1200 ms per write (tuneable); retries: 2 with backoff (e.g., +400 ms each).
 
 
-Exit criteria
+Seq discipline (where required, e.g., 0x26)
 
-Live console scrolls automatically.
-
-Colors readable in dark mode.
-
-Filters apply instantly and persist.
+Maintain per-lens sequence if protocol specifies; reject late replies by Seq.
 
 
 
 ---
 
-Validation Checklist
+Reconnect & Stability Rules
 
-✅ Stable 5-min session with no ERR PING.
+If a lens drops:
 
-✅ Case battery and silent mode visible within 3 s.
+Mark that lens Down, keep its queue intact.
 
-✅ Gestures correctly named.
+Continue operating on the other lens (events/UI remain live).
 
-✅ Multi-frame commands complete without overlap.
+Reconnect with backoff; on Right reconnection, re-run Priming Sequence; on Left reconnection, mirror the “Both” set.
 
-✅ Bond persists after three reconnects.
 
-✅ Console shows FIFO queue behavior and color coded events.
+If Android GATT flaps:
+
+Close GATT, refresh cache (use your existing helper), delay 1–2 s, reconnect.
+
+
+Never tear down the surviving lens just because its partner dropped.
 
 
 
 ---
 
-Post-Phase Goals
+Developer Console Expectations
 
-Once stability confirmed:
+Show decoded gesture names and case/wear states from 0xF5 (no “unknown gesture”).
 
-Integrate audio routing (AudioOutManager) and Voice/Audio settings UI.
+Log ASCII system lines distinctly (prefix SYS:) to avoid ACK confusion.
 
-Re-enable AI/MCP hooks after BLE stack is stable.
+Tag each line with lens and Seq (if applicable).
 
-Extend telemetry to diagnostic export for support logs.
+Emit state transitions: Scanning, RightConnected, LeftConnected, PrimingRight, ReadyRight, ReadyBoth, DegradedRightDown, etc.
+
+
+
+---
+
+Implementation Tasks (Codex-ready)
+
+1. Connection Policy
+
+Add a ranker in scanner: prefer Right if both present; otherwise connect what’s available.
+
+Update MoncchichiBleService state machine to the table above, including WaitingRight and degraded modes.
+
+
+
+2. Notify-First Enforcement
+
+In G1BleClient (per lens), ensure CCC write/notify enable happens before any command enqueue.
+
+Start 0xF5 decode immediately on notify success.
+
+
+
+3. Priming Sequence (Right)
+
+Implement an atomic sequence: sys(0x23 0x74) → get(0x29) → get(0x2B) → get(0x2C,0x01) → optional get/set(0x27).
+
+Flag completion as RightPrimed = true.
+
+
+
+4. Command Routers
+
+Add Route.RIGHT_ONLY, Route.BOTH, Route.EVENTS.
+
+Map commands per the routing table above.
+
+Enforce one in-flight per lens and per-lens timeout/retry.
+
+
+
+5. Mirror Engine
+
+For any Route.BOTH request issued while only one lens is online:
+
+Execute on the online lens.
+
+Set mirrorPending[family] = true.
+
+On partner connect → flush mirror families in a single small batch (preserving per-lens in-flight rule).
+
+
+
+
+6. ACK/ASCII Parser
+
+Binary frames: honor C9/CA/CB.
+
+System text (e.g., 0x23 0x74): route to ASCII handler; never wait for C9/CA.
+
+Guard against misclassification (first byte printable → ASCII parser path).
+
+
+
+7. Reconnect Logic
+
+On disconnect: change state → requeue pending → backoff → reconnect.
+
+On Right reconnect: re-run Priming Sequence; on Left reconnect: flush mirror families.
+
+
+
+8. Developer Console
+
+Replace “unknown gesture” with explicit labels from the updated 0xF5 map.
+
+Prefix: [R]/[L], ACK:CA, ERR:CB, SYS:<line>, EVT:<gesture>.
+
+
+
+9. Metrics (optional but useful)
+
+Connection times (to notify enabled), number of reconnects/session, command RTTs, timeout counts.
+
+
+
+
+
+---
+
+nRF Connect / On-Device Acceptance Checklist
+
+A. Right-first scenario
+
+Power both lenses; both advertise.
+
+App connects Right first, enables notify, runs Priming Sequence (watch logs).
+
+App connects Left; mirrors “Both” gets (status/battery/wear).
+
+Developer console shows decoded events for both.
+
+
+B. Left-first scenario (stress the ordering)
+
+Power Left only; connect Left; verify:
+
+Notifications and 0xF5 events decode.
+
+No Right-only commands are sent.
+
+
+Power Right; app auto-connects, primes Right, mirrors “Both”.
+
+
+C. Right drop / Left survives
+
+With both connected, manually power down Right.
+
+App stays up on Left (events continue), requeues Right-only.
+
+Power Right back; app reconnects, re-primes Right, mirrors pending “Both”.
+
+
+D. ASCII vs ACK sanity
+
+Trigger 0x23 0x74; observe ASCII line logged (SYS:), no C9/CA wait.
+
+Send a 0x26 op; observe C9/CA success or CB failure with retry budget.
+
+
+E. Case/wear/silent
+
+Open/close case, wear/unwear → 0xF5 reflects; 0x2B getter consistent on demand.
+
+
+Pass/fail: zero “unknown gesture”, no Right-only writes before Right is ready, mirrors executed on Left connect, reconnects don’t tear down the surviving lens.
+
+
+---
+
+Exit Criteria (for this patch)
+
+Connection parity: In Right-first conditions, Right is connected & primed before any Right-only command; Left attaches without disrupting flow.
+
+Order robustness: In Left-first, no Right-only commands are issued until Right is online and primed; events on Left are not missed.
+
+Stability: With one lens power-cycled 3× during a 10-minute session, app maintains the other lens and fully restores state on reconnection (priming/mirroring).
+
+Protocol correctness: 0x23 0x74 handled as ASCII; 0x26/0x29/0x27/0x2B/0x2C routed per table; 0xF5 fully labeled.
+
+Operator visibility: Developer console shows state transitions and per-lens frames clearly; no “unknown gesture”.
+
+
+
+---
+
+Notes (brief corrections)
+
+Prior docs sometimes implied “Left-first” as a rule. That’s not reliable in practice. The parity behavior anchors control on Right, but must tolerate any arrival order. This document enforces that.
