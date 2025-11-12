@@ -27,6 +27,7 @@
     <color name="er_console_accent">#FFA691F2</color>
     <color name="developer_console_background">#12131A</color>
     <color name="developer_diagnostics_background">#F4F6FA</color>
+    <color name="developer_console_text">#D4D7DE</color>
 
     <!-- Developer diagnostics lens vitals -->
     <color name="lens_header_left">#03A9F4</color>

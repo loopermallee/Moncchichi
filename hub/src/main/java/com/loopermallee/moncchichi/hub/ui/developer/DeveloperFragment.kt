@@ -108,6 +108,7 @@ class DeveloperFragment : Fragment() {
         val consoleButtonId = R.id.button_mode_console
         val diagnosticsButtonId = R.id.button_mode_diagnostics
         val consoleContainer = view.findViewById<View>(R.id.console_container)
+        val consoleSummaryView = view.findViewById<TextView>(R.id.text_console_summary)
         val consoleRecycler = view.findViewById<RecyclerView>(R.id.list_console_logs)
         val pauseButton = view.findViewById<MaterialButton>(R.id.button_console_paused)
         val diagnosticsScroll = view.findViewById<ScrollView>(R.id.diagnostics_scroll)
@@ -244,7 +245,9 @@ class DeveloperFragment : Fragment() {
                 if (shouldScroll) {
                     val target = consoleAdapter.itemCount - 1
                     if (target >= 0) {
-                        consoleRecycler.scrollToPosition(target)
+                        consoleRecycler.post {
+                            consoleRecycler.smoothScrollToPosition(target)
+                        }
                     }
                 }
             }
@@ -365,6 +368,16 @@ class DeveloperFragment : Fragment() {
                     }
 
                     renderConsole(entries, autoScrollEnabled)
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.telemetrySummary.collectLatest { summary ->
+                    consoleSummaryView.text = summary.ifBlank {
+                        getString(R.string.developer_console_summary_placeholder)
+                    }
                 }
             }
         }
