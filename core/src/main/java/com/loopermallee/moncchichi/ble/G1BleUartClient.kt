@@ -52,6 +52,7 @@ class G1BleUartClient(
         private const val DEFAULT_ATT_MTU = 23
         private const val DESIRED_ATT_MTU = 498
         private const val NOTIFY_ARM_TIMEOUT_MS = 1_000L
+        private const val EVEN_STEP_DELAY_MS = 200L
     }
 
     enum class ConnectionState {
@@ -219,8 +220,6 @@ class G1BleUartClient(
                 logger("[SERVICE] Service discovery failed with status=$status")
                 return
             }
-            val requested = g.requestMtu(DESIRED_ATT_MTU)
-            logger("[BLE][MTU] requestMtu($DESIRED_ATT_MTU) queued=$requested")
             val svc = g.getService(NUS_SERVICE)
             if (svc == null) {
                 logger("[ERROR] NUS service not found")
@@ -232,17 +231,9 @@ class G1BleUartClient(
                 logger("[ERROR] Missing RX/TX chars")
                 return
             }
-            logger("[SERVICE] Found NUS RX/TX; arming TX notifications…")
-            scope.launch { armNotificationsWithRetry() }
-
             val smpService = g.getService(SMP_SERVICE)
             smpChar = smpService?.getCharacteristic(SMP_CHAR)
-            if (smpChar != null) {
-                logger("[SMP] Service discovered; enabling notifications")
-                enableSmpNotifications(g, smpChar!!)
-            } else {
-                logger("[SMP] Service not present on peripheral")
-            }
+            scope.launch { performEvenBringUp(g) }
         }
 
         // Android 13+ variant
@@ -373,6 +364,26 @@ class G1BleUartClient(
             logger("[SERVICE][CCCD] Arm attempt timed out after ${NOTIFY_ARM_TIMEOUT_MS}ms")
         }
         return armed
+    }
+
+    private suspend fun performEvenBringUp(gatt: BluetoothGatt) {
+        delay(EVEN_STEP_DELAY_MS)
+        val requested = withContext(Dispatchers.Main) { gatt.requestMtu(DESIRED_ATT_MTU) }
+        logger("[BLE][MTU] requestMtu($DESIRED_ATT_MTU) queued=$requested")
+        delay(EVEN_STEP_DELAY_MS)
+        logger("[SERVICE] Found NUS RX/TX; arming TX notifications…")
+        val armed = armNotificationsWithRetry()
+        if (!armed) {
+            return
+        }
+        delay(EVEN_STEP_DELAY_MS)
+        val smp = smpChar
+        if (smp != null) {
+            logger("[SMP] Service discovered; enabling notifications")
+            enableSmpNotifications(gatt, smp)
+        } else {
+            logger("[SMP] Service not present on peripheral")
+        }
     }
 
     private fun enableSmpNotifications(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {

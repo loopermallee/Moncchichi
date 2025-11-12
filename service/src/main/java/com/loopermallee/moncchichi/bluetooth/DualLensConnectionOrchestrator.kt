@@ -26,6 +26,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.collections.ArrayDeque
 import kotlin.math.min
 
+private const val EVEN_SEQUENCE_DELAY_MS = 200L
+
 /**
  * Coordinates dual-lens connections while honouring Even parity requirements.
  */
@@ -152,30 +154,19 @@ class DualLensConnectionOrchestrator(
         leftRefreshRequested = false
 
         sessionActive = true
-        _connectionState.value = State.ConnectingRight
+        _connectionState.value = State.ConnectingLeft
         _telemetry.value = emptyMap()
         startHeartbeat()
 
         startTracking(Lens.LEFT, leftClient)
         startTracking(Lens.RIGHT, rightClient)
 
-        val rightResult = runCatching {
-            rightClient.ensureBonded()
-            rightClient.connectAndSetup()
-            _connectionState.value = State.RightOnlineUnprimed
-            val primed = rightClient.probeReady(Lens.RIGHT)
-            if (primed) {
-                rightClient.startKeepAlive()
-                _connectionState.value = State.ReadyRight
-            }
-            primed
-        }.getOrElse { false }
-
         val leftResult = runCatching {
-            _connectionState.value = State.ConnectingLeft
             leftClient.ensureBonded()
+            delay(EVEN_SEQUENCE_DELAY_MS)
             leftClient.connectAndSetup()
             _connectionState.value = State.LeftOnlineUnprimed
+            delay(EVEN_SEQUENCE_DELAY_MS)
             val primed = leftClient.probeReady(Lens.LEFT)
             if (primed) {
                 leftClient.startKeepAlive()
@@ -183,29 +174,46 @@ class DualLensConnectionOrchestrator(
             primed
         }.getOrElse { false }
 
-        rightPrimed = rightResult
         leftPrimed = leftResult
+
+        val rightResult = if (leftResult) {
+            delay(EVEN_SEQUENCE_DELAY_MS)
+            _connectionState.value = State.ConnectingRight
+            runCatching {
+                rightClient.ensureBonded()
+                delay(EVEN_SEQUENCE_DELAY_MS)
+                rightClient.connectAndSetup()
+                _connectionState.value = State.RightOnlineUnprimed
+                delay(EVEN_SEQUENCE_DELAY_MS)
+                val primed = rightClient.probeReady(Lens.RIGHT)
+                if (primed) {
+                    rightClient.startKeepAlive()
+                    _connectionState.value = State.ReadyRight
+                }
+                primed
+            }.getOrElse { false }
+        } else {
+            false
+        }
+
+        rightPrimed = rightResult
         if (rightPrimed) {
             flushPendingMirrors()
         }
         flushPendingLeftRefresh()
 
         when {
-            rightResult && leftResult -> {
+            leftResult && rightResult -> {
                 _connectionState.value = State.ReadyBoth
                 _connectionState.value = State.Stable
             }
-            rightResult && !leftResult -> {
-                _connectionState.value = State.DegradedRightOnly
-                scheduleReconnect(Lens.LEFT)
-            }
-            !rightResult && leftResult -> {
+            leftResult && !rightResult -> {
                 _connectionState.value = State.DegradedLeftOnly
                 scheduleReconnect(Lens.RIGHT)
             }
-            else -> {
+            !leftResult -> {
+                _connectionState.value = State.ConnectingLeft
                 scheduleReconnect(Lens.LEFT)
-                scheduleReconnect(Lens.RIGHT)
             }
         }
     }
@@ -228,6 +236,9 @@ class DualLensConnectionOrchestrator(
 
         leftClient?.close()
         rightClient?.close()
+        if (leftClient != null || rightClient != null) {
+            delay(EVEN_SEQUENCE_DELAY_MS)
+        }
 
         eventJobs.values.forEach { it.cancel() }
         eventJobs.clear()
@@ -524,6 +535,9 @@ class DualLensConnectionOrchestrator(
         leftPrimed = primed
         if (primed) {
             flushPendingLeftRefresh()
+            if (!rightPrimed) {
+                scheduleReconnect(Lens.RIGHT)
+            }
         } else {
             leftRefreshRequested = false
         }
@@ -607,12 +621,18 @@ class DualLensConnectionOrchestrator(
                 val now = SystemClock.elapsedRealtime()
                 var success = false
                 try {
+                    if (side == Lens.RIGHT) {
+                        while (sessionActive && isActive && !leftPrimed) {
+                            delay(EVEN_SEQUENCE_DELAY_MS)
+                        }
+                    }
                     if (shouldRefreshGatt(side, now)) {
                         logger("[BLE][${side.name}] refreshing GATT cache before reconnect")
                         session.client.close()
                         delay(FULL_RECONNECT_DELAY_MS)
                     }
                     session.client.connectAndSetup()
+                    delay(EVEN_SEQUENCE_DELAY_MS)
                     val ready = session.client.probeReady(side)
                     if (ready) {
                         session.client.startKeepAlive()

@@ -218,6 +218,12 @@ class MoncchichiBleService(
     private val connectionOrder = mutableListOf<Lens>()
     private val hostHeartbeatSequence = IntArray(Lens.values().size)
     private val knownDevices = mutableMapOf<Lens, BluetoothDevice>()
+    private enum class HandshakeStage { Idle, Linked, Acked }
+    private val handshakeProgress = EnumMap<Lens, HandshakeStage>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, HandshakeStage.Idle) }
+    }
+    @Volatile
+    private var sequenceLogged = false
     private val bondFailureStreak = mutableMapOf<Lens, Int>()
     private val staleBondFailureStreak = EnumMap<Lens, Int>(Lens::class.java).apply {
         Lens.values().forEach { lens -> put(lens, 0) }
@@ -310,6 +316,8 @@ class MoncchichiBleService(
         withContext(Dispatchers.IO) {
             val lens = lensOverride ?: inferLens(device)
             log("Connecting ${device.address} as $lens")
+
+            resetHandshake(lens)
 
             if (lens == Lens.RIGHT && !awaitLeftReadyForRight()) {
                 logWarn("Left lens not ready; postponing right lens connection")
@@ -771,6 +779,7 @@ class MoncchichiBleService(
             device = device,
             scope = scope,
             label = "$TAG[$lens]",
+            lensLabel = lens.shortLabel,
             logger = logger,
         )
         val jobs = mutableListOf<Job>()
@@ -801,12 +810,19 @@ class MoncchichiBleService(
                     )
                 }
                 val wasReady = previousStatus.state == G1BleClient.ConnectionState.CONNECTED && previousStatus.warmupOk
+                val previouslyConnected = previousStatus.state == G1BleClient.ConnectionState.CONNECTED
                 val nowConnected = state.status == G1BleClient.ConnectionState.CONNECTED
                 if (!nowConnected) {
                     caseTelemetryRequested[lens] = false
                 }
+                if (nowConnected && !previouslyConnected) {
+                    markHandshakeLinked(lens)
+                } else if (!nowConnected && previouslyConnected) {
+                    resetHandshake(lens)
+                }
                 val nowReady = nowConnected && state.warmupOk
                 if (!wasReady && nowReady) {
+                    markHandshakeAcked(lens)
                     scheduleCaseTelemetry(lens)
                 }
                 handleBondTransitions(lens, previousStatus, state)
@@ -1915,14 +1931,54 @@ private class HeartbeatSupervisor(
         ackSignalFlow.tryEmit(AckSignal(lens, timestamp, elapsedRealtime, type, success, busy))
     }
 
+    private fun markHandshakeLinked(lens: Lens) {
+        val timestamp = System.currentTimeMillis()
+        emitConsole("LINK", lens, "Connected", timestamp)
+        synchronized(handshakeProgress) {
+            handshakeProgress[lens] = HandshakeStage.Linked
+            sequenceLogged = false
+        }
+    }
+
+    private fun markHandshakeAcked(lens: Lens) {
+        val timestamp = System.currentTimeMillis()
+        emitConsole("ACK", lens, "OK received", timestamp)
+        val shouldEmitSequence = synchronized(handshakeProgress) {
+            handshakeProgress[lens] = HandshakeStage.Acked
+            val complete =
+                handshakeProgress[Lens.LEFT] == HandshakeStage.Acked &&
+                    handshakeProgress[Lens.RIGHT] == HandshakeStage.Acked &&
+                    !sequenceLogged
+            if (complete) {
+                sequenceLogged = true
+            }
+            complete
+        }
+        if (shouldEmitSequence) {
+            emitConsole("SEQ", null, "L:HELLO→OK→ACK | R:HELLO→OK→ACK", timestamp)
+        }
+    }
+
+    private fun resetHandshake(lens: Lens) {
+        synchronized(handshakeProgress) {
+            handshakeProgress[lens] = HandshakeStage.Idle
+            sequenceLogged = false
+        }
+    }
+
     private fun emitConsole(
         tag: String,
         lens: Lens?,
         message: String,
-        @Suppress("UNUSED_PARAMETER") timestamp: Long,
+        timestamp: Long,
     ) {
-        val lensLabel = lens?.shortLabel ?: "-"
-        log("[$tag][$lensLabel] $message")
+        val timeLabel = stabilityTimeFormatter.get().format(Date(timestamp))
+        val prefix = if (lens != null) {
+            "[$timeLabel][$tag][${lens.shortLabel}]"
+        } else {
+            "[$timeLabel][$tag]"
+        }
+        log("$prefix $message")
     }
 
     private fun ByteArray.isTextualOk(): Boolean =

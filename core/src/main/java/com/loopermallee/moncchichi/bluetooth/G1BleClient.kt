@@ -325,6 +325,7 @@ class G1BleClient(
     private val scope: CoroutineScope,
     private val label: String,
     private val logger: MoncchichiLogger,
+    private val lensLabel: String = "?",
     private val uartClientFactory: (
         Context,
         BluetoothDevice,
@@ -359,6 +360,7 @@ class G1BleClient(
         internal const val KEEP_ALIVE_OPCODE = G1Protocols.CMD_KEEPALIVE
         private const val HELLO_WATCHDOG_TIMEOUT_MS = 12_000L
         private const val HELLO_RECOVERY_RECONNECT_DELAY_MS = 750L
+        private const val EVEN_HANDSHAKE_DELAY_MS = 200L
         private const val ACK_DELAY_THRESHOLD_MS = 500L
         private const val ACK_MISSING_THRESHOLD_MS = 2_000L
         private const val ACK_HEALTH_POLL_INTERVAL_MS = 200L
@@ -531,6 +533,8 @@ class G1BleClient(
     private var gattReconnectAttempts = 0
     @Volatile private var bondRemovalInFlight: Boolean = false
     private var ackWatchdogJob: Job? = null
+    @Volatile private var linkLoggedThisSession: Boolean = false
+    @Volatile private var ackLoggedThisSession: Boolean = false
 
     fun connect() {
         _notifyReady.value = false
@@ -542,6 +546,8 @@ class G1BleClient(
         settingsLaunchedThisSession = false
         dismissPairingNotification()
         cancelHelloWatchdog()
+        linkLoggedThisSession = false
+        ackLoggedThisSession = false
         val previousAttempts = gattReconnectAttempts
         val pendingReconnect = gattReconnectJob
         if (previousAttempts > 0) {
@@ -607,7 +613,14 @@ class G1BleClient(
                         }
                         warmupExpected = false
                         _state.value = _state.value.copy(attMtu = null, warmupOk = false)
+                        linkLoggedThisSession = false
+                        ackLoggedThisSession = false
                         return@collect
+                    }
+
+                    if (!linkLoggedThisSession) {
+                        linkLoggedThisSession = true
+                        logger.i(label, "${tt()} [LINK][${lensLabel}] Connected")
                     }
 
                     val mtuChanged = previousMtu?.let { it != mtu } ?: false
@@ -629,6 +642,10 @@ class G1BleClient(
 
                     if (!armed) {
                         return@collect
+                    }
+
+                    if (armedBecameTrue) {
+                        delay(EVEN_HANDSHAKE_DELAY_MS)
                     }
 
                     if (!alreadyAcked) {
@@ -734,6 +751,10 @@ class G1BleClient(
                                     else -> "signal"
                                 }
                                 logger.i(label, "${tt()} [BLE][HELLO] Warm-up acknowledged via $source")
+                                if (!ackLoggedThisSession) {
+                                    ackLoggedThisSession = true
+                                    logger.i(label, "${tt()} [ACK][${lensLabel}] OK received")
+                                }
                             }
                             when {
                                 ack.keepAlivePrompt -> {
