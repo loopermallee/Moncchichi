@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.SharingStarted
@@ -170,8 +171,26 @@ class BleTelemetryRepository(
         val bondResetEvents: Int = 0,
     )
 
+    enum class SnapshotSeverity { NORMAL, OK, WARN, ERROR }
+
+    data class SnapshotLog(
+        val message: String,
+        val timestamp: Long,
+        val severity: SnapshotSeverity,
+    )
+
+    data class PersistedSnapshot(
+        val recordedAt: Long,
+        val caseJson: String?,
+        val leftJson: String?,
+        val rightJson: String?,
+    )
+
     private val _snapshot = MutableStateFlow(Snapshot())
     val snapshot: StateFlow<Snapshot> = _snapshot.asStateFlow()
+
+    private val _snapshotLine = MutableStateFlow<SnapshotLog?>(null)
+    val snapshotLine: StateFlow<SnapshotLog?> = _snapshotLine.asStateFlow()
 
     private val _events = MutableSharedFlow<String>(
         replay = 0,
@@ -204,6 +223,28 @@ class BleTelemetryRepository(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val micPackets: SharedFlow<BleTelemetryParser.TelemetryEvent.AudioPacketEvent> = _micPackets.asSharedFlow()
+
+    private val snapshotPersistRequests = MutableSharedFlow<MemoryRepository.TelemetrySnapshotRecord>(
+        replay = 0,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    init {
+        persistenceScope.launch {
+            snapshotPersistRequests
+                .debounce(250)
+                .collectLatest { record ->
+                    memory.addTelemetrySnapshot(record)
+                }
+        }
+        persistenceScope.launch {
+            memory.latestTelemetrySnapshot()?.let { record ->
+                restoreFromPersistedSnapshot(record)
+            }
+        }
+        startSnapshotLogger()
+    }
 
     private data class BatteryLogState(
         var voltageMv: Int? = null,
@@ -492,11 +533,14 @@ class BleTelemetryRepository(
                 true
             }
         }
+        publishSnapshotLine(recordedAt)
         if (!shouldPersist) {
             return
         }
-        persistenceScope.launch {
-            memory.addTelemetrySnapshot(record)
+        if (!snapshotPersistRequests.tryEmit(record)) {
+            persistenceScope.launch {
+                memory.addTelemetrySnapshot(record)
+            }
         }
     }
 
@@ -612,8 +656,9 @@ class BleTelemetryRepository(
         put("firmwareVersion", firmwareVersion)
         put("lastAckStatus", lastAckStatus)
         put("lastAckTimestamp", lastAckTimestamp)
-        put("ackMode", ackMode?.name)
-        put("lastAckMode", ackMode?.name)
+        val ackModeName = ackMode?.name ?: "UNKNOWN"
+        put("ackMode", ackModeName)
+        put("lastAckMode", ackModeName)
         put("reconnectAttempts", reconnectAttempts)
         put("heartbeatLatencyMs", heartbeatLatencyMs)
         put("heartbeatLatencyAvgMs", heartbeatLatencyAvgMs)
@@ -685,15 +730,28 @@ class BleTelemetryRepository(
         snapshotLogJob = persistenceScope.launch {
             while (isActive) {
                 delay(30_000L)
-                buildTelemetryLogLine()?.let { line ->
-                    logger(line)
-                    memory.addConsoleLine(line)
+                val timestamp = System.currentTimeMillis()
+                buildTelemetrySnapshotLine(timestamp)?.let { log ->
+                    logger(log.message)
+                    memory.addConsoleLine(log.message)
+                    publishSnapshotLine(log)
                 }
             }
         }
     }
 
-    private fun buildTelemetryLogLine(): String? {
+    suspend fun exportTelemetrySnapshots(limit: Int = 10): List<PersistedSnapshot> {
+        return memory.recentTelemetrySnapshots(limit).map { record ->
+            PersistedSnapshot(
+                recordedAt = record.recordedAt,
+                caseJson = record.case?.toJsonString(),
+                leftJson = record.left.snapshotJson,
+                rightJson = record.right.snapshotJson,
+            )
+        }
+    }
+
+    private fun buildTelemetrySnapshotLine(recordedAt: Long): SnapshotLog? {
         val case = _caseStatus.value
         val left = lensTelemetrySnapshots.getValue(Lens.LEFT).value
         val right = lensTelemetrySnapshots.getValue(Lens.RIGHT).value
@@ -714,59 +772,282 @@ class BleTelemetryRepository(
             val raw = name.lowercase(Locale.US)
             return raw.replace('_', ' ')
         }
-        val caseLabel = buildString {
-            append("Case ")
-            append(case.batteryPercent?.let { "$it%" } ?: "–")
-            append(' ')
-            append('(')
-            append(
-                when (case.lidOpen) {
-                    true -> "Open"
-                    false -> "Closed"
-                    null -> "Unknown"
-                }
-            )
-            append(')')
+        val caseBattery = case.batteryPercent ?: left.caseBatteryPercent ?: right.caseBatteryPercent
+        val lidState = case.lidOpen ?: left.caseOpen ?: right.caseOpen
+        val silentMode = case.silentMode ?: left.caseSilentMode ?: right.caseSilentMode
+        val caseCharging = case.charging ?: left.caseCharging ?: right.caseCharging
+        val primaryAck = selectPrimaryTelemetry(left, right)
+        val ackModeLabel = ackModeLabel(primaryAck?.ackMode)
+        val ackStatus = primaryAck?.lastAckStatus
+        val severity = resolveSnapshotSeverity(ackModeLabel, ackStatus)
+        val rtt = primaryAck?.heartbeatLatencyMs
+            ?: primaryAck?.heartbeatLatencyAvgMs
+            ?: left.heartbeatLatencyMs
+            ?: right.heartbeatLatencyMs
+        val leftVoltage = left.batteryVoltageMv?.let { "$it mV" } ?: "–"
+        val rightVoltage = right.batteryVoltageMv?.let { "$it mV" } ?: "–"
+        val caseLabel = caseBattery?.let { "$it %" } ?: "–"
+        val lidLabel = when (lidState) {
+            true -> "Open"
+            false -> "Closed"
+            null -> "Unknown"
         }
-        val silentLabel = case.silentMode?.let { if (it) "Silent On" else "Silent Off" }
-        val caseChargingLabel = case.charging?.let { if (it) "Charging" else "Not Charging" }
-        val leftLabel = left.batteryVoltageMv?.let { "L ${it}mV" } ?: "L ?"
-        val rightLabel = right.batteryVoltageMv?.let { "R ${it}mV" } ?: "R ?"
-        val uptimeLabel = uptimeSeconds?.let { "Up ${it}s" }
-        val firmwareLabel = firmware?.let { "FW $it" }
-        val ackLabel = listOfNotNull(
-            left.ackMode?.let { mode -> "L ${mode.toSummaryLabel()}" },
-            right.ackMode?.let { mode -> "R ${mode.toSummaryLabel()}" },
-        ).takeIf { it.isNotEmpty() }?.joinToString(separator = " / ")
-        return buildString {
-            append("[TELEMETRY] ")
+        val silentLabel = silentMode?.let { if (it) "Silent: On" else "Silent: Off" }
+        val chargingLabel = caseCharging?.let { if (it) "Case Charging" else "Case Idle" }
+        val ackStatusLabel = ackStatus
+            ?.takeUnless { it.equals("OK", ignoreCase = true) }
+            ?.let { "Status: $it" }
+        val firmwareLabel = firmware?.let { "FW: $it" }
+        val uptimeLabel = uptimeSeconds?.let { "Up: $it s" }
+        val message = buildString {
+            append("[SNAPSHOT] ")
+            append("L: ")
+            append(leftVoltage)
+            append("  R: ")
+            append(rightVoltage)
+            append("  Case: ")
             append(caseLabel)
+            append("  Lid: ")
+            append(lidLabel)
+            append("  ACK: ")
+            append(ackModeLabel)
+            ackStatusLabel?.let {
+                append("  ")
+                append(it)
+            }
+            append("  RTT: ")
+            append(rtt?.let { "$it ms" } ?: "–")
             silentLabel?.let {
-                append(" • ")
+                append("  ")
                 append(it)
             }
-            caseChargingLabel?.let {
-                append(" • ")
+            chargingLabel?.let {
+                append("  ")
                 append(it)
             }
-            append(" • ")
-            append(leftLabel)
-            append(" • ")
-            append(rightLabel)
             firmwareLabel?.let {
-                append(" • ")
+                append("  ")
                 append(it)
             }
             uptimeLabel?.let {
-                append(" • ")
-                append(it)
-            }
-            ackLabel?.let {
-                append(" • ACK:")
-                append(' ')
+                append("  ")
                 append(it)
             }
         }
+        return SnapshotLog(message = message.trimEnd(), timestamp = recordedAt, severity = severity)
+    }
+
+    private fun publishSnapshotLine(recordedAt: Long) {
+        buildTelemetrySnapshotLine(recordedAt)?.let { publishSnapshotLine(it) }
+    }
+
+    private fun publishSnapshotLine(log: SnapshotLog) {
+        _snapshotLine.value = log
+    }
+
+    private fun selectPrimaryTelemetry(
+        left: DeviceTelemetrySnapshot,
+        right: DeviceTelemetrySnapshot,
+    ): DeviceTelemetrySnapshot? {
+        val leftTimestamp = left.lastAckTimestamp
+        val rightTimestamp = right.lastAckTimestamp
+        return when {
+            leftTimestamp == null && rightTimestamp == null -> when {
+                left.ackMode != null -> left
+                right.ackMode != null -> right
+                else -> null
+            }
+            leftTimestamp == null -> right
+            rightTimestamp == null -> left
+            leftTimestamp >= rightTimestamp -> left
+            else -> right
+        }
+    }
+
+    private fun ackModeLabel(mode: MoncchichiBleService.AckType?): String {
+        return when (mode) {
+            MoncchichiBleService.AckType.BINARY -> "Binary"
+            MoncchichiBleService.AckType.TEXTUAL -> "Textual"
+            null -> "Unknown"
+        }
+    }
+
+    private fun resolveSnapshotSeverity(ackLabel: String, ackStatus: String?): SnapshotSeverity {
+        return when {
+            ackStatus != null && ackStatus.equals("OK", ignoreCase = true) -> SnapshotSeverity.OK
+            ackStatus != null && ackStatus.equals("BUSY", ignoreCase = true) -> SnapshotSeverity.WARN
+            ackStatus != null && ackStatus.isNotBlank() -> SnapshotSeverity.ERROR
+            ackLabel.equals("Unknown", ignoreCase = true) -> SnapshotSeverity.WARN
+            ackLabel.isNotBlank() -> SnapshotSeverity.NORMAL
+            else -> SnapshotSeverity.NORMAL
+        }
+    }
+
+    private fun restoreFromPersistedSnapshot(record: MemoryRepository.TelemetrySnapshotRecord) {
+        val recordedAt = record.recordedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+        record.case?.toCaseStatus(recordedAt)?.let { status ->
+            _caseStatus.value = status
+        }
+        val leftFlow = lensTelemetrySnapshots.getValue(Lens.LEFT)
+        val rightFlow = lensTelemetrySnapshots.getValue(Lens.RIGHT)
+        leftFlow.value = leftFlow.value.mergeWithPersisted(Lens.LEFT, record.left, record.case, recordedAt)
+        rightFlow.value = rightFlow.value.mergeWithPersisted(Lens.RIGHT, record.right, record.case, recordedAt)
+        updateSnapshot(persist = false) { current ->
+            current.copy(
+                left = current.left.mergeFromPersisted(record.left),
+                right = current.right.mergeFromPersisted(record.right),
+                uptimeSeconds = record.uptimeSeconds ?: current.uptimeSeconds,
+            )
+        }
+        synchronized(snapshotPersistLock) {
+            lastPersistedSnapshotContent = record.copy(recordedAt = 0L)
+        }
+        publishSnapshotLine(recordedAt)
+    }
+
+    private fun DeviceTelemetrySnapshot.mergeWithPersisted(
+        lens: Lens,
+        snapshot: MemoryRepository.LensSnapshot,
+        case: MemoryRepository.CaseSnapshot?,
+        recordedAt: Long,
+    ): DeviceTelemetrySnapshot {
+        val parsed = snapshot.snapshotJson?.let(::parseLensSnapshotJson)
+        val ackType = ackTypeFromString(parsed?.ackMode ?: snapshot.lastAckMode)
+        val persistedCaseBattery = snapshot.caseBatteryPercent ?: case?.batteryPercent ?: parsed?.caseBatteryPercent
+        val persistedCaseOpen = snapshot.caseOpen ?: case?.lidOpen ?: parsed?.caseOpen
+        val persistedCaseSilent = snapshot.caseSilentMode ?: case?.silentMode ?: parsed?.caseSilentMode
+        val persistedCaseCharge = case?.charging ?: parsed?.caseCharging
+        val uptime = snapshot.uptimeSeconds ?: parsed?.uptimeSeconds
+        val firmware = snapshot.firmwareVersion ?: parsed?.firmwareVersion ?: firmwareVersion
+        val heartbeatMs = snapshot.heartbeatLatencyMs ?: parsed?.heartbeatLatencyMs
+        val heartbeatAvg = snapshot.heartbeatLatencyAvgMs ?: parsed?.heartbeatLatencyAvgMs
+        return copy(
+            lens = lens,
+            timestamp = snapshot.lastUpdated ?: parsed?.timestamp ?: timestamp,
+            batteryVoltageMv = snapshot.batteryVoltageMv ?: parsed?.batteryVoltageMv ?: batteryVoltageMv,
+            isCharging = parsed?.isCharging ?: isCharging,
+            caseBatteryPercent = persistedCaseBattery ?: caseBatteryPercent,
+            caseOpen = persistedCaseOpen ?: this.caseOpen,
+            caseCharging = persistedCaseCharge ?: caseCharging,
+            caseSilentMode = persistedCaseSilent ?: caseSilentMode,
+            uptimeSeconds = uptime ?: uptimeSeconds,
+            firmwareVersion = firmware,
+            environment = parsed?.environment ?: environment,
+            lastAckStatus = snapshot.lastAckStatus ?: parsed?.lastAckStatus ?: lastAckStatus,
+            lastAckTimestamp = snapshot.lastAckTimestamp ?: parsed?.lastAckTimestamp ?: lastAckTimestamp,
+            reconnectAttempts = snapshot.reconnectAttempts ?: reconnectAttempts,
+            heartbeatLatencyMs = heartbeatMs ?: heartbeatLatencyMs,
+            ackMode = ackType ?: ackMode,
+            heartbeatLatencyAvgMs = heartbeatAvg ?: heartbeatLatencyAvgMs,
+            heartbeatMissCount = snapshot.heartbeatMissCount ?: parsed?.heartbeatMissCount ?: heartbeatMissCount,
+        )
+    }
+
+    private fun LensTelemetry.mergeFromPersisted(snapshot: MemoryRepository.LensSnapshot): LensTelemetry {
+        val ackType = ackTypeFromString(snapshot.lastAckMode)
+        return copy(
+            batteryPercent = snapshot.batteryPercent ?: batteryPercent,
+            caseBatteryPercent = snapshot.caseBatteryPercent ?: caseBatteryPercent,
+            caseOpen = snapshot.caseOpen ?: caseOpen,
+            silentMode = snapshot.caseSilentMode ?: silentMode,
+            lastUpdatedAt = snapshot.lastUpdated ?: lastUpdatedAt,
+            firmwareVersion = snapshot.firmwareVersion ?: firmwareVersion,
+            notes = snapshot.notes ?: notes,
+            reconnectAttemptsSnapshot = snapshot.reconnectAttempts ?: reconnectAttemptsSnapshot,
+            heartbeatLatencySnapshotMs = snapshot.heartbeatLatencyMs ?: heartbeatLatencySnapshotMs,
+            heartbeatLatencyAvgMs = snapshot.heartbeatLatencyAvgMs ?: heartbeatLatencyAvgMs,
+            heartbeatMissCount = snapshot.heartbeatMissCount ?: heartbeatMissCount,
+            ackMode = ackType ?: ackMode,
+        )
+    }
+
+    private fun MemoryRepository.CaseSnapshot.toCaseStatus(recordedAt: Long): CaseStatus {
+        return CaseStatus(
+            batteryPercent = batteryPercent,
+            charging = charging,
+            lidOpen = lidOpen,
+            silentMode = silentMode,
+            updatedAt = recordedAt,
+        )
+    }
+
+    private fun MemoryRepository.CaseSnapshot.toJsonString(): String? {
+        val json = JSONObject()
+        var hasValue = false
+        fun put(name: String, value: Any?) {
+            if (value != null) {
+                json.put(name, value)
+                hasValue = true
+            }
+        }
+        put("batteryPercent", batteryPercent)
+        put("charging", charging)
+        put("lidOpen", lidOpen)
+        put("silentMode", silentMode)
+        return if (hasValue) json.toString() else null
+    }
+
+    private data class PersistedLensJson(
+        val timestamp: Long?,
+        val batteryVoltageMv: Int?,
+        val isCharging: Boolean?,
+        val caseBatteryPercent: Int?,
+        val caseOpen: Boolean?,
+        val caseCharging: Boolean?,
+        val caseSilentMode: Boolean?,
+        val uptimeSeconds: Long?,
+        val firmwareVersion: String?,
+        val environment: Map<String, String>?,
+        val lastAckStatus: String?,
+        val lastAckTimestamp: Long?,
+        val ackMode: String?,
+        val heartbeatLatencyMs: Int?,
+        val heartbeatLatencyAvgMs: Int?,
+        val heartbeatMissCount: Int?,
+    )
+
+    private fun parseLensSnapshotJson(json: String): PersistedLensJson? {
+        return runCatching {
+            val obj = JSONObject(json)
+            val env = obj.optJSONObject("environment")?.let { envObj ->
+                envObj.keys().asSequence().associateWith { key -> envObj.getString(key) }
+            }
+            PersistedLensJson(
+                timestamp = obj.optNullableLong("timestamp"),
+                batteryVoltageMv = obj.optNullableInt("batteryVoltageMv"),
+                isCharging = obj.optNullableBoolean("isCharging"),
+                caseBatteryPercent = obj.optNullableInt("caseBatteryPercent"),
+                caseOpen = obj.optNullableBoolean("caseOpen"),
+                caseCharging = obj.optNullableBoolean("caseCharging"),
+                caseSilentMode = obj.optNullableBoolean("caseSilentMode"),
+                uptimeSeconds = obj.optNullableLong("uptimeSeconds"),
+                firmwareVersion = obj.optNullableString("firmwareVersion"),
+                environment = env,
+                lastAckStatus = obj.optNullableString("lastAckStatus"),
+                lastAckTimestamp = obj.optNullableLong("lastAckTimestamp"),
+                ackMode = obj.optNullableString("ackMode") ?: obj.optNullableString("lastAckMode"),
+                heartbeatLatencyMs = obj.optNullableInt("heartbeatLatencyMs"),
+                heartbeatLatencyAvgMs = obj.optNullableInt("heartbeatLatencyAvgMs"),
+                heartbeatMissCount = obj.optNullableInt("heartbeatMissCount"),
+            )
+        }.getOrNull()
+    }
+
+    private fun JSONObject.optNullableInt(name: String): Int? =
+        if (has(name) && !isNull(name)) getInt(name) else null
+
+    private fun JSONObject.optNullableLong(name: String): Long? =
+        if (has(name) && !isNull(name)) getLong(name) else null
+
+    private fun JSONObject.optNullableBoolean(name: String): Boolean? =
+        if (has(name) && !isNull(name)) getBoolean(name) else null
+
+    private fun JSONObject.optNullableString(name: String): String? =
+        if (has(name) && !isNull(name)) getString(name) else null
+
+    private fun ackTypeFromString(value: String?): MoncchichiBleService.AckType? {
+        if (value.isNullOrBlank()) return null
+        return runCatching { MoncchichiBleService.AckType.valueOf(value) }.getOrNull()
     }
 
     private fun emitConsole(tag: String, lens: Lens?, message: String, timestamp: Long = System.currentTimeMillis()) {

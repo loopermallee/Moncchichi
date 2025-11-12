@@ -34,7 +34,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -69,6 +68,8 @@ class DeveloperViewModel(
 
     private val _telemetrySummary = MutableStateFlow("")
     val telemetrySummary: StateFlow<String> = _telemetrySummary.asStateFlow()
+
+    val snapshotLine: StateFlow<BleTelemetryRepository.SnapshotLog?> = telemetry.snapshotLine
 
     private val _micStats = MutableStateFlow(
         MicMetrics(
@@ -110,6 +111,9 @@ class DeveloperViewModel(
     private val _events = MutableSharedFlow<DeveloperEvent>(extraBufferCapacity = 1)
     val events: SharedFlow<DeveloperEvent> = _events.asSharedFlow()
 
+    private val snapshotTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+    private val exportTimestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+
     init {
         viewModelScope.launch {
             hubViewModel.state.collect { state ->
@@ -117,18 +121,13 @@ class DeveloperViewModel(
             }
         }
         viewModelScope.launch {
-            combine(
-                telemetry.deviceTelemetryFlow,
-                telemetry.caseStatus,
-            ) { snapshots, case ->
-                buildTelemetrySummary(snapshots, case)
-            }.collect { summary ->
-                _telemetrySummary.value = summary
+            telemetry.snapshot.collect { snap ->
+                _snapshot.value = snap
             }
         }
         viewModelScope.launch {
-            telemetry.snapshot.collect { snap ->
-                _snapshot.value = snap
+            telemetry.snapshotLine.collect { log ->
+                _telemetrySummary.value = log?.let { formatSnapshotSummary(it) } ?: ""
             }
         }
         viewModelScope.launch {
@@ -236,6 +235,19 @@ class DeveloperViewModel(
                 append("## Diagnostics\n")
                 append(if (diagnostics.isNotBlank()) diagnostics else appContext.getString(R.string.developer_no_diagnostics))
                 append('\n')
+                val persisted = telemetry.exportTelemetrySnapshots(10)
+                if (persisted.isNotEmpty()) {
+                    append('\n')
+                    append("## Telemetry Snapshots\n")
+                    persisted.forEach { snapshot ->
+                        append("- ")
+                        append(formatExportTimestamp(snapshot.recordedAt))
+                        append('\n')
+                        append("  Case: ${snapshot.caseJson ?: "–"}\n")
+                        append("  Left: ${snapshot.leftJson ?: "–"}\n")
+                        append("  Right: ${snapshot.rightJson ?: "–"}\n\n")
+                    }
+                }
             }
 
             val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -262,6 +274,16 @@ class DeveloperViewModel(
 
     private fun buildConsoleText(lines: List<String>): String =
         lines.joinToString(separator = "\n")
+
+    private fun formatSnapshotSummary(log: BleTelemetryRepository.SnapshotLog): String {
+        val time = synchronized(snapshotTimeFormat) { snapshotTimeFormat.format(Date(log.timestamp)) }
+        return "[$time] ${log.message}"
+    }
+
+    private fun formatExportTimestamp(timestamp: Long): String {
+        if (timestamp <= 0L) return "unknown"
+        return synchronized(exportTimestampFormat) { exportTimestampFormat.format(Date(timestamp)) }
+    }
 
     private fun buildSnapshotText(snapshot: BleTelemetryRepository.Snapshot): String {
         if (snapshot == BleTelemetryRepository.Snapshot()) return ""
@@ -295,63 +317,6 @@ class DeveloperViewModel(
             appendLine("Auto reconnect successes: ${snapshot.autoReconnectSuccesses}")
             appendLine("Pairing dialogs shown: ${snapshot.pairingDialogsShown}")
             appendLine("Bond resets: ${snapshot.bondResetEvents}")
-        }
-    }
-
-    private fun buildTelemetrySummary(
-        snapshots: List<BleTelemetryRepository.DeviceTelemetrySnapshot>,
-        case: BleTelemetryRepository.CaseStatus,
-    ): String {
-        if (snapshots.isEmpty()) return ""
-        val left = snapshots.firstOrNull { it.lens == MoncchichiBleService.Lens.LEFT }
-        val right = snapshots.firstOrNull { it.lens == MoncchichiBleService.Lens.RIGHT }
-        val uptimeSeconds = snapshots.mapNotNull { it.uptimeSeconds }.maxOrNull()
-        val firmware = left?.firmwareVersion ?: right?.firmwareVersion
-        val hasCase = listOf(case.batteryPercent, case.charging, case.lidOpen, case.silentMode).any { it != null }
-        val hasLens = listOf(left?.batteryVoltageMv, right?.batteryVoltageMv, firmware, uptimeSeconds).any { it != null }
-        if (!hasCase && !hasLens) return ""
-        val caseBattery = case.batteryPercent?.let { "$it%" } ?: "–"
-        val caseState = when (case.lidOpen) {
-            true -> "Open"
-            false -> "Closed"
-            null -> "Unknown"
-        }
-        val silent = case.silentMode?.let { if (it) "Silent On" else "Silent Off" }
-        val charging = case.charging?.let { if (it) "Charging" else "Not Charging" }
-        val leftVoltage = left?.batteryVoltageMv?.let { "${it}mV" } ?: "–"
-        val rightVoltage = right?.batteryVoltageMv?.let { "${it}mV" } ?: "–"
-        val uptime = uptimeSeconds?.let { formatDuration(it) }
-        val ackSummary = listOfNotNull(
-            left?.ackMode?.let { "L ${formatAckType(it)}" },
-            right?.ackMode?.let { "R ${formatAckType(it)}" },
-        ).takeIf { it.isNotEmpty() }?.joinToString(separator = " / ")
-        return buildString {
-            append("Case $caseBattery ($caseState)")
-            silent?.let {
-                append(" • ")
-                append(it)
-            }
-            charging?.let {
-                append(" • ")
-                append(it)
-            }
-            append(" • L ")
-            append(leftVoltage)
-            append(" • R ")
-            append(rightVoltage)
-            firmware?.let {
-                append(" • FW ")
-                append(it)
-            }
-            uptime?.let {
-                append(" • Up ")
-                append(it)
-            }
-            ackSummary?.let {
-                append(" • ACK:")
-                append(' ')
-                append(it)
-            }
         }
     }
 
