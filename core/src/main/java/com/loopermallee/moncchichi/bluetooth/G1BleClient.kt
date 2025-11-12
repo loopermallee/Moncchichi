@@ -474,9 +474,19 @@ class G1BleClient(
     val keepAliveResults: SharedFlow<KeepAliveResult> = _keepAliveResults.asSharedFlow()
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     val incoming: SharedFlow<ByteArray> = _incoming.asSharedFlow()
+    private val _asciiSystemFrames = MutableSharedFlow<G1MessageParser.AsciiSystemFrame>(extraBufferCapacity = 16)
+    val asciiSystemFrames: SharedFlow<G1MessageParser.AsciiSystemFrame> = _asciiSystemFrames.asSharedFlow()
     private val _audioFrames = MutableSharedFlow<AudioFrame>(extraBufferCapacity = 64)
     val audioFrames: SharedFlow<AudioFrame> = _audioFrames.asSharedFlow()
     private val _notifyReady = MutableStateFlow(false)
+    /**
+     * Indicates whether the UART notification CCC has been armed for the current connection.
+     *
+     * The flow emits `false` when a link attempt begins or when the transport is torn down,
+     * and flips to `true` only after [G1BleUartClient.notificationsArmed] reports that
+     * notifications are active.  Callers must gate all G1 writes on this flag in order to
+     * follow the firmware requirement of "notifications armed before any write".
+     */
     val notifyReady: StateFlow<Boolean> = _notifyReady.asStateFlow()
     private val _state = MutableStateFlow(
         State(
@@ -757,6 +767,7 @@ class G1BleClient(
                     }
                 }
                 val copy = payload.copyOf()
+                copy.toAsciiSystemFrameOrNull()?.let { frame -> _asciiSystemFrames.tryEmit(frame) }
                 copy.toAudioFrameOrNull()?.let { frame -> _audioFrames.tryEmit(frame) }
                 _incoming.tryEmit(copy)
             }
@@ -938,7 +949,7 @@ class G1BleClient(
         }
     }
 
-    fun enqueueHeartbeat(sequence: Int, payload: ByteArray): Boolean {
+    suspend fun enqueueHeartbeat(sequence: Int, payload: ByteArray): Boolean {
         if (!_notifyReady.value) {
             logger.w(
                 label,
@@ -946,12 +957,18 @@ class G1BleClient(
             )
             return false
         }
-        val ok = uartClient.write(payload, withResponse = false)
+        val queued = sendCommand(
+            payload = payload,
+            ackTimeoutMs = G1Protocols.ACK_TIMEOUT_MS,
+            retries = 1,
+            retryDelayMs = 0L,
+            expectAck = false,
+        )
         logger.i(
             label,
-            "${tt()} [BLE][PING] queued seq=${sequence.toByteHex()} ok=$ok",
+            "${tt()} [BLE][PING] queued seq=${sequence.toByteHex()} ok=$queued",
         )
-        return ok
+        return queued
     }
 
     private suspend fun sendCommandLocked(

@@ -7,10 +7,17 @@ object G1Protocols {
     const val CMD_PING = 0x25
     const val CMD_BRIGHTNESS = 0x01
     const val CMD_SYSTEM = 0x23
+    const val CMD_SYS_INFO = CMD_SYSTEM
+    const val SYS_SUB_INFO = 0x74
     const val CMD_DISPLAY = 0x26
+    const val CMD_DISPLAY_GET = 0x29
     const val CMD_SERIAL_LENS = 0x33
     const val CMD_SERIAL_FRAME = 0x34
     const val CMD_GLASSES_INFO = 0x2C
+    const val CMD_CASE_GET = 0x2B
+    const val CMD_BATT_GET = CMD_GLASSES_INFO
+    const val BATT_SUB_DETAIL = 0x01
+    const val CMD_WEAR_DETECT = 0x27
     const val CMD_HUD_TEXT = 0x09
     const val CMD_CLEAR = 0x25
     const val OPC_ACK_CONTINUE = 0xCB
@@ -24,6 +31,7 @@ object G1Protocols {
     const val OPC_ENV_RANGE_END = 0x36
     const val OPC_EVENT = 0xF5
     const val OPC_GESTURE = OPC_EVENT
+    const val EVT_GESTURE = OPC_GESTURE
     const val OPC_SYSTEM_STATUS = 0x39
     const val OPC_DEBUG_REBOOT = 0x23
     const val SUBCMD_SYSTEM_DEBUG = 0x6C

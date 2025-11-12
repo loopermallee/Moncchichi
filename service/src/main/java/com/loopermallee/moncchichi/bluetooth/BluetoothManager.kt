@@ -43,7 +43,7 @@ internal class BluetoothManager(
     private val deviceManager = DeviceManager(context, scope)
     private val pairBleEnabled = true // TODO: gate via BuildConfig if needed
     private data class RegisteredHeadset(
-        val orchestrator: HeadsetOrchestrator,
+        val orchestrator: DualLensConnectionOrchestrator,
         val leftMac: String,
         val rightMac: String,
     )
@@ -152,7 +152,7 @@ internal class BluetoothManager(
     private var scanCallback: ScanCallback? = null
     private var scanJob: Job? = null
 
-    fun registerHeadset(pairKey: PairKey, leftMac: String, rightMac: String, orchestrator: HeadsetOrchestrator) {
+    fun registerHeadset(pairKey: PairKey, leftMac: String, rightMac: String, orchestrator: DualLensConnectionOrchestrator) {
         headsets[pairKey] = RegisteredHeadset(orchestrator, leftMac, rightMac)
         headsetJobs.remove(pairKey)?.cancel()
         headsetStates.update { current ->
@@ -482,7 +482,7 @@ internal class BluetoothManager(
         pairWindowDeadlineJob = null
         val leftMac = leftObservation.id.mac
         val rightMac = rightObservation.id.mac
-        val orchestrator = HeadsetOrchestrator(
+        val orchestrator = DualLensConnectionOrchestrator(
             pairKey = window.key,
             bleFactory = { lensId -> BleClientImpl(lensId) },
             scope = scope,
