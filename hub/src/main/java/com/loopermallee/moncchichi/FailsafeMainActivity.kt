@@ -3,7 +3,7 @@ package com.loopermallee.moncchichi
 import android.app.Activity
 import android.os.Bundle
 import android.widget.TextView
-import com.loopermallee.moncchichi.R
+import com.loopermallee.moncchichi.hub.R
 import java.io.File
 
 class FailsafeMainActivity : Activity() {
