@@ -58,10 +58,10 @@ class DeveloperConsoleAdapter :
     companion object {
         private val TIMESTAMP_COLOR = Color.parseColor("#8A8F9C")
         private val HIGHLIGHT_COLOR = Color.parseColor("#FFD400")
-        private val NORMAL_COLOR = Color.parseColor("#CCCCCC")
-        private val SUCCESS_COLOR = Color.parseColor("#00FF88")
-        private val WARNING_COLOR = Color.parseColor("#FFD400")
-        private val ERROR_COLOR = Color.parseColor("#FF4D4D")
+        private val NORMAL_COLOR = Color.parseColor("#D4D7DE")
+        private val SUCCESS_COLOR = Color.parseColor("#4CAF50")
+        private val WARNING_COLOR = Color.parseColor("#FFC107")
+        private val ERROR_COLOR = Color.parseColor("#F44336")
 
         private val DiffCallback = object : DiffUtil.ItemCallback<ConsoleItem>() {
             override fun areItemsTheSame(oldItem: ConsoleItem, newItem: ConsoleItem): Boolean {

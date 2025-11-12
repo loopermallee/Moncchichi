@@ -60,6 +60,7 @@
     <string name="developer_console_filter_gesture">GESTURE</string>
     <string name="developer_console_filter_ack">ACK</string>
     <string name="developer_console_timestamp_highlight">⚡ %1$s</string>
+    <string name="developer_console_summary_placeholder">Telemetry –</string>
     <string name="developer_mode_console">Console</string>
     <string name="developer_mode_diagnostics">Diagnostics</string>
     <string name="developer_section_overview">System overview</string>

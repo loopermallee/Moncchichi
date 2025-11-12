@@ -93,6 +93,17 @@
                 </com.google.android.material.chip.ChipGroup>
             </HorizontalScrollView>
 
+            <TextView
+                android:id="@+id/text_console_summary"
+                style="@style/TextAppearance.Material3.BodySmall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="6dp"
+                android:text="Telemetry –"
+                android:textColor="@color/developer_console_text" />
+
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/list_console_logs"
                 android:layout_width="match_parent"

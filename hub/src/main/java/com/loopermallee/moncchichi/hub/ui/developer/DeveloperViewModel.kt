@@ -17,6 +17,7 @@ import com.loopermallee.moncchichi.hub.audio.MicMetrics
 import com.loopermallee.moncchichi.hub.data.repo.SettingsRepository
 import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.hub.data.telemetry.LensGestureEvent
+import com.loopermallee.moncchichi.hub.data.telemetry.BleTelemetryRepository.DeviceTelemetrySnapshot
 import com.loopermallee.moncchichi.hub.ui.developer.DeveloperViewModel.DeveloperEvent
 import com.loopermallee.moncchichi.hub.viewmodel.AppEvent
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
@@ -39,6 +40,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 private const val PREF_KEY_MODE = "developer_mode_selection"
 private const val TIMESTAMP_SEPARATOR = "] "
@@ -126,6 +129,7 @@ class DeveloperViewModel(
 
     private val _telemetrySummary = MutableStateFlow("")
     val telemetrySummary: StateFlow<String> = _telemetrySummary.asStateFlow()
+    private val telemetrySummaryInputs = MutableStateFlow<TelemetrySummaryInputs?>(null)
 
     val snapshotLine: StateFlow<BleTelemetryRepository.SnapshotLog?> = telemetry.snapshotLine
 
@@ -176,6 +180,35 @@ class DeveloperViewModel(
         viewModelScope.launch {
             hubViewModel.state.collect { state ->
                 _consoleLines.value = state.consoleLines
+            }
+        }
+        viewModelScope.launch {
+            combine(
+                telemetry.caseStatus,
+                telemetry.deviceTelemetryFlow,
+                telemetry.snapshot,
+            ) { case, deviceSnapshots, snapshot ->
+                val byLens = deviceSnapshots.associateBy { it.lens }
+                TelemetrySummaryInputs(
+                    case = case,
+                    left = byLens[MoncchichiBleService.Lens.LEFT],
+                    right = byLens[MoncchichiBleService.Lens.RIGHT],
+                    leftPercent = snapshot.left.batteryPercent,
+                    rightPercent = snapshot.right.batteryPercent,
+                    uptimeSeconds = snapshot.uptimeSeconds,
+                )
+            }.collect { inputs ->
+                telemetrySummaryInputs.value = inputs
+                _telemetrySummary.value = formatTelemetrySummary(inputs)
+            }
+        }
+        viewModelScope.launch {
+            while (isActive) {
+                val current = telemetrySummaryInputs.value
+                if (current != null) {
+                    _telemetrySummary.value = formatTelemetrySummary(current)
+                }
+                delay(30_000L)
             }
         }
         viewModelScope.launch {
@@ -518,6 +551,76 @@ class DeveloperViewModel(
         false -> "no"
         null -> "–"
     }
+
+    private fun formatTelemetrySummary(inputs: TelemetrySummaryInputs?): String {
+        if (inputs == null) return ""
+        val caseBattery = inputs.case.batteryPercent
+            ?: inputs.left?.caseBatteryPercent
+            ?: inputs.right?.caseBatteryPercent
+        val caseDoor = inputs.case.lidOpen ?: inputs.left?.caseOpen ?: inputs.right?.caseOpen
+        val caseSilent = inputs.case.silentMode ?: inputs.left?.caseSilentMode ?: inputs.right?.caseSilentMode
+        val doorLabel = when (caseDoor) {
+            true -> "Open"
+            false -> "Closed"
+            null -> "Unknown"
+        }
+        val silentLabel = when (caseSilent) {
+            true -> "Silent On"
+            false -> "Silent Off"
+            null -> null
+        }
+        val casePercentLabel = caseBattery?.let { "$it %" } ?: "–"
+        val caseSuffix = buildString {
+            append(doorLabel)
+            silentLabel?.let {
+                append(" • ")
+                append(it)
+            }
+        }
+        val leftSegment = formatLensSegment("L", inputs.left, inputs.leftPercent)
+        val rightSegment = formatLensSegment("R", inputs.right, inputs.rightPercent)
+        val firmware = inputs.left?.firmwareVersion
+            ?: inputs.right?.firmwareVersion
+            ?: "–"
+        val uptimeSeconds = inputs.uptimeSeconds
+            ?: inputs.left?.uptimeSeconds
+            ?: inputs.right?.uptimeSeconds
+        val uptimeLabel = uptimeSeconds?.let { "$it s" } ?: "–"
+        val latency = inputs.left?.heartbeatLatencyMs ?: inputs.right?.heartbeatLatencyMs
+        val parts = mutableListOf(
+            "Case $casePercentLabel ($caseSuffix)",
+            leftSegment,
+            rightSegment,
+            "FW $firmware",
+            "Up $uptimeLabel",
+        )
+        latency?.let { parts += "RTT ${it} ms" }
+        return parts.joinToString(separator = " • ")
+    }
+
+    private fun formatLensSegment(
+        label: String,
+        snapshot: DeviceTelemetrySnapshot?,
+        percent: Int?,
+    ): String {
+        val voltageLabel = snapshot?.batteryVoltageMv?.let { formatVoltage(it) }
+        val percentLabel = percent?.let { "$it %" }
+        val primary = voltageLabel ?: percentLabel ?: "–"
+        return "$label $primary"
+    }
+
+    private fun formatVoltage(mv: Int): String {
+        return String.format(Locale.US, "%.2f V", mv / 1000.0)
+    }
+
+    private data class TelemetrySummaryInputs(
+        val case: BleTelemetryRepository.CaseStatus,
+        val left: DeviceTelemetrySnapshot?,
+        val right: DeviceTelemetrySnapshot?,
+        val leftPercent: Int?,
+        val rightPercent: Int?,
+        val uptimeSeconds: Long?,
+    )
 
     private fun formatCaseState(value: Boolean?): String = when (value) {
         true -> "in case"
