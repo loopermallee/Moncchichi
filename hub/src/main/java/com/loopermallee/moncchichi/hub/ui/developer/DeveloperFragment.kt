@@ -10,7 +10,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.text.Spannable
+import android.text.SpannableString
 import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -46,6 +49,8 @@ import com.loopermallee.moncchichi.hub.util.LogFormatter
 import com.loopermallee.moncchichi.hub.viewmodel.HubViewModel
 import com.loopermallee.moncchichi.hub.viewmodel.HubVmFactory
 import com.loopermallee.moncchichi.hub.ble.DashboardDataEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.collectLatest
@@ -84,6 +89,8 @@ class DeveloperFragment : Fragment() {
     private var caseCard: CaseCardController? = null
     private var ackSummaryView: TextView? = null
     private var linkSummaryView: TextView? = null
+    private var snapshotSummaryView: TextView? = null
+    private val snapshotTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
@@ -124,6 +131,16 @@ class DeveloperFragment : Fragment() {
             text = "LINK: L — • R —"
             setTextColor(ContextCompat.getColor(context, R.color.er_text_secondary))
         }
+        val snapshotTextView = TextView(context).apply {
+            id = View.generateViewId()
+            TextViewCompat.setTextAppearance(this, MaterialR.style.TextAppearance_Material3_BodyMedium)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = summaryMargin }
+            text = "SNAPSHOT: –"
+            setTextColor(SNAPSHOT_COLOR_NORMAL)
+        }
         val ackTextView = TextView(context).apply {
             id = View.generateViewId()
             TextViewCompat.setTextAppearance(this, MaterialR.style.TextAppearance_Material3_BodyMedium)
@@ -137,11 +154,13 @@ class DeveloperFragment : Fragment() {
         overviewContainer?.let { container ->
             val insertIndex = container.indexOfChild(autoReconnectView).takeIf { it >= 0 }
                 ?: container.childCount
-            container.addView(linkTextView, insertIndex)
-            container.addView(ackTextView, insertIndex + 1)
+            container.addView(snapshotTextView, insertIndex)
+            container.addView(linkTextView, insertIndex + 1)
+            container.addView(ackTextView, insertIndex + 2)
         }
         linkSummaryView = linkTextView
         ackSummaryView = ackTextView
+        snapshotSummaryView = snapshotTextView
         val pairingView = view.findViewById<TextView>(R.id.text_overview_pairing)
         val resetView = view.findViewById<TextView>(R.id.text_overview_resets)
         val leftPowerButton = view.findViewById<MaterialButton>(R.id.button_left_power_history)
@@ -258,7 +277,7 @@ class DeveloperFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.consoleLines.collectLatest { lines ->
                     val context = requireContext()
-                    val formatted = lines.map { LogFormatter.format(context, it) }
+                    val formatted = lines.map { formatConsoleLine(context, it) }
                     logsView.text = SpannableStringBuilder().apply {
                         formatted.forEachIndexed { index, span ->
                             append(span)
@@ -269,6 +288,23 @@ class DeveloperFragment : Fragment() {
                         consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
                     } else {
                         jumpLatest.isVisible = true
+                    }
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.snapshotLine.collectLatest { log ->
+                    snapshotSummaryView?.let { view ->
+                        if (log == null) {
+                            view.text = "SNAPSHOT: –"
+                            view.setTextColor(SNAPSHOT_COLOR_NORMAL)
+                        } else {
+                            val time = synchronized(snapshotTimeFormat) { snapshotTimeFormat.format(Date(log.timestamp)) }
+                            view.text = "SNAPSHOT [$time] ${log.message}"
+                            view.setTextColor(resolveSnapshotLineColor(log))
+                        }
                     }
                 }
             }
@@ -999,10 +1035,48 @@ class DeveloperFragment : Fragment() {
         return AckSummary(text, colorRes)
     }
 
+    private fun formatConsoleLine(context: Context, raw: String): CharSequence {
+        if (!raw.startsWith("[SNAPSHOT]")) {
+            return LogFormatter.format(context, raw)
+        }
+        val color = resolveSnapshotLineColor(raw)
+        return SpannableString(raw).apply {
+            setSpan(ForegroundColorSpan(color), 0, raw.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
+    private fun resolveSnapshotLineColor(raw: String): Int {
+        val ack = SNAPSHOT_ACK_REGEX.find(raw)?.groupValues?.getOrNull(1)?.trim()
+        val status = SNAPSHOT_STATUS_REGEX.find(raw)?.groupValues?.getOrNull(1)?.trim()
+        return when {
+            status != null && status.equals("OK", true) -> SNAPSHOT_COLOR_OK
+            status != null && status.equals("BUSY", true) -> SNAPSHOT_COLOR_WARN
+            status != null && status.isNotEmpty() -> SNAPSHOT_COLOR_ERROR
+            ack != null && ack.equals("Unknown", true) -> SNAPSHOT_COLOR_WARN
+            ack != null && ack.isNotEmpty() && ack != "–" -> SNAPSHOT_COLOR_OK
+            else -> SNAPSHOT_COLOR_NORMAL
+        }
+    }
+
+    private fun resolveSnapshotLineColor(log: BleTelemetryRepository.SnapshotLog): Int {
+        return when (log.severity) {
+            BleTelemetryRepository.SnapshotSeverity.OK -> SNAPSHOT_COLOR_OK
+            BleTelemetryRepository.SnapshotSeverity.WARN -> SNAPSHOT_COLOR_WARN
+            BleTelemetryRepository.SnapshotSeverity.ERROR -> SNAPSHOT_COLOR_ERROR
+            BleTelemetryRepository.SnapshotSeverity.NORMAL -> SNAPSHOT_COLOR_NORMAL
+        }
+    }
+
     companion object {
         private const val POWER_HISTORY_PREVIEW = 10
         private const val ACK_OK_THRESHOLD_MS = 15_000L
         private const val ACK_DELAY_THRESHOLD_MS = 60_000L
         private const val LINK_CRITICAL_MISS_THRESHOLD = 3
+        private val SNAPSHOT_COLOR_NORMAL = Color.parseColor("#DDDDDD")
+        private val SNAPSHOT_COLOR_OK = Color.parseColor("#9BE37B")
+        private val SNAPSHOT_COLOR_WARN = Color.parseColor("#FFC107")
+        private val SNAPSHOT_COLOR_ERROR = Color.parseColor("#FF6B6B")
+        private val SNAPSHOT_ACK_REGEX = Regex("ACK:\\s*([^\\s]+)")
+        private val SNAPSHOT_STATUS_REGEX = Regex("Status:\\s*([^\\s]+)")
     }
 }

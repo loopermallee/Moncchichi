@@ -8,6 +8,7 @@ import androidx.room.Insert
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.loopermallee.moncchichi.core.model.ChatMessage
@@ -89,6 +90,15 @@ interface MemoryDao {
 
     @Insert
     suspend fun addTelemetry(snapshot: TelemetrySnapshot)
+
+    @Query("DELETE FROM telemetry_snapshot")
+    suspend fun clearTelemetrySnapshots()
+
+    @Transaction
+    suspend fun replaceTelemetrySnapshot(snapshot: TelemetrySnapshot) {
+        clearTelemetrySnapshots()
+        addTelemetry(snapshot)
+    }
 
     @Query("SELECT * FROM console_log ORDER BY ts DESC LIMIT :n")
     suspend fun lastConsole(n: Int): List<ConsoleLine>
@@ -216,7 +226,7 @@ class MemoryRepository(private val dao: MemoryDao) {
 
     suspend fun addTelemetrySnapshot(snapshot: TelemetrySnapshotRecord) {
         withContext(Dispatchers.IO) {
-            dao.addTelemetry(snapshot.toEntity())
+            dao.replaceTelemetrySnapshot(snapshot.toEntity())
         }
     }
 
@@ -224,6 +234,10 @@ class MemoryRepository(private val dao: MemoryDao) {
         return withContext(Dispatchers.IO) {
             dao.recentTelemetrySnapshots(limit).map { it.toRecord() }
         }
+    }
+
+    suspend fun latestTelemetrySnapshot(): TelemetrySnapshotRecord? {
+        return recentTelemetrySnapshots(1).firstOrNull()
     }
 
     private fun TelemetrySnapshotRecord.toEntity(): TelemetrySnapshot {
