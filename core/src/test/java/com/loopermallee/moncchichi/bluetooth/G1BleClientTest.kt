@@ -342,6 +342,37 @@ class G1BleClientTest {
     }
 
     @Test
+    fun warmupAckWithAsciiOkCompletesWarmup() = runTest {
+        val harness = buildClientHarness(this)
+        try {
+            every { harness.device.bondState } returns BluetoothDevice.BOND_BONDED
+            every { harness.uartClient.connect() } returns Unit
+            every { harness.uartClient.write(any<ByteArray>()) } returns true
+
+            harness.client.connect()
+            runCurrent()
+
+            harness.connectionStateFlow.value = G1BleUartClient.ConnectionState.CONNECTED
+            harness.mtuFlow.value = 498
+            runCurrent()
+
+            val collector = harness.notificationCollectorSlot.captured
+            harness.notificationsArmedFlow.value = true
+            advanceTimeBy(200)
+            runCurrent()
+
+            collector.emit("OK".toByteArray())
+            runCurrent()
+
+            assertTrue(harness.client.state.value.warmupOk)
+            assertEquals(498, harness.client.state.value.attMtu)
+            verify { harness.uartClient.write(match { payload -> payload.firstOrNull() == 0x4D.toByte() }) }
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
     fun warmupKeepaliveDoesNotCompleteWarmup() = runTest {
         val harness = buildClientHarness(this)
         try {

@@ -154,13 +154,41 @@ class DualLensConnectionOrchestrator(
         leftRefreshRequested = false
 
         sessionActive = true
-        _connectionState.value = State.ConnectingLeft
+        _connectionState.value = State.ConnectingRight
         _telemetry.value = emptyMap()
         startHeartbeat()
 
         startTracking(Lens.LEFT, leftClient)
         startTracking(Lens.RIGHT, rightClient)
 
+        val rightResult = runCatching {
+            rightClient.ensureBonded()
+            delay(EVEN_SEQUENCE_DELAY_MS)
+            rightClient.connectAndSetup()
+            _connectionState.value = State.RightOnlineUnprimed
+            delay(EVEN_SEQUENCE_DELAY_MS)
+            val primed = rightClient.probeReady(Lens.RIGHT)
+            if (primed) {
+                rightClient.startKeepAlive()
+                _connectionState.value = State.ReadyRight
+            }
+            primed
+        }.getOrElse { false }
+
+        rightPrimed = rightResult
+        if (rightPrimed) {
+            flushPendingMirrors()
+        } else {
+            _connectionState.value = State.DegradedRightOnly
+            scheduleReconnect(Lens.RIGHT)
+            scheduleReconnect(Lens.LEFT)
+            return@coroutineScope
+        }
+
+        flushPendingLeftRefresh()
+
+        delay(EVEN_SEQUENCE_DELAY_MS)
+        _connectionState.value = State.ConnectingLeft
         val leftResult = runCatching {
             leftClient.ensureBonded()
             delay(EVEN_SEQUENCE_DELAY_MS)
@@ -175,44 +203,15 @@ class DualLensConnectionOrchestrator(
         }.getOrElse { false }
 
         leftPrimed = leftResult
-
-        val rightResult = if (leftResult) {
-            delay(EVEN_SEQUENCE_DELAY_MS)
-            _connectionState.value = State.ConnectingRight
-            runCatching {
-                rightClient.ensureBonded()
-                delay(EVEN_SEQUENCE_DELAY_MS)
-                rightClient.connectAndSetup()
-                _connectionState.value = State.RightOnlineUnprimed
-                delay(EVEN_SEQUENCE_DELAY_MS)
-                val primed = rightClient.probeReady(Lens.RIGHT)
-                if (primed) {
-                    rightClient.startKeepAlive()
-                    _connectionState.value = State.ReadyRight
-                }
-                primed
-            }.getOrElse { false }
-        } else {
-            false
-        }
-
-        rightPrimed = rightResult
-        if (rightPrimed) {
-            flushPendingMirrors()
-        }
         flushPendingLeftRefresh()
 
         when {
-            leftResult && rightResult -> {
+            rightResult && leftResult -> {
                 _connectionState.value = State.ReadyBoth
                 _connectionState.value = State.Stable
             }
-            leftResult && !rightResult -> {
-                _connectionState.value = State.DegradedLeftOnly
-                scheduleReconnect(Lens.RIGHT)
-            }
-            !leftResult -> {
-                _connectionState.value = State.ConnectingLeft
+            rightResult && !leftResult -> {
+                _connectionState.value = State.ReadyRight
                 scheduleReconnect(Lens.LEFT)
             }
         }
@@ -418,6 +417,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendRightOrQueue(payload: ByteArray, mirror: Boolean): Boolean {
+        if (rightPrimed) {
+            flushPendingMirrors()
+        }
         val shouldQueue = mirrorLock.withLock {
             val available = rightSession != null
             if (!available || !rightPrimed) {
@@ -434,6 +436,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendBothOrQueue(payload: ByteArray, mirror: Boolean): Boolean {
+        if (rightPrimed) {
+            flushPendingMirrors()
+        }
         val shouldQueue = mirrorLock.withLock {
             val available = rightSession != null
             if (!available || !rightPrimed) {
@@ -621,8 +626,8 @@ class DualLensConnectionOrchestrator(
                 val now = SystemClock.elapsedRealtime()
                 var success = false
                 try {
-                    if (side == Lens.RIGHT) {
-                        while (sessionActive && isActive && !leftPrimed) {
+                    if (side == Lens.LEFT) {
+                        while (sessionActive && isActive && !rightPrimed) {
                             delay(EVEN_SEQUENCE_DELAY_MS)
                         }
                     }

@@ -309,7 +309,12 @@ private fun AckOutcome.matchesOpcode(expectedOpcode: Int?): Boolean {
             return true
         }
         if (this is AckOutcome.Success) {
-            return warmupPrompt && ackOpcode == null
+            if (warmupPrompt && ackOpcode == null) {
+                return true
+            }
+            if (ackOpcode == null && status == G1Protocols.STATUS_OK) {
+                return true
+            }
         }
         return false
     }
@@ -727,11 +732,19 @@ class G1BleClient(
                     val now = System.currentTimeMillis()
                     var deliverAck = true
                     var keepAlivePrompt: KeepAlivePrompt? = null
-                    val warmupAck = ack is AckOutcome.Success && ack.satisfiesWarmupAck()
+                    val warmupAck = if (ack is AckOutcome.Success) {
+                        when {
+                            ack.satisfiesWarmupAck() -> true
+                            warmupExpected && ack.opcode == null && ack.status == G1Protocols.STATUS_OK -> true
+                            else -> false
+                        }
+                    } else {
+                        false
+                    }
                     when (ack) {
                         is AckOutcome.Success -> {
                             onAckEvent(now, AckState.OK, evaluateDelay = true)
-                            if (warmupExpected && ack.satisfiesWarmupAck()) {
+                            if (warmupExpected && warmupAck) {
                                 warmupExpected = false
                                 val negotiatedMtu = runCatching { uartClient.mtu.value }.getOrNull()
                                 if (lastAckedMtu == null && negotiatedMtu != null) {
