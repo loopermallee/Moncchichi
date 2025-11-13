@@ -65,7 +65,24 @@ class DualLensConnectionOrchestrator(
         val payload: ByteArray,
         val family: CommandRouter.Family,
         val mirror: Boolean,
+        val leftDispatched: Boolean = false,
     )
+
+    private fun PendingCommand.requiresLeft(): Boolean {
+        return when (family) {
+            CommandRouter.Family.BOTH -> true
+            CommandRouter.Family.RIGHT_ONLY -> mirror
+            else -> false
+        }
+    }
+
+    private fun PendingCommand.requiresRight(): Boolean {
+        return when (family) {
+            CommandRouter.Family.BOTH -> true
+            CommandRouter.Family.RIGHT_ONLY, CommandRouter.Family.UNKNOWN -> true
+            else -> false
+        }
+    }
 
     private val stateLock = Mutex()
 
@@ -140,6 +157,12 @@ class DualLensConnectionOrchestrator(
 
         disconnectHeadset()
 
+        stateLock.withLock {
+            latestLeft = null
+            latestRight = null
+            publishHeadsetState()
+        }
+
         val leftId = LensId(leftMac, Lens.LEFT)
         val rightId = LensId(rightMac, Lens.RIGHT)
         val leftClient = bleFactory(leftId)
@@ -154,13 +177,37 @@ class DualLensConnectionOrchestrator(
         leftRefreshRequested = false
 
         sessionActive = true
-        _connectionState.value = State.ConnectingRight
+        _connectionState.value = State.ConnectingLeft
         _telemetry.value = emptyMap()
         startHeartbeat()
 
         startTracking(Lens.LEFT, leftClient)
         startTracking(Lens.RIGHT, rightClient)
 
+        val leftResult = runCatching {
+            leftClient.ensureBonded()
+            delay(EVEN_SEQUENCE_DELAY_MS)
+            leftClient.connectAndSetup()
+            _connectionState.value = State.LeftOnlineUnprimed
+            delay(EVEN_SEQUENCE_DELAY_MS)
+            val primed = leftClient.probeReady(Lens.LEFT)
+            if (primed) {
+                leftClient.startKeepAlive()
+            }
+            primed
+        }.getOrElse { false }
+
+        leftPrimed = leftResult
+        if (leftPrimed) {
+            flushPendingMirrors()
+        } else {
+            _connectionState.value = State.DegradedRightOnly
+            scheduleReconnect(Lens.LEFT)
+            return@coroutineScope
+        }
+
+        delay(EVEN_SEQUENCE_DELAY_MS)
+        _connectionState.value = State.ConnectingRight
         val rightResult = runCatching {
             rightClient.ensureBonded()
             delay(EVEN_SEQUENCE_DELAY_MS)
@@ -179,41 +226,16 @@ class DualLensConnectionOrchestrator(
         if (rightPrimed) {
             flushPendingMirrors()
         } else {
-            _connectionState.value = State.DegradedRightOnly
+            _connectionState.value = State.DegradedLeftOnly
             scheduleReconnect(Lens.RIGHT)
-            scheduleReconnect(Lens.LEFT)
             return@coroutineScope
         }
 
         flushPendingLeftRefresh()
 
-        delay(EVEN_SEQUENCE_DELAY_MS)
-        _connectionState.value = State.ConnectingLeft
-        val leftResult = runCatching {
-            leftClient.ensureBonded()
-            delay(EVEN_SEQUENCE_DELAY_MS)
-            leftClient.connectAndSetup()
-            _connectionState.value = State.LeftOnlineUnprimed
-            delay(EVEN_SEQUENCE_DELAY_MS)
-            val primed = leftClient.probeReady(Lens.LEFT)
-            if (primed) {
-                leftClient.startKeepAlive()
-            }
-            primed
-        }.getOrElse { false }
-
-        leftPrimed = leftResult
-        flushPendingLeftRefresh()
-
-        when {
-            rightResult && leftResult -> {
-                _connectionState.value = State.ReadyBoth
-                _connectionState.value = State.Stable
-            }
-            rightResult && !leftResult -> {
-                _connectionState.value = State.ReadyRight
-                scheduleReconnect(Lens.LEFT)
-            }
+        if (leftResult && rightResult) {
+            _connectionState.value = State.ReadyBoth
+            _connectionState.value = State.Stable
         }
     }
 
@@ -417,13 +439,23 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendRightOrQueue(payload: ByteArray, mirror: Boolean): Boolean {
+        if (mirror) {
+            return sendBothOrQueue(payload, true)
+        }
         if (rightPrimed) {
             flushPendingMirrors()
         }
         val shouldQueue = mirrorLock.withLock {
             val available = rightSession != null
             if (!available || !rightPrimed) {
-                pendingMirrors.addLast(PendingCommand(payload.copyOf(), CommandRouter.Family.RIGHT_ONLY, mirror))
+                pendingMirrors.addLast(
+                    PendingCommand(
+                        payload.copyOf(),
+                        CommandRouter.Family.RIGHT_ONLY,
+                        mirror,
+                        leftDispatched = true,
+                    ),
+                )
                 true
             } else {
                 false
@@ -432,86 +464,78 @@ class DualLensConnectionOrchestrator(
         if (shouldQueue) {
             return true
         }
-        return sendRightImmediate(payload, mirror)
+        return sendRightImmediate(payload)
     }
 
     private suspend fun sendBothOrQueue(payload: ByteArray, mirror: Boolean): Boolean {
-        if (rightPrimed) {
+        if (leftPrimed) {
             flushPendingMirrors()
         }
-        val shouldQueue = mirrorLock.withLock {
-            val available = rightSession != null
-            if (!available || !rightPrimed) {
-                pendingMirrors.addLast(PendingCommand(payload.copyOf(), CommandRouter.Family.BOTH, mirror))
-                true
-            } else {
-                false
+        val leftReady = leftSession != null && leftPrimed
+        if (!leftReady) {
+            mirrorLock.withLock {
+                pendingMirrors.addLast(
+                    PendingCommand(
+                        payload.copyOf(),
+                        CommandRouter.Family.BOTH,
+                        mirror,
+                        leftDispatched = false,
+                    ),
+                )
             }
-        }
-        if (shouldQueue) {
             return true
         }
-        return sendBothImmediate(payload, mirror)
-    }
-
-    private suspend fun sendEventsImmediate(payload: ByteArray): Boolean {
-        var sent = false
-        rightSession?.let {
-            sent = sendTo(Lens.RIGHT, payload) || sent
-        }
-        leftSession?.let {
-            sent = sendTo(Lens.LEFT, payload) || sent
-        }
-        return sent
-    }
-
-    private suspend fun sendRightImmediate(payload: ByteArray, mirror: Boolean): Boolean {
-        val success = sendTo(Lens.RIGHT, payload)
-        if (success) {
-            mirrorToLeft(payload, mirror)
-        }
-        return success
-    }
-
-    private suspend fun sendBothImmediate(payload: ByteArray, mirror: Boolean): Boolean {
-        val rightOk = sendTo(Lens.RIGHT, payload)
-        if (!rightOk) {
+        val leftOk = sendTo(Lens.LEFT, payload)
+        if (!leftOk) {
             return false
         }
-        mirrorToLeft(payload, true)
+        val rightReady = rightSession != null && rightPrimed
+        if (!rightReady) {
+            mirrorLock.withLock {
+                pendingMirrors.addLast(
+                    PendingCommand(
+                        payload.copyOf(),
+                        CommandRouter.Family.BOTH,
+                        mirror,
+                        leftDispatched = true,
+                    ),
+                )
+            }
+            return true
+        }
+        val rightOk = sendTo(Lens.RIGHT, payload)
+        if (!rightOk) {
+            mirrorLock.withLock {
+                pendingMirrors.addLast(
+                    PendingCommand(
+                        payload.copyOf(),
+                        CommandRouter.Family.BOTH,
+                        mirror,
+                        leftDispatched = true,
+                    ),
+                )
+            }
+            return false
+        }
         if (mirror) {
             flushPendingLeftRefresh()
         }
         return true
     }
 
-    private suspend fun processPendingImmediate(command: PendingCommand) {
-        when (command.family) {
-            CommandRouter.Family.RIGHT_ONLY -> sendRightImmediate(command.payload, command.mirror)
-            CommandRouter.Family.BOTH -> sendBothImmediate(command.payload, command.mirror)
-            CommandRouter.Family.EVENTS -> sendEventsImmediate(command.payload)
-            CommandRouter.Family.UNKNOWN -> sendRightImmediate(command.payload, command.mirror)
+    private suspend fun sendEventsImmediate(payload: ByteArray): Boolean {
+        var sent = false
+        leftSession?.let {
+            sent = sendTo(Lens.LEFT, payload) || sent
         }
+        rightSession?.let {
+            sent = sendTo(Lens.RIGHT, payload) || sent
+        }
+        return sent
     }
 
-    private suspend fun mirrorToLeft(payload: ByteArray, force: Boolean) {
-        if (!force) {
-            return
-        }
-        val shouldQueue = leftRefreshLock.withLock {
-            val available = leftSession != null
-            if (!available || !leftPrimed || !rightPrimed) {
-                pendingLeftRefresh.addLast(payload.copyOf())
-                true
-            } else {
-                false
-            }
-        }
-        if (shouldQueue) {
-            flushPendingLeftRefresh()
-        } else {
-            sendTo(Lens.LEFT, payload)
-        }
+    private suspend fun sendRightImmediate(payload: ByteArray): Boolean {
+        return sendTo(Lens.RIGHT, payload)
     }
 
     private suspend fun sendTo(side: Lens, payload: ByteArray): Boolean {
@@ -539,6 +563,7 @@ class DualLensConnectionOrchestrator(
     private suspend fun markLeftPrimed(primed: Boolean) {
         leftPrimed = primed
         if (primed) {
+            flushPendingMirrors()
             flushPendingLeftRefresh()
             if (!rightPrimed) {
                 scheduleReconnect(Lens.RIGHT)
@@ -570,19 +595,57 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun flushPendingMirrors() {
-        if (!rightPrimed) {
-            return
-        }
         val commands = mutableListOf<PendingCommand>()
         mirrorLock.withLock {
-            if (!rightPrimed) {
-                return@withLock
-            }
             while (pendingMirrors.isNotEmpty()) {
                 commands += pendingMirrors.removeFirst()
             }
         }
-        commands.forEach { processPendingImmediate(it) }
+        if (commands.isEmpty()) {
+            return
+        }
+        val requeue = mutableListOf<PendingCommand>()
+        commands.forEach { command ->
+            var current = command
+            var pending = false
+
+            if (!current.leftDispatched && current.requiresLeft()) {
+                val leftReady = leftSession != null && leftPrimed
+                if (!leftReady) {
+                    pending = true
+                } else {
+                    val leftOk = sendTo(Lens.LEFT, current.payload)
+                    if (!leftOk) {
+                        pending = true
+                    } else {
+                        current = current.copy(leftDispatched = true)
+                    }
+                }
+            }
+
+            if (!pending && current.requiresRight()) {
+                val rightReady = rightSession != null && rightPrimed
+                if (!rightReady) {
+                    pending = true
+                } else {
+                    val rightOk = sendTo(Lens.RIGHT, current.payload)
+                    if (!rightOk) {
+                        pending = true
+                    }
+                }
+            }
+
+            if (pending) {
+                requeue.add(current)
+            } else if (current.mirror && current.requiresLeft()) {
+                flushPendingLeftRefresh()
+            }
+        }
+        if (requeue.isNotEmpty()) {
+            mirrorLock.withLock {
+                requeue.forEach { pendingMirrors.addLast(it) }
+            }
+        }
     }
 
     private suspend fun flushPendingLeftRefresh() {
@@ -626,8 +689,8 @@ class DualLensConnectionOrchestrator(
                 val now = SystemClock.elapsedRealtime()
                 var success = false
                 try {
-                    if (side == Lens.LEFT) {
-                        while (sessionActive && isActive && !rightPrimed) {
+                    if (side == Lens.RIGHT) {
+                        while (sessionActive && isActive && !leftPrimed) {
                             delay(EVEN_SEQUENCE_DELAY_MS)
                         }
                     }
