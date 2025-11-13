@@ -224,6 +224,9 @@ class MoncchichiBleService(
     }
     @Volatile
     private var sequenceLogged = false
+    private val caseStateLock = Any()
+    @Volatile
+    private var lastCaseOpen: Boolean? = null
     private val bondFailureStreak = mutableMapOf<Lens, Int>()
     private val staleBondFailureStreak = EnumMap<Lens, Int>(Lens::class.java).apply {
         Lens.values().forEach { lens -> put(lens, 0) }
@@ -569,6 +572,7 @@ class MoncchichiBleService(
 
     fun disconnectAll() {
         ALL_LENSES.forEach { disconnect(it) }
+        synchronized(caseStateLock) { lastCaseOpen = null }
     }
 
     fun updateHeartbeatLidOpen(lidOpen: Boolean?) {
@@ -894,6 +898,7 @@ class MoncchichiBleService(
                         if (parts.isNotEmpty()) {
                             log("[BLE][VITALS][$lens] ${parts.joinToString(separator = ", ")}")
                         }
+                        updateCaseOpenState(vitals.caseOpen, now)
                     }
                     is G1ReplyParser.Parsed.EvenAi -> {
                         val event = EvenAiEvent(lens, parsed.event)
@@ -1929,6 +1934,34 @@ private class HeartbeatSupervisor(
         busy: Boolean,
     ) {
         ackSignalFlow.tryEmit(AckSignal(lens, timestamp, elapsedRealtime, type, success, busy))
+    }
+
+    private fun updateCaseOpenState(caseOpen: Boolean?, timestamp: Long) {
+        if (caseOpen == null) {
+            return
+        }
+        var previous: Boolean?
+        var changed = false
+        synchronized(caseStateLock) {
+            if (lastCaseOpen != caseOpen) {
+                previous = lastCaseOpen
+                lastCaseOpen = caseOpen
+                changed = true
+            } else {
+                previous = lastCaseOpen
+            }
+        }
+        if (!changed) {
+            return
+        }
+        val message = "${previous.toCaseLabel()}→${caseOpen.toCaseLabel()}"
+        emitConsole("CASE", null, message, timestamp)
+    }
+
+    private fun Boolean?.toCaseLabel(): String = when (this) {
+        true -> "CaseOpen"
+        false -> "CaseClosed"
+        null -> "Unknown"
     }
 
     private fun markHandshakeLinked(lens: Lens) {
