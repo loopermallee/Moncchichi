@@ -698,6 +698,9 @@ class MoncchichiBleService(
             logWarn("[PAIRING] HELLO quick action skipped – ${lens.name.lowercase(Locale.US)} lens not connected")
             return false
         }
+        if (!record.client.awake.value) {
+            record.client.beginWakeHandshake()
+        }
         val result = record.client.forceHelloHandshake()
         if (!result) {
             updateLens(lens) { status -> status.copy(degraded = true) }
@@ -840,6 +843,9 @@ class MoncchichiBleService(
                 val wasReady = previousStatus.state == G1BleClient.ConnectionState.CONNECTED && previousStatus.warmupOk
                 val previouslyConnected = previousStatus.state == G1BleClient.ConnectionState.CONNECTED
                 val nowConnected = state.status == G1BleClient.ConnectionState.CONNECTED
+                if (nowConnected && !client.awake.value) {
+                    client.beginWakeHandshake()
+                }
                 if (!nowConnected) {
                     caseTelemetryRequested[lens] = false
                 }
@@ -961,11 +967,17 @@ class MoncchichiBleService(
         }
         jobs += scope.launch {
             client.keepAlivePrompts.collect { prompt ->
+                if (!client.awake.value || isLensSleeping(lens)) {
+                    return@collect
+                }
                 val now = System.currentTimeMillis()
                 val lastWrite = keepAliveWriteTimestamps[lens]
                 val elapsed = lastWrite?.let { now - it } ?: Long.MAX_VALUE
                 if (elapsed < KEEP_ALIVE_MIN_INTERVAL_MS) {
                     delay(KEEP_ALIVE_MIN_INTERVAL_MS - elapsed)
+                }
+                if (!client.awake.value || isLensSleeping(lens)) {
+                    return@collect
                 }
                 val result = client.respondToKeepAlivePrompt(prompt)
                 keepAliveWriteTimestamps[lens] = System.currentTimeMillis()
@@ -1328,6 +1340,9 @@ class MoncchichiBleService(
 
     private suspend fun performHeartbeat(lens: Lens): HeartbeatResult? {
         val record = clientRecords[lens] ?: return null
+        if (!record.client.awake.value || isLensSleeping(lens)) {
+            return null
+        }
         val busyDeadline = System.currentTimeMillis() + HEARTBEAT_BUSY_DEFER_MS
         while (coroutineContext.isActive && System.currentTimeMillis() < busyDeadline && isLensBusy(lens)) {
             delay(HEARTBEAT_BUSY_POLL_MS)
@@ -2034,6 +2049,7 @@ private class HeartbeatSupervisor(
         if (!previous.sleeping && updated.sleeping) {
             val reason = selectSleepReason(previousTriggers, currentTriggers)
             log("[SLEEP][${lens.shortLabel}] $reason")
+            clientRecords[lens]?.client?.enterSleepMode()
             updateLens(lens) {
                 it.copy(
                     sleeping = true,
@@ -2102,6 +2118,7 @@ private class HeartbeatSupervisor(
     }
 
     private fun onSleepModeEntered(timestamp: Long) {
+        clientRecords.values.forEach { record -> record.client.enterSleepMode() }
         hostHeartbeatSequence.indices.forEach { index -> hostHeartbeatSequence[index] = 0 }
         heartbeatSupervisor.shutdown()
         Lens.values().forEach { lens ->
