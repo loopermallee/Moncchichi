@@ -232,6 +232,10 @@ class MoncchichiBleService(
     private val caseStateLock = Any()
     @Volatile
     private var lastCaseOpen: Boolean? = null
+    private val vitalsLogLock = Any()
+    private val lastVitalsLogState = EnumMap<Lens, VitalsLogState?>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, null) }
+    }
     private val bondFailureStreak = mutableMapOf<Lens, Int>()
     private val staleBondFailureStreak = EnumMap<Lens, Int>(Lens::class.java).apply {
         Lens.values().forEach { lens -> put(lens, 0) }
@@ -936,21 +940,14 @@ class MoncchichiBleService(
                     is G1ReplyParser.Parsed.Vitals -> {
                         val vitals = parsed.vitals
                         handleVitalsSleepSignals(lens, vitals, now)
-                        val parts = buildList {
-                            vitals.batteryPercent?.let { add("battery=${it}%") }
-                            vitals.charging?.let { add(if (it) "charging" else "not charging") }
-                            vitals.firmwareVersion?.takeIf { it.isNotBlank() }?.let { add(it) }
-                        }
-                        if (parts.isNotEmpty()) {
-                            log("[BLE][VITALS][$lens] ${parts.joinToString(separator = ", ")}")
-                        }
                         updateCaseOpenState(vitals.caseOpen, now)
+                        logVitals(lens, vitals)
                     }
                     is G1ReplyParser.Parsed.EvenAi -> {
                         val event = EvenAiEvent(lens, parsed.event)
                         _evenAiEvents.tryEmit(event)
                         handleEvenAiSleepSignals(lens, parsed.event, now)
-                        log("Even AI event from $lens -> ${describeEvenAi(parsed.event)}")
+                        log("[BLE][EVENAI][${lens.shortLabel}] ${describeEvenAi(parsed.event)}")
                     }
                     else -> Unit
                 }
@@ -2006,6 +2003,59 @@ private class HeartbeatSupervisor(
         }
     }
 
+    private fun logVitals(lens: Lens, vitals: G1ReplyParser.DeviceVitals) {
+        val sleepSnapshot = synchronized(sleepStateLock) { sleepStates[lens] }
+        val caseLabel = resolveCaseLabel(vitals, sleepSnapshot)
+        val charging = vitals.charging ?: sleepSnapshot?.charging
+        val folded = sleepSnapshot?.folded
+        val newState = VitalsLogState(
+            batteryPercent = vitals.batteryPercent,
+            charging = charging,
+            caseLabel = caseLabel,
+            folded = folded,
+        )
+        val shouldLog = synchronized(vitalsLogLock) {
+            val previous = lastVitalsLogState[lens]
+            if (previous == newState) {
+                false
+            } else {
+                lastVitalsLogState[lens] = newState
+                true
+            }
+        }
+        if (!shouldLog) {
+            return
+        }
+        val batteryLabel = newState.batteryPercent?.let { "$it%" } ?: "n/a"
+        val chargingLabel = when (newState.charging) {
+            true -> "charging"
+            false -> "not_charging"
+            null -> "unknown"
+        }
+        val caseStateLabel = caseLabel ?: "unknown"
+        val foldLabel = when (folded) {
+            true -> "folded"
+            false -> "unfolded"
+            null -> "unknown"
+        }
+        log("[BLE][VITALS][${lens.shortLabel}] battery=$batteryLabel charging=$chargingLabel case=$caseStateLabel fold=$foldLabel")
+    }
+
+    private fun resolveCaseLabel(
+        vitals: G1ReplyParser.DeviceVitals,
+        state: SleepState?,
+    ): String? {
+        return when {
+            vitals.caseOpen == true -> "CaseOpen"
+            vitals.caseOpen == false -> "CaseClosed"
+            vitals.inCradle == true -> "InCase"
+            vitals.inCradle == false -> "OutOfCase"
+            state?.caseClosed == true -> "CaseClosed"
+            state?.inCase == true -> "InCase"
+            else -> null
+        }
+    }
+
     private fun handleEvenAiSleepSignals(
         lens: Lens,
         event: G1ReplyParser.EvenAiEvent,
@@ -2079,7 +2129,7 @@ private class HeartbeatSupervisor(
         val activeReason = currentTriggers.minByOrNull { it.priority }?.logLabel
         if (!previous.sleeping && updated.sleeping) {
             val reason = selectSleepReason(previousTriggers, currentTriggers)
-            log("[SLEEP][${lens.shortLabel}] $reason")
+            log("[SLEEP][${lens.shortLabel}] ${reason}→Sleep")
             clientRecords[lens]?.client?.enterSleepMode()
             heartbeatSupervisor.updateLensAwake(lens, false)
             updateLens(lens) {
@@ -2103,7 +2153,7 @@ private class HeartbeatSupervisor(
         }
         if (previous.sleeping && !updated.sleeping) {
             val reason = selectWakeReason(previousTriggers, currentTriggers)
-            log("[WAKE][${lens.shortLabel}] $reason")
+            log("[WAKE][${lens.shortLabel}] ${reason}→Active")
             updateLens(lens) {
                 it.copy(
                     sleeping = false,
@@ -2470,6 +2520,13 @@ private class HeartbeatSupervisor(
         val type: AckType,
         val success: Boolean,
         val busy: Boolean,
+    )
+
+    private data class VitalsLogState(
+        val batteryPercent: Int?,
+        val charging: Boolean?,
+        val caseLabel: String?,
+        val folded: Boolean?,
     )
 
     private data class SleepState(
