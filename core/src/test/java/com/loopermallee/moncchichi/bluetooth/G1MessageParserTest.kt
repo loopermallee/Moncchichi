@@ -3,6 +3,7 @@ package com.loopermallee.moncchichi.bluetooth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -35,6 +36,36 @@ class G1MessageParserTest {
         val error = "ERROR\r\n".encodeToByteArray().toAckFromAsciiOrNull()
         assertIs<AckOutcome.Failure>(error)
         assertEquals(G1Protocols.CMD_SYS_INFO, error.opcode)
+    }
+
+    @Test
+    fun telemetryUpdateMapsCaseOpen() {
+        val update = byteArrayOf(0x0E, 0x01).toTelemetryUpdateOrNull()
+        assertNotNull(update)
+        assertEquals(true, update.caseOpen)
+        assertNull(update.inCase)
+        assertNull(update.foldState)
+    }
+
+    @Test
+    fun telemetryUpdateMapsInCase() {
+        val update = byteArrayOf(0x0F, 0x00).toTelemetryUpdateOrNull()
+        assertNotNull(update)
+        assertEquals(false, update.inCase)
+        assertNull(update.caseOpen)
+        assertNull(update.foldState)
+    }
+
+    @Test
+    fun telemetryUpdateMapsFoldStateFromWearDetectOpcodes() {
+        val candidates = listOf(0x18, G1Protocols.CMD_WEAR_DETECT)
+        candidates.forEach { opcode ->
+            val update = byteArrayOf(opcode.toByte(), 0x01).toTelemetryUpdateOrNull()
+            assertNotNull(update, "Expected fold state for opcode=0x%02X".format(opcode))
+            assertEquals(true, update.foldState)
+            assertNull(update.caseOpen)
+            assertNull(update.inCase)
+        }
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.telemetry
 
+import com.loopermallee.moncchichi.bluetooth.G1MessageParser
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,6 +82,12 @@ class BleTelemetryRepository(
                 firstTelemetryAt.compareAndSet(0L, now)
             }
         }
+    }
+
+    suspend fun recordTelemetry(side: Lens, telemetry: G1MessageParser.TelemetryUpdate) {
+        val values = telemetry.toRepositoryMap()
+        if (values.isEmpty()) return
+        recordTelemetry(side, values)
     }
 
     suspend fun recordCaseTelemetry(
@@ -194,7 +201,7 @@ class BleTelemetryRepository(
                 "missedPingCount" -> snapshot = snapshot.copy(missedHeartbeats = raw.toIntOrNull(snapshot.missedHeartbeats) ?: snapshot.missedHeartbeats)
                 "caseOpen" -> snapshot = snapshot.copy(caseOpen = raw.toBooleanOrNull(snapshot.caseOpen))
                 "inCase" -> snapshot = snapshot.copy(inCase = raw.toBooleanOrNull(snapshot.inCase))
-                "folded" -> snapshot = snapshot.copy(folded = raw.toBooleanOrNull(snapshot.folded))
+                "foldState", "folded" -> snapshot = snapshot.copy(folded = raw.toBooleanOrNull(snapshot.folded))
                 "lastVitalsTimestamp" -> snapshot = snapshot.copy(lastVitalsTimestamp = raw.toLongOrNull(snapshot.lastVitalsTimestamp))
             }
         }
@@ -288,6 +295,17 @@ class BleTelemetryRepository(
     companion object {
         private const val VITALS_SLEEP_TIMEOUT_MS = 3_000L
     }
+}
+
+private fun G1MessageParser.TelemetryUpdate.toRepositoryMap(): Map<String, Any> {
+    val map = mutableMapOf<String, Any>()
+    batteryPercent?.let { map["batteryPercent"] = it }
+    firmwareVersion?.let { map["firmwareVersion"] = it }
+    rssi?.let { map["rssi"] = it }
+    caseOpen?.let { map["caseOpen"] = it }
+    inCase?.let { map["inCase"] = it }
+    foldState?.let { map["foldState"] = it }
+    return map
 }
 
 private fun maxOfNonNull(vararg values: Long?): Long? {
