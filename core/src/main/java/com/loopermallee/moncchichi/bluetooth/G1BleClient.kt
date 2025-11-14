@@ -498,6 +498,8 @@ class G1BleClient(
      * follow the firmware requirement of "notifications armed before any write".
      */
     val notifyReady: StateFlow<Boolean> = _notifyReady.asStateFlow()
+    private val _awake = MutableStateFlow(true)
+    val awake: StateFlow<Boolean> = _awake.asStateFlow()
     private val _state = MutableStateFlow(
         State(
             bonded = device.bondState == BluetoothDevice.BOND_BONDED,
@@ -814,7 +816,11 @@ class G1BleClient(
                         warmup = warmupAck,
                     )
                     _ackEvents.tryEmit(event)
-                    keepAlivePrompt?.let { prompt -> _keepAlivePrompts.tryEmit(prompt) }
+                    keepAlivePrompt?.let { prompt ->
+                        if (_awake.value) {
+                            _keepAlivePrompts.tryEmit(prompt)
+                        }
+                    }
                     if (deliverAck) {
                         ackSignals.trySend(ack)
                     }
@@ -859,6 +865,7 @@ class G1BleClient(
     }
 
     fun close() {
+        stopAckWatchdog()
         monitorJob?.cancel()
         rssiJob?.cancel()
         mtuJob?.cancel()
@@ -888,6 +895,9 @@ class G1BleClient(
         keepAliveInFlight.set(0)
         lastWriteRealtime.set(0L)
         lastAckTimeoutReported.set(0L)
+        lastAckRealtime.set(0L)
+        ackTimeoutStreak.set(0)
+        _awake.value = true
         _notifyReady.value = false
         cancelPairingDialogWatchdog()
         dismissPairingNotification()
@@ -898,6 +908,31 @@ class G1BleClient(
             warmupOk = false,
             lastDisconnectStatus = null,
         )
+    }
+
+    fun enterSleepMode() {
+        if (!_awake.value) return
+        _awake.value = false
+        stopAckWatchdog()
+        keepAliveInFlight.set(0)
+        resetAckTelemetry()
+        lastWriteRealtime.set(0L)
+        lastAckTimeoutReported.set(0L)
+        pendingAsciiAck = false
+        while (ackSignals.tryReceive().isSuccess) {
+            // Drain any pending ACK completions before signalling cancellation.
+        }
+        ackSignals.trySend(AckOutcome.Failure(opcode = null, status = null))
+    }
+
+    fun beginWakeHandshake() {
+        val wasAwake = _awake.value
+        _awake.value = true
+        if (!wasAwake) {
+            keepAliveInFlight.set(0)
+            resetAckTelemetry()
+        }
+        startAckWatchdog()
     }
 
     suspend fun awaitConnected(timeoutMs: Long): Boolean {
@@ -1013,6 +1048,9 @@ class G1BleClient(
     }
 
     suspend fun enqueueHeartbeat(sequence: Int, payload: ByteArray): Boolean {
+        if (!_awake.value) {
+            return false
+        }
         val ready = if (_notifyReady.value) true else awaitNotifyReady()
         if (!ready) {
             logger.w(
@@ -1046,6 +1084,9 @@ class G1BleClient(
     }
 
     suspend fun forceHelloHandshake(): Boolean {
+        if (!_awake.value) {
+            beginWakeHandshake()
+        }
         val ready = if (_notifyReady.value) true else awaitNotifyReady()
         if (!ready) {
             logger.w(
@@ -1360,9 +1401,14 @@ class G1BleClient(
     }
 
     private fun startAckWatchdog() {
-        ackWatchdogJob?.cancel()
+        if (!_awake.value) return
+        stopAckWatchdog()
         ackWatchdogJob = scope.launch {
             while (isActive) {
+                if (!_awake.value) {
+                    delay(ACK_HEALTH_POLL_INTERVAL_MS)
+                    continue
+                }
                 val lastRealtime = lastAckRealtime.get()
                 val nowRealtime = SystemClock.elapsedRealtime()
                 val elapsed = if (lastRealtime == 0L) null else nowRealtime - lastRealtime
@@ -1394,6 +1440,11 @@ class G1BleClient(
                 delay(ACK_HEALTH_POLL_INTERVAL_MS)
             }
         }
+    }
+
+    private fun stopAckWatchdog() {
+        ackWatchdogJob?.cancel()
+        ackWatchdogJob = null
     }
 
     private fun resetAckTelemetry() {
@@ -1439,6 +1490,18 @@ class G1BleClient(
     }
 
     suspend fun respondToKeepAlivePrompt(prompt: KeepAlivePrompt): KeepAliveResult {
+        if (!_awake.value) {
+            return KeepAliveResult(
+                promptTimestampMs = prompt.timestampMs,
+                completedTimestampMs = System.currentTimeMillis(),
+                success = false,
+                attemptCount = 0,
+                sequence = keepAliveSequence.get(),
+                rttMs = null,
+                lockContentionCount = 0,
+                ackTimeoutCount = 0,
+            )
+        }
         var attempt = 0
         var success = false
         var rttMs: Long? = null
