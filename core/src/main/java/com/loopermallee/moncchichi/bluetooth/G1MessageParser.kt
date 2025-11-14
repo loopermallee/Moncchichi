@@ -8,6 +8,27 @@ import kotlin.text.Charsets
 object G1MessageParser {
 
     /**
+     * Structured telemetry payload emitted by individual opcodes.
+     */
+    data class TelemetryUpdate(
+        val batteryPercent: Int? = null,
+        val firmwareVersion: String? = null,
+        val rssi: Int? = null,
+        val caseOpen: Boolean? = null,
+        val inCase: Boolean? = null,
+        val foldState: Boolean? = null,
+    ) {
+        internal fun hasAnyValues(): Boolean {
+            return batteryPercent != null ||
+                firmwareVersion != null ||
+                rssi != null ||
+                caseOpen != null ||
+                inCase != null ||
+                foldState != null
+        }
+    }
+
+    /**
      * Represents a textual system frame emitted in response to [G1Protocols.CMD_SYS_INFO].
      */
     data class AsciiSystemFrame(
@@ -67,6 +88,18 @@ internal fun ByteArray.toAckFromAsciiOrNull(): AckOutcome? {
     }
 }
 
+fun ByteArray.toTelemetryUpdateOrNull(): G1MessageParser.TelemetryUpdate? {
+    if (isEmpty()) return null
+    val opcode = this[0].toInt() and 0xFF
+    val update = when (opcode) {
+        0x0E -> G1MessageParser.TelemetryUpdate(caseOpen = booleanAt(1))
+        0x0F -> G1MessageParser.TelemetryUpdate(inCase = booleanAt(1))
+        0x18, G1Protocols.CMD_WEAR_DETECT -> G1MessageParser.TelemetryUpdate(foldState = booleanAt(1))
+        else -> null
+    } ?: return null
+    return update.takeIf { it.hasAnyValues() }
+}
+
 private fun ByteArray.normalizedAsciiTokens(): List<String> {
     if (isEmpty()) return emptyList()
     val ascii = runCatching { String(this, Charsets.UTF_8) }.getOrNull() ?: return emptyList()
@@ -82,4 +115,13 @@ private fun ByteArray.normalizedAsciiTokens(): List<String> {
         }
         .filter { it.isNotEmpty() }
         .toList()
+}
+
+private fun ByteArray.booleanAt(index: Int): Boolean? {
+    val raw = getOrNull(index)?.toInt()?.and(0xFF) ?: return null
+    return when (raw) {
+        0 -> false
+        1 -> true
+        else -> null
+    }
 }
