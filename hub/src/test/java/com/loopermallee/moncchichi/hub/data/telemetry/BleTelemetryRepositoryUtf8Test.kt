@@ -8,6 +8,7 @@ import com.loopermallee.moncchichi.hub.data.db.MemoryDao
 import com.loopermallee.moncchichi.hub.data.db.MemoryRepository
 import com.loopermallee.moncchichi.hub.data.db.TelemetrySnapshot
 import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
+import com.loopermallee.moncchichi.telemetry.BleTelemetryRepository as CoreBleTelemetryRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -19,8 +20,40 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 
 class BleTelemetryRepositoryUtf8Test {
+
+    @Test
+    fun `core snapshot json persists case state`() = runTest {
+        val records = mutableListOf<CoreBleTelemetryRepository.SnapshotRecord>()
+        val repository = CoreBleTelemetryRepository(
+            snapshotStore = object : CoreBleTelemetryRepository.TelemetrySnapshotStore {
+                override suspend fun persist(record: CoreBleTelemetryRepository.SnapshotRecord) {
+                    records += record
+                }
+            },
+        )
+
+        repository.recordTelemetry(
+            Lens.LEFT,
+            mapOf(
+                "batteryPercent" to 75,
+                "caseOpen" to false,
+                "inCase" to true,
+                "folded" to true,
+            ),
+        )
+        repository.persistSnapshot()
+
+        val record = records.single()
+        val leftJson = JSONObject(requireNotNull(record.leftJson))
+        assertEquals(false, leftJson.getBoolean("caseOpen"))
+        assertEquals(true, leftJson.getBoolean("inCase"))
+        assertEquals(true, leftJson.getBoolean("folded"))
+        assertTrue(leftJson.has("lastVitalsTimestamp"))
+        assertTrue(leftJson.getLong("lastVitalsTimestamp") > 0)
+    }
 
     @Test
     fun `ver banner emitted for each lens`() = runTest {
