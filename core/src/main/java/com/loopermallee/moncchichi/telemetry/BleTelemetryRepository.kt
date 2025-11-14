@@ -26,6 +26,10 @@ class BleTelemetryRepository(
         val lastAckAt: Long? = null,
         val missedHeartbeats: Int = 0,
         val lastUpdatedAt: Long? = null,
+        val caseOpen: Boolean? = null,
+        val inCase: Boolean? = null,
+        val folded: Boolean? = null,
+        val lastVitalsTimestamp: Long? = null,
     )
 
     data class CaseSnapshot(
@@ -39,6 +43,10 @@ class BleTelemetryRepository(
     data class Snapshot(
         val left: LensSnapshot = LensSnapshot(),
         val right: LensSnapshot = LensSnapshot(),
+        val caseOpen: Boolean? = null,
+        val inCase: Boolean? = null,
+        val folded: Boolean? = null,
+        val lastVitalsTimestamp: Long? = null,
         val recordedAt: Long = System.currentTimeMillis(),
     )
 
@@ -145,9 +153,31 @@ class BleTelemetryRepository(
     }
 
     private fun Snapshot.update(side: Lens, lens: LensSnapshot, timestamp: Long): Snapshot {
+        val other = when (side) {
+            Lens.LEFT -> right
+            Lens.RIGHT -> left
+        }
+        val mergedCaseOpen = lens.caseOpen ?: other.caseOpen ?: caseOpen
+        val mergedInCase = lens.inCase ?: other.inCase ?: inCase
+        val mergedFolded = lens.folded ?: other.folded ?: folded
+        val mergedVitals = maxOfNonNull(lens.lastVitalsTimestamp, other.lastVitalsTimestamp, lastVitalsTimestamp)
         return when (side) {
-            Lens.LEFT -> copy(left = lens, recordedAt = timestamp)
-            Lens.RIGHT -> copy(right = lens, recordedAt = timestamp)
+            Lens.LEFT -> copy(
+                left = lens,
+                caseOpen = mergedCaseOpen,
+                inCase = mergedInCase,
+                folded = mergedFolded,
+                lastVitalsTimestamp = mergedVitals,
+                recordedAt = timestamp,
+            )
+            Lens.RIGHT -> copy(
+                right = lens,
+                caseOpen = mergedCaseOpen,
+                inCase = mergedInCase,
+                folded = mergedFolded,
+                lastVitalsTimestamp = mergedVitals,
+                recordedAt = timestamp,
+            )
         }
     }
 
@@ -162,8 +192,13 @@ class BleTelemetryRepository(
                 "lastPingAt" -> snapshot = snapshot.copy(lastPingAt = raw.toLongOrNull(snapshot.lastPingAt))
                 "lastAckAt" -> snapshot = snapshot.copy(lastAckAt = raw.toLongOrNull(snapshot.lastAckAt))
                 "missedPingCount" -> snapshot = snapshot.copy(missedHeartbeats = raw.toIntOrNull(snapshot.missedHeartbeats) ?: snapshot.missedHeartbeats)
+                "caseOpen" -> snapshot = snapshot.copy(caseOpen = raw.toBooleanOrNull(snapshot.caseOpen))
+                "inCase" -> snapshot = snapshot.copy(inCase = raw.toBooleanOrNull(snapshot.inCase))
+                "folded" -> snapshot = snapshot.copy(folded = raw.toBooleanOrNull(snapshot.folded))
+                "lastVitalsTimestamp" -> snapshot = snapshot.copy(lastVitalsTimestamp = raw.toLongOrNull(snapshot.lastVitalsTimestamp))
             }
         }
+        snapshot = snapshot.copy(lastVitalsTimestamp = maxOfNonNull(snapshot.lastVitalsTimestamp, timestamp))
         return snapshot
     }
 
@@ -187,6 +222,10 @@ class BleTelemetryRepository(
         lastAckAt?.let { json.put("lastAckAt", it) }
         json.put("missedHeartbeats", missedHeartbeats)
         lastUpdatedAt?.let { json.put("updatedAt", it) }
+        caseOpen?.let { json.put("caseOpen", it) }
+        inCase?.let { json.put("inCase", it) }
+        folded?.let { json.put("folded", it) }
+        lastVitalsTimestamp?.let { json.put("lastVitalsTimestamp", it) }
         return json.takeUnless { it.length() == 0 }?.toString()
     }
 
@@ -211,8 +250,46 @@ class BleTelemetryRepository(
         return value.takeIf { it.isNotBlank() } ?: default
     }
 
+    private fun Any.toBooleanOrNull(default: Boolean?): Boolean? {
+        return when (this) {
+            is Boolean -> this
+            is Number -> when (toInt()) {
+                0 -> false
+                1 -> true
+                else -> default
+            }
+            is String -> when {
+                equals("true", ignoreCase = true) -> true
+                equals("false", ignoreCase = true) -> false
+                this == "1" -> true
+                this == "0" -> false
+                else -> default
+            }
+            else -> default
+        }
+    }
+
+    fun isSleeping(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val snapshot = _snapshot.value
+        val lensSnapshot = snapshot.lens(lens)
+        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
+        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
+        val resolvedFolded = lensSnapshot.folded ?: snapshot.folded
+        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
+        val vitalsExpired = lastVitals?.let { nowMillis - it > VITALS_SLEEP_TIMEOUT_MS } ?: false
+        return (resolvedCaseOpen == false) || (resolvedInCase == true) || (resolvedFolded == true) || vitalsExpired
+    }
+
     private fun SnapshotRecord?.hasSameContent(other: SnapshotRecord?): Boolean {
         if (this == null || other == null) return false
         return caseJson == other.caseJson && leftJson == other.leftJson && rightJson == other.rightJson
     }
+
+    companion object {
+        private const val VITALS_SLEEP_TIMEOUT_MS = 3_000L
+    }
+}
+
+private fun maxOfNonNull(vararg values: Long?): Long? {
+    return values.filterNotNull().maxOrNull()
 }
