@@ -339,6 +339,8 @@ class G1BleClient(
     ) -> G1BleUartClient = ::G1BleUartClient,
 ) {
 
+    private enum class LensSide { LEFT, RIGHT, UNKNOWN }
+
     companion object {
         private const val MTU_COMMAND_ACK_TIMEOUT_MS = G1Protocols.MTU_ACK_TIMEOUT_MS
         private const val MTU_COMMAND_WARMUP_GRACE_MS = G1Protocols.MTU_WARMUP_GRACE_MS
@@ -358,6 +360,7 @@ class G1BleClient(
         private const val GATT_RESET_DELAY_MS = 250L
         internal const val KEEP_ALIVE_ACK_TIMEOUT_MS = G1Protocols.DEVICE_KEEPALIVE_ACK_TIMEOUT_MS
         internal const val KEEP_ALIVE_RETRY_BACKOFF_MS = G1Protocols.RETRY_BACKOFF_MS
+        private val leftNotifyReadySignal = MutableStateFlow(false)
         internal const val KEEP_ALIVE_LOCK_POLL_INTERVAL_MS = 20L
         // Handshake capture shows firmware initiating keep-alive at sequence 0x01.
         private const val KEEP_ALIVE_INITIAL_SEQUENCE = 0x01
@@ -542,9 +545,19 @@ class G1BleClient(
     private var ackWatchdogJob: Job? = null
     @Volatile private var linkLoggedThisSession: Boolean = false
     @Volatile private var ackLoggedThisSession: Boolean = false
+    private val lensSide: LensSide = when {
+        lensLabel.equals("L", ignoreCase = true) -> LensSide.LEFT
+        lensLabel.equals("R", ignoreCase = true) -> LensSide.RIGHT
+        else -> LensSide.UNKNOWN
+    }
+    private val isLeftLens: Boolean get() = lensSide == LensSide.LEFT
+    private val isRightLens: Boolean get() = lensSide == LensSide.RIGHT
 
     fun connect() {
         _notifyReady.value = false
+        if (isLeftLens) {
+            leftNotifyReadySignal.value = false
+        }
         lastAckedMtu = null
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
@@ -618,6 +631,10 @@ class G1BleClient(
                             _notifyReady.value = false
                             logger.i(label, "${tt()} [BLE] Notifications disarmed (link down)")
                         }
+                        if (isLeftLens && leftNotifyReadySignal.value) {
+                            leftNotifyReadySignal.value = false
+                            logger.i(label, "${tt()} [BLE][${lensLabel}] Left notify readiness cleared")
+                        }
                         warmupExpected = false
                         _state.value = _state.value.copy(attMtu = null, warmupOk = false)
                         linkLoggedThisSession = false
@@ -637,9 +654,26 @@ class G1BleClient(
 
                     val notifyShouldBeReady = armed
                     if (_notifyReady.value != notifyShouldBeReady) {
+                        if (notifyShouldBeReady && isRightLens && !leftNotifyReadySignal.value) {
+                            logger.i(
+                                label,
+                                "${tt()} [BLE][${lensLabel}] Waiting for LEFT notify readiness before arming RIGHT",
+                            )
+                            leftNotifyReadySignal.filter { it }.first()
+                            logger.i(
+                                label,
+                                "${tt()} [BLE][${lensLabel}] LEFT notify readiness observed; continuing RIGHT setup",
+                            )
+                        }
                         _notifyReady.value = notifyShouldBeReady
                         val statusLabel = if (notifyShouldBeReady) "armed" else "disarmed"
                         logger.i(label, "${tt()} [BLE] Notifications $statusLabel (mtu=$mtu)")
+                        if (isLeftLens) {
+                            leftNotifyReadySignal.value = notifyShouldBeReady
+                            if (notifyShouldBeReady) {
+                                logger.i(label, "${tt()} [BLE][${lensLabel}] LEFT notify readiness primed")
+                            }
+                        }
                     }
 
                     val alreadyAcked = lastAckedMtu == mtu
@@ -725,8 +759,13 @@ class G1BleClient(
             uartClient.observeNotifications { payload ->
                 val copy = payload.copyOf()
                 var ack = copy.parseAckOutcome()
-                if (ack == null && pendingAsciiAck) {
-                    ack = copy.toAckFromAsciiOrNull()
+                if (ack == null) {
+                    val asciiAck = copy.toAckFromAsciiOrNull()
+                    ack = when {
+                        asciiAck is AckOutcome.Success && asciiAck.status == G1Protocols.STATUS_OK -> asciiAck
+                        pendingAsciiAck -> asciiAck
+                        else -> null
+                    }
                 }
                 if (ack != null && ack !is AckOutcome.Continue && ack !is AckOutcome.Complete) {
                     pendingAsciiAck = false
