@@ -29,7 +29,7 @@ class BleTelemetryRepository(
         val lastUpdatedAt: Long? = null,
         val caseOpen: Boolean? = null,
         val inCase: Boolean? = null,
-        val folded: Boolean? = null,
+        val foldState: Boolean? = null,
         val lastVitalsTimestamp: Long? = null,
     )
 
@@ -46,7 +46,7 @@ class BleTelemetryRepository(
         val right: LensSnapshot = LensSnapshot(),
         val caseOpen: Boolean? = null,
         val inCase: Boolean? = null,
-        val folded: Boolean? = null,
+        val foldState: Boolean? = null,
         val lastVitalsTimestamp: Long? = null,
         val recordedAt: Long = System.currentTimeMillis(),
     )
@@ -166,22 +166,26 @@ class BleTelemetryRepository(
         }
         val mergedCaseOpen = lens.caseOpen ?: other.caseOpen ?: caseOpen
         val mergedInCase = lens.inCase ?: other.inCase ?: inCase
-        val mergedFolded = lens.folded ?: other.folded ?: folded
+        val mergedFoldState = lens.foldState ?: other.foldState ?: foldState
         val mergedVitals = maxOfNonNull(lens.lastVitalsTimestamp, other.lastVitalsTimestamp, lastVitalsTimestamp)
+        val normalizedLens = lens.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedVitals)
+        val normalizedOther = other.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedVitals)
         return when (side) {
             Lens.LEFT -> copy(
-                left = lens,
+                left = normalizedLens,
+                right = normalizedOther,
                 caseOpen = mergedCaseOpen,
                 inCase = mergedInCase,
-                folded = mergedFolded,
+                foldState = mergedFoldState,
                 lastVitalsTimestamp = mergedVitals,
                 recordedAt = timestamp,
             )
             Lens.RIGHT -> copy(
-                right = lens,
+                left = normalizedOther,
+                right = normalizedLens,
                 caseOpen = mergedCaseOpen,
                 inCase = mergedInCase,
-                folded = mergedFolded,
+                foldState = mergedFoldState,
                 lastVitalsTimestamp = mergedVitals,
                 recordedAt = timestamp,
             )
@@ -201,12 +205,26 @@ class BleTelemetryRepository(
                 "missedPingCount" -> snapshot = snapshot.copy(missedHeartbeats = raw.toIntOrNull(snapshot.missedHeartbeats) ?: snapshot.missedHeartbeats)
                 "caseOpen" -> snapshot = snapshot.copy(caseOpen = raw.toBooleanOrNull(snapshot.caseOpen))
                 "inCase" -> snapshot = snapshot.copy(inCase = raw.toBooleanOrNull(snapshot.inCase))
-                "foldState", "folded" -> snapshot = snapshot.copy(folded = raw.toBooleanOrNull(snapshot.folded))
+                "foldState", "folded" -> snapshot = snapshot.copy(foldState = raw.toBooleanOrNull(snapshot.foldState))
                 "lastVitalsTimestamp" -> snapshot = snapshot.copy(lastVitalsTimestamp = raw.toLongOrNull(snapshot.lastVitalsTimestamp))
             }
         }
         snapshot = snapshot.copy(lastVitalsTimestamp = maxOfNonNull(snapshot.lastVitalsTimestamp, timestamp))
         return snapshot
+    }
+
+    private fun LensSnapshot.withSharedValues(
+        caseOpenValue: Boolean?,
+        inCaseValue: Boolean?,
+        foldStateValue: Boolean?,
+        lastVitalsValue: Long?,
+    ): LensSnapshot {
+        return copy(
+            caseOpen = caseOpen ?: caseOpenValue,
+            inCase = inCase ?: inCaseValue,
+            foldState = foldState ?: foldStateValue,
+            lastVitalsTimestamp = lastVitalsTimestamp ?: lastVitalsValue,
+        )
     }
 
     private fun CaseSnapshot.toJsonString(): String? {
@@ -231,7 +249,10 @@ class BleTelemetryRepository(
         lastUpdatedAt?.let { json.put("updatedAt", it) }
         caseOpen?.let { json.put("caseOpen", it) }
         inCase?.let { json.put("inCase", it) }
-        folded?.let { json.put("folded", it) }
+        foldState?.let {
+            json.put("foldState", it)
+            json.put("folded", it)
+        }
         lastVitalsTimestamp?.let { json.put("lastVitalsTimestamp", it) }
         return json.takeUnless { it.length() == 0 }?.toString()
     }
@@ -281,10 +302,30 @@ class BleTelemetryRepository(
         val lensSnapshot = snapshot.lens(lens)
         val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
         val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
-        val resolvedFolded = lensSnapshot.folded ?: snapshot.folded
+        val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
         val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        val vitalsExpired = lastVitals?.let { nowMillis - it > VITALS_SLEEP_TIMEOUT_MS } ?: false
-        return (resolvedCaseOpen == false) || (resolvedInCase == true) || (resolvedFolded == true) || vitalsExpired
+        if (resolvedCaseOpen == null || resolvedInCase == null || resolvedFoldState == null || lastVitals == null) {
+            return false
+        }
+        val vitalsFresh = nowMillis - lastVitals <= VITALS_SLEEP_TIMEOUT_MS
+        return (resolvedCaseOpen == false) && (resolvedInCase == true) && (resolvedFoldState == true) && vitalsFresh
+    }
+
+    fun isAwake(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val snapshot = _snapshot.value
+        val lensSnapshot = snapshot.lens(lens)
+        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
+        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
+        val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
+        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
+        val vitalsStale = lastVitals?.let { nowMillis - it > VITALS_SLEEP_TIMEOUT_MS } ?: true
+        if (resolvedCaseOpen == null && resolvedInCase == null && resolvedFoldState == null && lastVitals == null) {
+            return false
+        }
+        if (resolvedCaseOpen == true) return true
+        if (resolvedInCase == false) return true
+        if (resolvedFoldState == false) return true
+        return vitalsStale
     }
 
     private fun SnapshotRecord?.hasSameContent(other: SnapshotRecord?): Boolean {
