@@ -67,6 +67,7 @@ class MoncchichiBleService(
 
     enum class ConnectionStage {
         Idle,
+        IdleSleep,
         ConnectLeft,
         LeftReady,
         Warmup,
@@ -110,6 +111,8 @@ class MoncchichiBleService(
         val heartbeatAckType: AckType? = null,
         val heartbeatLastPingAt: Long? = null,
         val heartbeatMissCount: Int = 0,
+        val sleeping: Boolean = false,
+        val sleepReason: String? = null,
     ) {
         val isConnected: Boolean get() = state == G1BleClient.ConnectionState.CONNECTED
     }
@@ -314,6 +317,16 @@ class MoncchichiBleService(
     }
     private val lastDisconnectTimestamp = EnumMap<Lens, Long>(Lens::class.java)
     private val stabilityTimeFormatter = ThreadLocal.withInitial { SimpleDateFormat("HH:mm:ss", Locale.US) }
+    private val sleepStates = EnumMap<Lens, SleepState>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, SleepState()) }
+    }
+    private val sleepStateLock = Any()
+    private val sleepMonitorJob = scope.launch {
+        while (isActive) {
+            checkSleepTimeouts()
+            delay(SLEEP_TIMEOUT_POLL_MS)
+        }
+    }
 
     suspend fun connect(device: BluetoothDevice, lensOverride: Lens? = null): Boolean =
         withContext(Dispatchers.IO) {
@@ -534,7 +547,9 @@ class MoncchichiBleService(
     fun disconnect(lens: Lens) {
         clientRecords.remove(lens)?.let { record ->
             log("Disconnecting $lens")
-            record.client.refreshDeviceCache()
+            if (!isSleepModeActive()) {
+                record.client.refreshDeviceCache()
+            }
             record.dispose()
         }
         keepAliveWriteTimestamps.remove(lens)
@@ -558,15 +573,24 @@ class MoncchichiBleService(
         }
         ensureHeartbeatLoop()
         val current = state.value
+        val sleepActive = isSleepModeActive()
         if (!current.left.isConnected && !current.right.isConnected) {
-            setStage(ConnectionStage.Idle)
+            if (sleepActive) {
+                setStage(ConnectionStage.IdleSleep)
+            } else {
+                setStage(ConnectionStage.Idle)
+            }
             if (connectionOrder.isNotEmpty()) {
                 connectionOrder.clear()
                 refreshConnectionOrderState()
             }
-            scope.launch { refreshAllGattCaches() }
+            if (!sleepActive) {
+                scope.launch { refreshAllGattCaches() }
+            }
         } else if (current.left.isConnected && !current.right.isConnected) {
             setStage(ConnectionStage.LeftReady)
+        } else if (sleepActive) {
+            setStage(ConnectionStage.IdleSleep)
         }
     }
 
@@ -845,6 +869,10 @@ class MoncchichiBleService(
             client.incoming.collect { payload ->
                 val now = System.currentTimeMillis()
                 val opcode = payload.firstOrNull()?.toInt()?.and(0xFF)
+                detectManualExit(lens, payload, now)
+                if (opcode == G1Protocols.OPC_EVENT) {
+                    handleEventSleepSignals(lens, payload, now)
+                }
                 when {
                     isAckContinuation(opcode) -> {
                         ackContinuationBuffers[lens]?.let { buffer ->
@@ -890,6 +918,7 @@ class MoncchichiBleService(
                 when (val parsed = G1ReplyParser.parseNotify(payload)) {
                     is G1ReplyParser.Parsed.Vitals -> {
                         val vitals = parsed.vitals
+                        handleVitalsSleepSignals(lens, vitals, now)
                         val parts = buildList {
                             vitals.batteryPercent?.let { add("battery=${it}%") }
                             vitals.charging?.let { add(if (it) "charging" else "not charging") }
@@ -903,6 +932,7 @@ class MoncchichiBleService(
                     is G1ReplyParser.Parsed.EvenAi -> {
                         val event = EvenAiEvent(lens, parsed.event)
                         _evenAiEvents.tryEmit(event)
+                        handleEvenAiSleepSignals(lens, parsed.event, now)
                         log("Even AI event from $lens -> ${describeEvenAi(parsed.event)}")
                     }
                     else -> Unit
@@ -961,11 +991,13 @@ class MoncchichiBleService(
         lens: Lens,
         result: G1BleClient.KeepAliveResult,
     ) {
+        val sleeping = isLensSleeping(lens)
         updateLens(lens) { status ->
             val previousFailures = status.consecutiveKeepAliveFailures
             val nextFailures = if (result.success) 0 else previousFailures + 1
             val threshold = G1BleClient.KEEP_ALIVE_MAX_ATTEMPTS
             val degraded = when {
+                sleeping -> false
                 result.success && previousFailures >= threshold -> false
                 result.success -> status.degraded
                 else -> status.degraded || nextFailures >= threshold
@@ -1154,6 +1186,10 @@ class MoncchichiBleService(
 
     private fun scheduleReconnect(lens: Lens, reason: String) {
         if (!shouldAutoReconnect(lens)) return
+        if (isLensSleeping(lens) || isSleepModeActive()) {
+            log("[RECONNECT][${lens.shortLabel}] skipped (sleep)")
+            return
+        }
         updateLens(lens) { it.copy(reconnecting = true) }
         heartbeatRebondTriggered[lens] = false
         reconnectCoordinator.schedule(lens, reason)
@@ -1219,6 +1255,9 @@ class MoncchichiBleService(
     }
 
     private fun shouldForceGattRefresh(lens: Lens): Boolean {
+        if (isSleepModeActive()) {
+            return false
+        }
         val bucket = reconnectFailureTimestamps.getValue(lens)
         val now = System.currentTimeMillis()
         while (bucket.isNotEmpty() && now - bucket.first() > GATT_FAILURE_WINDOW_MS) {
@@ -1371,6 +1410,12 @@ class MoncchichiBleService(
     }
 
     private fun handleHeartbeatMiss(lens: Lens, timestamp: Long, missCount: Int) {
+        if (isLensSleeping(lens)) {
+            updateLens(lens) {
+                it.copy(heartbeatMissCount = 0)
+            }
+            return
+        }
         recordHeartbeatMiss(lens, timestamp)
         emitConsole("PING", lens, "[WARN] missed ping ($missCount)", timestamp)
         logWarn("[BLE][PING][${lens.shortLabel}] missed ping ($missCount)")
@@ -1392,6 +1437,9 @@ class MoncchichiBleService(
     }
 
     private fun maybeTriggerHeartbeatReconnect(lens: Lens, missCount: Int) {
+        if (isLensSleeping(lens)) {
+            return
+        }
         if (missCount < HEARTBEAT_RECONNECT_THRESHOLD) {
             return
         }
@@ -1831,7 +1879,7 @@ private class HeartbeatSupervisor(
             log("[ACK][${lens.shortLabel}][BUSY] opcode=${opcodeLabel} retrying")
         } else {
             failPendingCommand(lens)
-            val suppressed = shouldSuppressAckFailure(lens, event)
+            val suppressed = shouldSuppressAckFailure(lens, event) || isLensSleeping(lens)
             if (!suppressed) {
                 updateLens(lens) { it.copy(degraded = true) }
                 emitConsole(
@@ -1853,6 +1901,244 @@ private class HeartbeatSupervisor(
             }
         }
         _ackEvents.tryEmit(event)
+    }
+
+    private fun detectManualExit(lens: Lens, payload: ByteArray, timestamp: Long) {
+        val lowercase = payload.decodeAsciiLowercase() ?: return
+        if (!lowercase.contains("manual exit")) {
+            return
+        }
+        updateSleepState(lens, timestamp) { current ->
+            if (current.manualExit) current else current.copy(manualExit = true)
+        }
+    }
+
+    private fun handleEventSleepSignals(lens: Lens, payload: ByteArray, timestamp: Long) {
+        if (payload.isEmpty()) return
+        val subcommand = payload.getOrNull(1)?.toInt()?.and(0xFF)
+        when (subcommand) {
+            0x08 -> {
+                updateHeartbeatLidOpen(true)
+                updateHeartbeatInCase(lens, false)
+                updateSleepState(lens, timestamp) { state ->
+                    state.copy(caseClosed = false, inCase = false, folded = false, manualExit = false)
+                }
+            }
+            0x09 -> {
+                updateHeartbeatLidOpen(false)
+                updateHeartbeatInCase(lens, true)
+                updateSleepState(lens, timestamp) { state -> state.copy(caseClosed = true, inCase = true) }
+            }
+            0x0A -> updateSleepState(lens, timestamp) { state -> state.copy(charging = true) }
+            0x0B -> updateSleepState(lens, timestamp) { state -> state.copy(charging = false) }
+            0x0E -> updateSleepState(lens, timestamp) { state -> state.copy(folded = true) }
+            0x0F -> updateSleepState(lens, timestamp) { state -> state.copy(folded = false) }
+        }
+    }
+
+    private fun handleVitalsSleepSignals(
+        lens: Lens,
+        vitals: G1ReplyParser.DeviceVitals,
+        timestamp: Long,
+    ) {
+        vitals.inCradle?.let { updateHeartbeatInCase(lens, it) }
+        updateSleepState(lens, timestamp) { state ->
+            var updated = state.copy(lastVitalsAt = timestamp)
+            vitals.caseOpen?.let { open ->
+                updated = updated.copy(caseClosed = open == false)
+                if (open) {
+                    updated = updated.copy(manualExit = false, folded = false)
+                }
+            }
+            vitals.inCradle?.let { inCradle ->
+                updated = updated.copy(inCase = inCradle)
+            }
+            vitals.charging?.let { charging ->
+                updated = updated.copy(charging = charging)
+            }
+            updated
+        }
+    }
+
+    private fun handleEvenAiSleepSignals(
+        lens: Lens,
+        event: G1ReplyParser.EvenAiEvent,
+        timestamp: Long,
+    ) {
+        if (event is G1ReplyParser.EvenAiEvent.ManualExit) {
+            updateSleepState(lens, timestamp) { state ->
+                if (state.manualExit) state else state.copy(manualExit = true)
+            }
+        }
+    }
+
+    private fun ByteArray.decodeAsciiLowercase(): String? {
+        if (isEmpty()) return null
+        if (any { byte ->
+                val value = byte.toInt() and 0xFF
+                value < 0x20 && value != 0x0A && value != 0x0D
+            }
+        ) {
+            return null
+        }
+        return runCatching { toString(Charsets.UTF_8).lowercase(Locale.US) }.getOrNull()
+    }
+
+    private fun isLensSleeping(lens: Lens): Boolean {
+        return synchronized(sleepStateLock) {
+            sleepStates[lens]?.sleeping == true
+        }
+    }
+
+    private fun isSleepModeActive(): Boolean {
+        return synchronized(sleepStateLock) {
+            sleepStates.values.any { it.sleeping }
+        }
+    }
+
+    private fun updateSleepState(
+        lens: Lens,
+        timestamp: Long,
+        transform: (SleepState) -> SleepState,
+    ) {
+        var previous: SleepState? = null
+        var updated: SleepState? = null
+        var previousGlobal = false
+        var newGlobal = false
+        synchronized(sleepStateLock) {
+            val current = sleepStates.getValue(lens)
+            val mutated = transform(current).withDerived(timestamp)
+            if (mutated == current) {
+                return
+            }
+            previous = current
+            previousGlobal = sleepStates.values.any { it.sleeping }
+            sleepStates[lens] = mutated
+            updated = mutated
+            newGlobal = sleepStates.values.any { it.sleeping }
+        }
+        handleSleepTransition(lens, previous!!, updated!!, previousGlobal, newGlobal, timestamp)
+    }
+
+    private fun handleSleepTransition(
+        lens: Lens,
+        previous: SleepState,
+        updated: SleepState,
+        previousGlobal: Boolean,
+        newGlobal: Boolean,
+        timestamp: Long,
+    ) {
+        val previousTriggers = previous.activeTriggers()
+        val currentTriggers = updated.activeTriggers()
+        val activeReason = currentTriggers.minByOrNull { it.priority }?.logLabel
+        if (!previous.sleeping && updated.sleeping) {
+            val reason = selectSleepReason(previousTriggers, currentTriggers)
+            log("[SLEEP][${lens.shortLabel}] $reason")
+            updateLens(lens) {
+                it.copy(
+                    sleeping = true,
+                    sleepReason = reason,
+                    degraded = false,
+                    consecutiveKeepAliveFailures = 0,
+                    keepAliveAckTimeouts = 0,
+                    heartbeatMissCount = 0,
+                )
+            }
+        } else if (previous.sleeping && updated.sleeping && activeReason != null) {
+            updateLens(lens) { status ->
+                if (status.sleepReason == activeReason && status.sleeping) {
+                    status
+                } else {
+                    status.copy(sleeping = true, sleepReason = activeReason)
+                }
+            }
+        }
+        if (previous.sleeping && !updated.sleeping) {
+            val reason = selectWakeReason(previousTriggers, currentTriggers)
+            log("[WAKE][${lens.shortLabel}] $reason")
+            updateLens(lens) {
+                it.copy(
+                    sleeping = false,
+                    sleepReason = null,
+                    degraded = false,
+                    consecutiveKeepAliveFailures = 0,
+                    keepAliveAckTimeouts = 0,
+                    heartbeatMissCount = 0,
+                )
+            }
+            resetTelemetryTimers(lens, timestamp)
+        }
+        if (!previousGlobal && newGlobal) {
+            onSleepModeEntered(timestamp)
+        } else if (previousGlobal && !newGlobal) {
+            onSleepModeExited(timestamp)
+        }
+    }
+
+    private fun selectSleepReason(
+        previous: Set<SleepTrigger>,
+        current: Set<SleepTrigger>,
+    ): String {
+        val activated = current - previous
+        val target = if (activated.isNotEmpty()) activated else current
+        return target.minByOrNull { it.priority }?.logLabel ?: "CaseClosed"
+    }
+
+    private fun selectWakeReason(
+        previous: Set<SleepTrigger>,
+        current: Set<SleepTrigger>,
+    ): String {
+        val cleared = previous - current
+        return when {
+            cleared.any { it == SleepTrigger.FOLDED } -> "Unfolded"
+            cleared.any {
+                it == SleepTrigger.CASE_CLOSED ||
+                    it == SleepTrigger.IN_CASE ||
+                    it == SleepTrigger.CASE_CLOSED_NO_CHARGE
+            } -> "CaseOpen"
+            cleared.any { it == SleepTrigger.VITALS_TIMEOUT || it == SleepTrigger.MANUAL_EXIT } -> "CaseOpen"
+            else -> "CaseOpen"
+        }
+    }
+
+    private fun onSleepModeEntered(timestamp: Long) {
+        hostHeartbeatSequence.indices.forEach { index -> hostHeartbeatSequence[index] = 0 }
+        heartbeatSupervisor.shutdown()
+        Lens.values().forEach { lens ->
+            cancelReconnect(lens)
+            updateLens(lens) {
+                it.copy(
+                    degraded = false,
+                    consecutiveKeepAliveFailures = 0,
+                    keepAliveAckTimeouts = 0,
+                    heartbeatMissCount = 0,
+                )
+            }
+        }
+        setStage(ConnectionStage.IdleSleep)
+    }
+
+    private fun onSleepModeExited(timestamp: Long) {
+        Lens.values().forEach { lens -> resetTelemetryTimers(lens, timestamp) }
+        Lens.values().forEach { lens -> resetHandshake(lens) }
+        ensureHeartbeatLoop()
+        if (_connectionStage.value == ConnectionStage.IdleSleep) {
+            setStage(ConnectionStage.Idle)
+        }
+    }
+
+    private fun resetTelemetryTimers(lens: Lens, timestamp: Long) {
+        synchronized(sleepStateLock) {
+            val current = sleepStates[lens] ?: return
+            sleepStates[lens] = current.copy(lastVitalsAt = timestamp).withDerived(timestamp)
+        }
+    }
+
+    private fun checkSleepTimeouts() {
+        val now = System.currentTimeMillis()
+        Lens.values().forEach { lens ->
+            updateSleepState(lens, now) { it }
+        }
     }
 
     private fun markAckSuccess(lens: Lens, timestamp: Long, type: AckType) {
@@ -1956,6 +2242,7 @@ private class HeartbeatSupervisor(
         }
         val message = "${previous.toCaseLabel()}→${caseOpen.toCaseLabel()}"
         emitConsole("CASE", null, message, timestamp)
+        updateHeartbeatLidOpen(caseOpen)
     }
 
     private fun Boolean?.toCaseLabel(): String = when (this) {
@@ -2018,6 +2305,10 @@ private class HeartbeatSupervisor(
         toString(Charsets.UTF_8).trim().equals("OK", ignoreCase = true)
 
     private fun performRebond(triggerLens: Lens? = null) {
+        if (isSleepModeActive()) {
+            log("[HB][-] rebond skipped (sleep)")
+            return
+        }
         if (rebondJob?.isActive == true) {
             return
         }
@@ -2066,6 +2357,52 @@ private class HeartbeatSupervisor(
         val busy: Boolean,
     )
 
+    private data class SleepState(
+        val caseClosed: Boolean = false,
+        val inCase: Boolean = false,
+        val folded: Boolean = false,
+        val manualExit: Boolean = false,
+        val charging: Boolean? = null,
+        val caseClosedNoCharge: Boolean = false,
+        val vitalsTimeout: Boolean = false,
+        val lastVitalsAt: Long? = null,
+    ) {
+        fun withDerived(now: Long): SleepState {
+            val derivedCaseClosedNoCharge = if ((caseClosed || inCase) && charging == false) {
+                true
+            } else {
+                false
+            }
+            val derivedVitalsTimeout = lastVitalsAt?.let { now - it > SLEEP_VITALS_TIMEOUT_MS } ?: false
+            return copy(
+                caseClosedNoCharge = derivedCaseClosedNoCharge,
+                vitalsTimeout = derivedVitalsTimeout,
+            )
+        }
+
+        fun activeTriggers(): Set<SleepTrigger> {
+            val triggers = mutableSetOf<SleepTrigger>()
+            if (caseClosed) triggers += SleepTrigger.CASE_CLOSED
+            if (inCase) triggers += SleepTrigger.IN_CASE
+            if (folded) triggers += SleepTrigger.FOLDED
+            if (manualExit) triggers += SleepTrigger.MANUAL_EXIT
+            if (caseClosedNoCharge) triggers += SleepTrigger.CASE_CLOSED_NO_CHARGE
+            if (vitalsTimeout) triggers += SleepTrigger.VITALS_TIMEOUT
+            return triggers
+        }
+
+        val sleeping: Boolean get() = activeTriggers().isNotEmpty()
+    }
+
+    private enum class SleepTrigger(val priority: Int, val logLabel: String) {
+        CASE_CLOSED(0, "CaseClosed"),
+        IN_CASE(1, "CaseClosed"),
+        CASE_CLOSED_NO_CHARGE(2, "CaseClosed"),
+        FOLDED(3, "Folded"),
+        MANUAL_EXIT(4, "ManualExit"),
+        VITALS_TIMEOUT(5, "VitalsTimeout"),
+    }
+
     private fun updateLens(lens: Lens, reducer: (LensStatus) -> LensStatus) {
         val current = _state.value
         val updated = when (lens) {
@@ -2103,7 +2440,9 @@ private class HeartbeatSupervisor(
     }
 
     private fun handleConnectionFailure(lens: Lens, record: ClientRecord) {
-        record.client.refreshDeviceCache()
+        if (!isSleepModeActive()) {
+            record.client.refreshDeviceCache()
+        }
         record.dispose()
         clientRecords.remove(lens)
         keepAliveWriteTimestamps.remove(lens)
@@ -2127,15 +2466,24 @@ private class HeartbeatSupervisor(
             _events.tryEmit(MoncchichiEvent.ConnectionFailed)
         }
         val current = state.value
+        val sleepActive = isSleepModeActive()
         if (!current.left.isConnected && !current.right.isConnected) {
-            setStage(ConnectionStage.Idle)
+            if (sleepActive) {
+                setStage(ConnectionStage.IdleSleep)
+            } else {
+                setStage(ConnectionStage.Idle)
+            }
             if (connectionOrder.isNotEmpty()) {
                 connectionOrder.clear()
                 refreshConnectionOrderState()
             }
-            scope.launch { refreshAllGattCaches() }
+            if (!sleepActive) {
+                scope.launch { refreshAllGattCaches() }
+            }
         } else if (current.left.isConnected && !current.right.isConnected) {
             setStage(ConnectionStage.LeftReady)
+        } else if (sleepActive) {
+            setStage(ConnectionStage.IdleSleep)
         }
     }
 
@@ -2265,6 +2613,8 @@ private class HeartbeatSupervisor(
         private const val GATT_FAILURE_WINDOW_MS = 60_000L
         private const val GATT_REFRESH_THRESHOLD = 3
         private const val STALE_BOND_CLEAR_THRESHOLD = 3
+        private const val SLEEP_VITALS_TIMEOUT_MS = 3_000L
+        private const val SLEEP_TIMEOUT_POLL_MS = 500L
     }
 }
 
