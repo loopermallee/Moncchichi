@@ -50,6 +50,7 @@ class BleTelemetryRepositoryUtf8Test {
         val leftJson = JSONObject(requireNotNull(record.leftJson))
         assertEquals(false, leftJson.getBoolean("caseOpen"))
         assertEquals(true, leftJson.getBoolean("inCase"))
+        assertEquals(true, leftJson.getBoolean("foldState"))
         assertEquals(true, leftJson.getBoolean("folded"))
         assertTrue(leftJson.has("lastVitalsTimestamp"))
         assertTrue(leftJson.getLong("lastVitalsTimestamp") > 0)

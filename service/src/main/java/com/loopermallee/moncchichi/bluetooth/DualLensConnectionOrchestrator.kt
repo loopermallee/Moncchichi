@@ -879,8 +879,8 @@ class DualLensConnectionOrchestrator(
         if (inCase == true) {
             return "InCase"
         }
-        val folded = lensSnapshot.folded ?: snapshot.folded
-        if (folded == true) {
+        val foldState = lensSnapshot.foldState ?: snapshot.foldState
+        if (foldState == true) {
             return "Folded"
         }
         val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
@@ -907,8 +907,8 @@ class DualLensConnectionOrchestrator(
         if (inCase == false) {
             return "CaseOpen"
         }
-        val folded = lensSnapshot.folded ?: snapshot.folded
-        if (folded == false) {
+        val foldState = lensSnapshot.foldState ?: snapshot.foldState
+        if (foldState == false) {
             return "Unfolded"
         }
         return "Signal"
