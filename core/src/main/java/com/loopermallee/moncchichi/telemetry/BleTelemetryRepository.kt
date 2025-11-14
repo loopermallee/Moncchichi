@@ -269,15 +269,14 @@ class BleTelemetryRepository(
         }
     }
 
-    fun isSleeping(lens: Lens, nowProvider: () -> Long = System.currentTimeMillis()): Boolean {
+    fun isSleeping(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
         val snapshot = _snapshot.value
         val lensSnapshot = snapshot.lens(lens)
         val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
         val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
         val resolvedFolded = lensSnapshot.folded ?: snapshot.folded
         val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        val now = nowProvider()
-        val vitalsExpired = lastVitals?.let { now - it > VITALS_SLEEP_TIMEOUT_MS } ?: false
+        val vitalsExpired = lastVitals?.let { nowMillis - it > VITALS_SLEEP_TIMEOUT_MS } ?: false
         return (resolvedCaseOpen == false) || (resolvedInCase == true) || (resolvedFolded == true) || vitalsExpired
     }
 
