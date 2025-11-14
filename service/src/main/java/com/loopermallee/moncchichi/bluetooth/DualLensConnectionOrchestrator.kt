@@ -168,9 +168,12 @@ class DualLensConnectionOrchestrator(
             "Attempted to connect mismatched pair $pairKey for orchestrator ${this@DualLensConnectionOrchestrator.pairKey}"
         }
 
+        sleeping = false
         disconnectHeadset()
 
-        sleeping = false
+        if (sleeping) {
+            return@coroutineScope
+        }
         lastLeftMac = leftMac
         lastRightMac = rightMac
 
@@ -198,6 +201,10 @@ class DualLensConnectionOrchestrator(
         _telemetry.value = emptyMap()
         startHeartbeat()
 
+        if (shouldAbortConnectionAttempt()) {
+            return@coroutineScope
+        }
+
         startTracking(Lens.LEFT, leftClient)
         startTracking(Lens.RIGHT, rightClient)
 
@@ -222,6 +229,10 @@ class DualLensConnectionOrchestrator(
                 _connectionState.value = State.DegradedRightOnly
             }
             scheduleReconnect(Lens.LEFT)
+            return@coroutineScope
+        }
+
+        if (shouldAbortConnectionAttempt()) {
             return@coroutineScope
         }
 
@@ -252,7 +263,15 @@ class DualLensConnectionOrchestrator(
             return@coroutineScope
         }
 
+        if (shouldAbortConnectionAttempt()) {
+            return@coroutineScope
+        }
+
         flushPendingLeftRefresh()
+
+        if (shouldAbortConnectionAttempt()) {
+            return@coroutineScope
+        }
 
         if (leftResult && rightResult) {
             _connectionState.value = State.ReadyBoth
@@ -262,7 +281,11 @@ class DualLensConnectionOrchestrator(
 
     suspend fun disconnectHeadset() {
         sessionActive = false
-        _connectionState.value = State.Idle
+        _connectionState.value = if (sleeping) {
+            State.IdleSleep
+        } else {
+            State.Idle
+        }
 
         reconnectJobs.values.forEach { it.cancel() }
         reconnectJobs.clear()
@@ -723,6 +746,10 @@ class DualLensConnectionOrchestrator(
         reconnectJobs[side] = scope.launch {
             var delayMs = reconnectDelayMs[side] ?: INITIAL_RECONNECT_DELAY_MS
             while (sessionActive && isActive) {
+                if (shouldAbortConnectionAttempt()) {
+                    reconnectJobs.remove(side)
+                    return@launch
+                }
                 val now = SystemClock.elapsedRealtime()
                 var success = false
                 try {
@@ -860,6 +887,10 @@ class DualLensConnectionOrchestrator(
 
     private fun State.isActiveState(): Boolean {
         return this !is State.Idle && this !is State.IdleSleep
+    }
+
+    private fun shouldAbortConnectionAttempt(): Boolean {
+        return sleeping || !sessionActive
     }
 
     private fun resolveSleepReason(
@@ -1019,6 +1050,9 @@ class DualLensConnectionOrchestrator(
         }
         bondLossCounters[side] = 0
         scope.launch {
+            if (isIdleSleepState() || shouldAbortConnectionAttempt()) {
+                return@launch
+            }
             if (!isIdleSleepState()) {
                 _connectionState.value = State.Repriming
             }
