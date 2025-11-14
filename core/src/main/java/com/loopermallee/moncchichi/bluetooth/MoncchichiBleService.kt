@@ -16,6 +16,7 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.isAckComplete
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.isAckContinuation
 import com.loopermallee.moncchichi.core.MicControlPacket
+import com.loopermallee.moncchichi.telemetry.BleTelemetryRepository
 import com.loopermallee.moncchichi.telemetry.G1ReplyParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +59,7 @@ class MoncchichiBleService(
     private val context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val logger: MoncchichiLogger = MoncchichiLogger(context),
+    private val telemetryRepository: BleTelemetryRepository? = null,
 ) {
 
     enum class Lens(val shortLabel: String) {
@@ -325,6 +327,13 @@ class MoncchichiBleService(
         while (isActive) {
             checkSleepTimeouts()
             delay(SLEEP_TIMEOUT_POLL_MS)
+        }
+    }
+    private val telemetrySnapshotJob = telemetryRepository?.let { repository ->
+        scope.launch {
+            repository.snapshot.collect { snapshot ->
+                handleTelemetrySnapshot(snapshot)
+            }
         }
     }
 
@@ -1252,6 +1261,9 @@ class MoncchichiBleService(
     }
 
     private fun shouldAutoReconnect(lens: Lens): Boolean {
+        if (isSleepModeActive()) {
+            return false
+        }
         val record = clientRecords[lens]
         val device = knownDevices[lens] ?: return false
         return record?.client?.state?.value?.bonded == true || device.bondState == BluetoothDevice.BOND_BONDED
@@ -2138,6 +2150,9 @@ private class HeartbeatSupervisor(
     private fun onSleepModeExited(timestamp: Long) {
         Lens.values().forEach { lens -> resetTelemetryTimers(lens, timestamp) }
         Lens.values().forEach { lens -> resetHandshake(lens) }
+        clientRecords.values.forEach { record ->
+            record.client.beginWakeHandshake()
+        }
         ensureHeartbeatLoop()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
@@ -2155,6 +2170,64 @@ private class HeartbeatSupervisor(
         val now = System.currentTimeMillis()
         Lens.values().forEach { lens ->
             updateSleepState(lens, now) { it }
+        }
+    }
+
+    private fun handleTelemetrySnapshot(snapshot: BleTelemetryRepository.Snapshot) {
+        val timestamp = snapshot.recordedAt
+        applyTelemetrySnapshot(Lens.LEFT, snapshot.left, snapshot, timestamp)
+        applyTelemetrySnapshot(Lens.RIGHT, snapshot.right, snapshot, timestamp)
+    }
+
+    private fun applyTelemetrySnapshot(
+        lens: Lens,
+        lensSnapshot: BleTelemetryRepository.LensSnapshot,
+        snapshot: BleTelemetryRepository.Snapshot,
+        timestamp: Long,
+    ) {
+        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
+        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
+        val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
+        val resolvedVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
+        updateSleepStateFromTelemetry(
+            lens,
+            resolvedCaseOpen,
+            resolvedInCase,
+            resolvedFoldState,
+            resolvedVitals,
+            timestamp,
+        )
+    }
+
+    private fun updateSleepStateFromTelemetry(
+        lens: Lens,
+        caseOpen: Boolean?,
+        inCase: Boolean?,
+        foldState: Boolean?,
+        vitalsTimestamp: Long?,
+        timestamp: Long,
+    ) {
+        updateSleepState(lens, timestamp) { state ->
+            var updated = state
+            caseOpen?.let { open ->
+                updated = updated.copy(
+                    caseClosed = open == false,
+                    manualExit = if (open) false else updated.manualExit,
+                )
+                if (open) {
+                    updated = updated.copy(folded = false)
+                }
+            }
+            inCase?.let { inCradle ->
+                updated = updated.copy(inCase = inCradle)
+            }
+            foldState?.let { folded ->
+                updated = updated.copy(folded = folded)
+            }
+            vitalsTimestamp?.let { lastVitals ->
+                updated = updated.copy(lastVitalsAt = lastVitals)
+            }
+            updated
         }
     }
 
