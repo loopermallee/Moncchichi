@@ -425,6 +425,7 @@ class DualLensConnectionOrchestrator(
                         Lens.LEFT -> {
                             markLeftPrimed(event.ready)
                             if (event.ready) {
+                                logger("[BLE][${Lens.LEFT.logLabel()}] Vitals refresh queued after LEFT ACK")
                                 scheduleLeftRefresh()
                             }
                         }
@@ -595,6 +596,7 @@ class DualLensConnectionOrchestrator(
     private suspend fun markLeftPrimed(primed: Boolean) {
         leftPrimed = primed
         if (primed) {
+            logger("[BLE][${Lens.LEFT.logLabel()}] LEFT primed; RIGHT link release enabled")
             flushPendingMirrors()
             flushPendingLeftRefresh()
             if (!rightPrimed && !isIdleSleepState()) {
@@ -725,8 +727,16 @@ class DualLensConnectionOrchestrator(
                 var success = false
                 try {
                     if (side == Lens.RIGHT) {
+                        var waitLogged = false
                         while (sessionActive && isActive && !leftPrimed) {
+                            if (!waitLogged) {
+                                waitLogged = true
+                                logger("[BLE][${Lens.RIGHT.logLabel()}] Waiting for LEFT prime before RIGHT reconnect")
+                            }
                             delay(EVEN_SEQUENCE_DELAY_MS)
+                        }
+                        if (waitLogged) {
+                            logger("[BLE][${Lens.RIGHT.logLabel()}] LEFT prime observed; proceeding with RIGHT reconnect")
                         }
                     }
                     if (shouldRefreshGatt(side, now)) {
