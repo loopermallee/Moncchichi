@@ -709,6 +709,7 @@ class MoncchichiBleService(
         }
         if (!record.client.awake.value) {
             record.client.beginWakeHandshake()
+            heartbeatSupervisor.updateLensAwake(lens, true)
         }
         val result = record.client.forceHelloHandshake()
         if (!result) {
@@ -854,6 +855,7 @@ class MoncchichiBleService(
                 val nowConnected = state.status == G1BleClient.ConnectionState.CONNECTED
                 if (nowConnected && !client.awake.value) {
                     client.beginWakeHandshake()
+                    heartbeatSupervisor.updateLensAwake(lens, true)
                 }
                 if (!nowConnected) {
                     caseTelemetryRequested[lens] = false
@@ -1560,6 +1562,19 @@ private class HeartbeatSupervisor(
         restartLoop()
     }
 
+    fun updateLensAwake(lens: MoncchichiBleService.Lens, awake: Boolean) {
+        val state = states.getValue(lens)
+        if (state.awake == awake) return
+        state.awake = awake
+        if (!awake) {
+            state.nextDueAt = null
+            state.missCount = 0
+        } else if (state.connected) {
+            state.nextDueAt = 0L
+        }
+        restartLoop()
+    }
+
     fun onAck(
         lens: MoncchichiBleService.Lens?,
         timestamp: Long,
@@ -1612,6 +1627,7 @@ private class HeartbeatSupervisor(
             state.lastAckAt = null
             state.lastAckType = null
             state.missCount = 0
+            state.awake = true
         }
     }
 
@@ -1681,6 +1697,7 @@ private class HeartbeatSupervisor(
         val lid = lidOpen.get()
         if (lid == false) return GateReason.LidClosed
         if (state.inCase == true) return GateReason.InCase
+        if (!state.awake) return GateReason.Sleeping
         return null
     }
 
@@ -1688,6 +1705,7 @@ private class HeartbeatSupervisor(
         val message = when (reason) {
             GateReason.LidClosed -> "skipped (lid closed)"
             GateReason.InCase -> "skipped (in case)"
+            GateReason.Sleeping -> "skipped (sleeping)"
         }
         emitConsole("PING", lens, message, timestamp)
         log("[BLE][PING][${lens.shortLabel}] $message")
@@ -1707,9 +1725,10 @@ private class HeartbeatSupervisor(
         var lastAckAt: Long? = null,
         var lastAckType: MoncchichiBleService.AckType? = null,
         var missCount: Int = 0,
+        var awake: Boolean = true,
     )
 
-    private enum class GateReason { LidClosed, InCase }
+    private enum class GateReason { LidClosed, InCase, Sleeping }
 }
 
     private fun initialStabilityMetrics(lens: Lens): BleStabilityMetrics {
@@ -2062,6 +2081,7 @@ private class HeartbeatSupervisor(
             val reason = selectSleepReason(previousTriggers, currentTriggers)
             log("[SLEEP][${lens.shortLabel}] $reason")
             clientRecords[lens]?.client?.enterSleepMode()
+            heartbeatSupervisor.updateLensAwake(lens, false)
             updateLens(lens) {
                 it.copy(
                     sleeping = true,
@@ -2094,6 +2114,7 @@ private class HeartbeatSupervisor(
                     heartbeatMissCount = 0,
                 )
             }
+            heartbeatSupervisor.updateLensAwake(lens, true)
             resetTelemetryTimers(lens, timestamp)
         }
         if (!previousGlobal && newGlobal) {
@@ -2130,7 +2151,10 @@ private class HeartbeatSupervisor(
     }
 
     private fun onSleepModeEntered(timestamp: Long) {
-        clientRecords.values.forEach { record -> record.client.enterSleepMode() }
+        clientRecords.values.forEach { record ->
+            record.client.enterSleepMode()
+            heartbeatSupervisor.updateLensAwake(record.lens, false)
+        }
         hostHeartbeatSequence.indices.forEach { index -> hostHeartbeatSequence[index] = 0 }
         heartbeatSupervisor.shutdown()
         Lens.values().forEach { lens ->
@@ -2152,6 +2176,7 @@ private class HeartbeatSupervisor(
         Lens.values().forEach { lens -> resetHandshake(lens) }
         clientRecords.values.forEach { record ->
             record.client.beginWakeHandshake()
+            heartbeatSupervisor.updateLensAwake(record.lens, true)
         }
         ensureHeartbeatLoop()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
