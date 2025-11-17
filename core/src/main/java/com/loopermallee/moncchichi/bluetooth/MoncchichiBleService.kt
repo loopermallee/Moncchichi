@@ -2253,8 +2253,8 @@ private class HeartbeatSupervisor(
     }
 
     private fun handleSleepEvent(event: BleTelemetryRepository.SleepEvent) {
-        event.lens?.let { lens ->
-            log("[SLEEP][${lens.shortLabel}] Ignoring per-lens SleepEvent; expecting headset scope")
+        if (event.lens != null) {
+            log("[SLEEP][${event.lens.shortLabel}] Ignoring per-lens SleepEvent; expecting headset scope")
             return
         }
 
