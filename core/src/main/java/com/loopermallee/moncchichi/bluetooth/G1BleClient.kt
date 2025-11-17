@@ -98,6 +98,11 @@ internal sealed interface AckOutcome {
         override val opcode: Int?,
         override val status: Int?,
     ) : AckOutcome
+
+    data object Sleep : AckOutcome {
+        override val opcode: Int? = null
+        override val status: Int? = null
+    }
 }
 
 enum class BondResult {
@@ -926,7 +931,7 @@ class G1BleClient(
         bondRetryJob?.cancel()
         bondRetryJob = null
         bondRetryDecider.reset()
-        ackSignals.trySend(AckOutcome.Failure(opcode = null, status = null)) // unblock waiters before closing
+        ackSignals.trySend(AckOutcome.Sleep) // unblock waiters before closing
         uartClient.close()
         lastAckedMtu = null
         warmupExpected = false
@@ -961,15 +966,19 @@ class G1BleClient(
         while (ackSignals.tryReceive().isSuccess) {
             // Drain any pending ACK completions before signalling cancellation.
         }
-        ackSignals.trySend(AckOutcome.Failure(opcode = null, status = null))
+        ackSignals.trySend(AckOutcome.Sleep)
     }
 
     fun beginWakeHandshake() {
         val wasAwake = _awake.value
         _awake.value = true
         if (!wasAwake) {
+            keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
             keepAliveInFlight.set(0)
             resetAckTelemetry()
+            while (ackSignals.tryReceive().isSuccess) {
+                // Clear any stale sleep sentinel before resuming work.
+            }
         }
         startAckWatchdog()
     }
@@ -1223,6 +1232,9 @@ class G1BleClient(
             val ackResult = withTimeoutOrNull(ackTimeoutMs) {
                 while (true) {
                     val ack = ackSignals.receive()
+                    if (ack is AckOutcome.Sleep) {
+                        return@withTimeoutOrNull ack
+                    }
                     if (ack.matchesOpcode(opcode)) {
                         return@withTimeoutOrNull ack
                     }
@@ -1255,10 +1267,24 @@ class G1BleClient(
                                     "while awaiting ${opcode.toLabel()}",
                             )
                         }
+                        is AckOutcome.Sleep -> Unit
                     }
                 }
             }
             when (val outcome = ackResult) {
+                AckOutcome.Sleep -> {
+                    pendingAsciiAck = false
+                    onAttemptResult?.invoke(
+                        CommandAttemptTelemetry(
+                            attemptIndex = attempt + 1,
+                            success = false,
+                            ackTimedOut = false,
+                            ackFailed = false,
+                            queueFailed = false,
+                        )
+                    )
+                    return false
+                }
                 is AckOutcome.Success -> {
                     onAttemptResult?.invoke(
                         CommandAttemptTelemetry(
@@ -1336,21 +1362,34 @@ class G1BleClient(
                     )
                 }
                 null -> {
-                    logger.w(
-                        label,
-                        "${tt()} ACK timeout opcode=${opcode.toLabel()} (attempt ${attempt + 1})",
-                    )
                     pendingAsciiAck = false
-                    handleAckTimeout(ackTimeoutMs)
-                    onAttemptResult?.invoke(
-                        CommandAttemptTelemetry(
-                            attemptIndex = attempt + 1,
-                            success = false,
-                            ackTimedOut = true,
-                            ackFailed = false,
-                            queueFailed = false,
+                    if (_awake.value) {
+                        logger.w(
+                            label,
+                            "${tt()} ACK timeout opcode=${opcode.toLabel()} (attempt ${attempt + 1})",
                         )
-                    )
+                        handleAckTimeout(ackTimeoutMs)
+                        onAttemptResult?.invoke(
+                            CommandAttemptTelemetry(
+                                attemptIndex = attempt + 1,
+                                success = false,
+                                ackTimedOut = true,
+                                ackFailed = false,
+                                queueFailed = false,
+                            )
+                        )
+                    } else {
+                        onAttemptResult?.invoke(
+                            CommandAttemptTelemetry(
+                                attemptIndex = attempt + 1,
+                                success = false,
+                                ackTimedOut = false,
+                                ackFailed = false,
+                                queueFailed = false,
+                            )
+                        )
+                        return false
+                    }
                 }
             }
             if (attempt < retries - 1) {
