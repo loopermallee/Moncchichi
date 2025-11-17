@@ -898,28 +898,33 @@ class DualLensConnectionOrchestrator(
         logger("[SLEEP] Headset → IdleSleep")
         logger("[SLEEP][${Lens.LEFT.logLabel()}] $leftReason")
         logger("[SLEEP][${Lens.RIGHT.logLabel()}] $rightReason")
-        disconnectHeadset()
+        reconnectJobs.values.forEach { it.cancel() }
+        reconnectJobs.clear()
         lastLeftMac = cachedLeftMac
         lastRightMac = cachedRightMac
         _connectionState.value = State.IdleSleep
     }
 
-    private fun exitIdleSleep(snapshot: BleTelemetryRepository.Snapshot) {
+    private suspend fun exitIdleSleep(snapshot: BleTelemetryRepository.Snapshot) {
         sleeping = false
         val leftReason = resolveWakeReason(snapshot, Lens.LEFT)
         val rightReason = resolveWakeReason(snapshot, Lens.RIGHT)
         logger("[WAKE] Headset → Awake")
         logger("[WAKE][${Lens.LEFT.logLabel()}] $leftReason")
         logger("[WAKE][${Lens.RIGHT.logLabel()}] $rightReason")
-        val leftMac = lastLeftMac
-        val rightMac = lastRightMac
+        val leftMac = leftSession?.id?.mac ?: lastLeftMac
+        val rightMac = rightSession?.id?.mac ?: lastRightMac
+        lastLeftMac = leftMac
+        lastRightMac = rightMac
+        wakeJob?.cancel()
         if (leftMac == null || rightMac == null) {
+            disconnectHeadset()
             _connectionState.value = State.Idle
             return
         }
-        wakeJob?.cancel()
         _connectionState.value = State.ConnectingLeft
         wakeJob = scope.launch {
+            disconnectHeadset()
             connectHeadset(pairKey, leftMac, rightMac)
         }
     }
