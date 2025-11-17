@@ -367,6 +367,9 @@ class DualLensConnectionOrchestrator(
         if (payload.isEmpty()) {
             return false
         }
+        if (isIdleSleepState()) {
+            return sendDuringIdleSleep(payload)
+        }
         val opcode = payload.first().toInt() and 0xFF
         val subOpcode = payload.getOrNull(1)?.toInt()?.and(0xFF)
         if (rightPrimed) {
@@ -380,6 +383,22 @@ class DualLensConnectionOrchestrator(
             CommandRouter.Family.BOTH -> sendBothOrQueue(payload, decision.mirror)
             CommandRouter.Family.EVENTS -> sendEventsImmediate(payload)
             CommandRouter.Family.UNKNOWN -> sendRightOrQueue(payload, decision.mirror)
+        }
+    }
+
+    private suspend fun sendDuringIdleSleep(payload: ByteArray): Boolean {
+        val opcode = payload.first().toInt() and 0xFF
+        val subOpcode = payload.getOrNull(1)?.toInt()?.and(0xFF)
+        val decision = commandRouter.classify(opcode, subOpcode)
+        return when (decision.family) {
+            CommandRouter.Family.RIGHT_ONLY -> sendRightImmediate(payload)
+            CommandRouter.Family.BOTH -> {
+                val leftOk = leftSession?.let { sendTo(Lens.LEFT, payload) } ?: false
+                val rightOk = rightSession?.let { sendTo(Lens.RIGHT, payload) } ?: false
+                leftOk || rightOk
+            }
+            CommandRouter.Family.EVENTS -> sendEventsImmediate(payload)
+            CommandRouter.Family.UNKNOWN -> sendRightImmediate(payload)
         }
     }
 
@@ -608,6 +627,12 @@ class DualLensConnectionOrchestrator(
 
     private suspend fun markRightPrimed(primed: Boolean) {
         rightPrimed = primed
+        if (isIdleSleepState()) {
+            if (!primed) {
+                leftRefreshRequested = false
+            }
+            return
+        }
         if (primed) {
             flushPendingMirrors()
         } else {
@@ -618,6 +643,12 @@ class DualLensConnectionOrchestrator(
 
     private suspend fun markLeftPrimed(primed: Boolean) {
         leftPrimed = primed
+        if (isIdleSleepState()) {
+            if (!primed) {
+                leftRefreshRequested = false
+            }
+            return
+        }
         if (primed) {
             logger("[BLE][${Lens.LEFT.logLabel()}] LEFT primed; RIGHT link release enabled")
             flushPendingMirrors()
@@ -632,6 +663,9 @@ class DualLensConnectionOrchestrator(
 
     private suspend fun scheduleLeftRefresh() {
         if (!sessionActive) {
+            return
+        }
+        if (isIdleSleepState()) {
             return
         }
         if (leftRefreshRequested) {
@@ -652,6 +686,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun flushPendingMirrors() {
+        if (isIdleSleepState()) {
+            return
+        }
         val commands = mutableListOf<PendingCommand>()
         mirrorLock.withLock {
             while (pendingMirrors.isNotEmpty()) {
@@ -706,6 +743,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun flushPendingLeftRefresh() {
+        if (isIdleSleepState()) {
+            return
+        }
         if (!rightPrimed || !leftPrimed) {
             return
         }
@@ -838,11 +878,12 @@ class DualLensConnectionOrchestrator(
         val now = System.currentTimeMillis()
         val leftSleeping = telemetryRepository.isSleeping(Lens.LEFT, now)
         val rightSleeping = telemetryRepository.isSleeping(Lens.RIGHT, now)
-        val shouldSleep = leftSleeping || rightSleeping
+        val shouldSleep = leftSleeping && rightSleeping
+        val fullyAwake = telemetryRepository.isAwake(Lens.LEFT, now) && telemetryRepository.isAwake(Lens.RIGHT, now)
         val currentState = _connectionState.value
         when {
             shouldSleep && currentState.isActiveState() && !sleeping -> enterIdleSleep(snapshot, now)
-            !shouldSleep && sleeping -> exitIdleSleep(snapshot)
+            !shouldSleep && sleeping && fullyAwake -> exitIdleSleep(snapshot)
         }
     }
 
@@ -854,6 +895,7 @@ class DualLensConnectionOrchestrator(
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
         val leftReason = resolveSleepReason(snapshot, Lens.LEFT, now)
         val rightReason = resolveSleepReason(snapshot, Lens.RIGHT, now)
+        logger("[SLEEP] Headset → IdleSleep")
         logger("[SLEEP][${Lens.LEFT.logLabel()}] $leftReason")
         logger("[SLEEP][${Lens.RIGHT.logLabel()}] $rightReason")
         disconnectHeadset()
@@ -866,6 +908,7 @@ class DualLensConnectionOrchestrator(
         sleeping = false
         val leftReason = resolveWakeReason(snapshot, Lens.LEFT)
         val rightReason = resolveWakeReason(snapshot, Lens.RIGHT)
+        logger("[WAKE] Headset → Awake")
         logger("[WAKE][${Lens.LEFT.logLabel()}] $leftReason")
         logger("[WAKE][${Lens.RIGHT.logLabel()}] $rightReason")
         val leftMac = lastLeftMac
@@ -1080,6 +1123,7 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun requestTelemetryRefresh(side: Lens) {
+        if (isIdleSleepState()) return
         if (!sessionActive) return
         val commands = listOf(
             byteArrayOf(CMD_CASE_GET.toByte()),
