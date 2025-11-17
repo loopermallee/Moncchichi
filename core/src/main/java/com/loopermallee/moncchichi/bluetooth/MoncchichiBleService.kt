@@ -333,6 +333,7 @@ class MoncchichiBleService(
     private val sleepStateLock = Any()
     @Volatile
     private var idleSleepActive: Boolean = false
+    private val idleSleepState = MutableStateFlow(false)
     private val sleepMonitorJob = scope.launch {
         while (isActive) {
             checkSleepTimeouts()
@@ -864,6 +865,7 @@ class MoncchichiBleService(
             lensLabel = lens.shortLabel,
             logger = logger,
             isSleeping = { idleSleepActive },
+            idleSleepFlow = idleSleepState,
         )
         val jobs = mutableListOf<Job>()
         jobs += scope.launch {
@@ -2156,6 +2158,9 @@ private class HeartbeatSupervisor(
             updated = mutated
             idleSleepActive = sleepStates.values.any { it.sleepEvent } || lastSleepWakeSignal == true
         }
+        if (idleSleepState.value != idleSleepActive) {
+            idleSleepState.value = idleSleepActive
+        }
         handleSleepTransition(lens, previous!!, updated!!, previousAuthority, idleSleepActive, timestamp)
     }
 
@@ -2220,6 +2225,9 @@ private class HeartbeatSupervisor(
     private fun setIdleSleepAuthority(active: Boolean, timestamp: Long) {
         val previous = idleSleepActive
         idleSleepActive = active
+        if (idleSleepState.value != active) {
+            idleSleepState.value = active
+        }
         if (!previous && active) {
             onSleepModeEntered(timestamp)
         } else if (previous && !active) {

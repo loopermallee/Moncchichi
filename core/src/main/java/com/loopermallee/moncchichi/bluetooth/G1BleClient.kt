@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -347,6 +348,7 @@ class G1BleClient(
     private val logger: MoncchichiLogger,
     private val lensLabel: String = "?",
     private val isSleeping: () -> Boolean = { false },
+    private val idleSleepFlow: StateFlow<Boolean> = MutableStateFlow(false),
     private val uartClientFactory: (
         Context,
         BluetoothDevice,
@@ -469,6 +471,21 @@ class G1BleClient(
 
     init {
         uartClient.onConnectAction = { gatt -> scheduleServiceDiscovery(gatt) }
+        idleSleepJob = scope.launch {
+            idleSleepFlow
+                .distinctUntilChanged()
+                .collect { sleeping ->
+                    if (sleeping) {
+                        stopAckWatchdog()
+                    } else if (_awake.value) {
+                        startAckWatchdog()
+                    }
+                }
+        }
+    }
+
+    private fun isSleepModeActive(): Boolean {
+        return isSleeping() || idleSleepFlow.value
     }
 
     data class KeepAlivePrompt(
@@ -559,6 +576,7 @@ class G1BleClient(
     private var gattReconnectAttempts = 0
     @Volatile private var bondRemovalInFlight: Boolean = false
     private var ackWatchdogJob: Job? = null
+    private var idleSleepJob: Job? = null
     @Volatile private var linkLoggedThisSession: Boolean = false
     @Volatile private var ackLoggedThisSession: Boolean = false
     private val lensSide: LensSide = when {
@@ -872,7 +890,7 @@ class G1BleClient(
                     )
                     _ackEvents.tryEmit(event)
                     keepAlivePrompt?.let { prompt ->
-                        if (_awake.value && !isSleeping()) {
+                        if (_awake.value && !isSleepModeActive()) {
                             _keepAlivePrompts.tryEmit(prompt)
                         }
                     }
@@ -921,6 +939,8 @@ class G1BleClient(
 
     fun close() {
         stopAckWatchdog()
+        idleSleepJob?.cancel()
+        idleSleepJob = null
         monitorJob?.cancel()
         rssiJob?.cancel()
         mtuJob?.cancel()
@@ -1094,7 +1114,7 @@ class G1BleClient(
         expectAck: Boolean = true,
         onAttemptResult: ((CommandAttemptTelemetry) -> Unit)? = null,
     ): Boolean {
-        if (!_awake.value || isSleeping()) {
+        if (!_awake.value || isSleepModeActive()) {
             return false
         }
         return writeMutex.withLock {
@@ -1113,7 +1133,7 @@ class G1BleClient(
         if (!_awake.value) {
             return false
         }
-        if (isSleeping()) {
+        if (isSleepModeActive()) {
             return false
         }
         val ready = if (_notifyReady.value) true else awaitNotifyReady()
@@ -1152,7 +1172,7 @@ class G1BleClient(
         if (!_awake.value) {
             beginWakeHandshake()
         }
-        if (isSleeping()) {
+        if (isSleepModeActive()) {
             return false
         }
         val ready = if (_notifyReady.value) true else awaitNotifyReady()
@@ -1383,7 +1403,7 @@ class G1BleClient(
                 }
                 null -> {
                     pendingAsciiAck = false
-                    if (_awake.value && !isSleeping()) {
+                    if (_awake.value && !isSleepModeActive()) {
                         logger.w(
                             label,
                             "${tt()} ACK timeout opcode=${opcode.toLabel()} (attempt ${attempt + 1})",
@@ -1475,7 +1495,7 @@ class G1BleClient(
     }
 
     private fun handleAckTimeout(ackTimeoutMs: Long) {
-        if (isSleeping()) return
+        if (isSleepModeActive()) return
         if (ackTimeoutMs <= ACK_DELAY_THRESHOLD_MS) return
         val streak = ackTimeoutStreak.incrementAndGet()
         val lastRealtime = lastAckRealtime.get().takeIf { it != 0L }
@@ -1500,11 +1520,11 @@ class G1BleClient(
     }
 
     private fun startAckWatchdog() {
-        if (!_awake.value) return
+        if (!_awake.value || isSleepModeActive()) return
         stopAckWatchdog()
         ackWatchdogJob = scope.launch {
             while (isActive) {
-                if (!_awake.value || isSleeping()) break
+                if (!_awake.value || isSleepModeActive()) break
                 val lastRealtime = lastAckRealtime.get()
                 val nowRealtime = SystemClock.elapsedRealtime()
                 val elapsed = if (lastRealtime == 0L) null else nowRealtime - lastRealtime
@@ -1586,7 +1606,7 @@ class G1BleClient(
     }
 
     suspend fun respondToKeepAlivePrompt(prompt: KeepAlivePrompt): KeepAliveResult {
-        if (!_awake.value || isSleeping()) {
+        if (!_awake.value || isSleepModeActive()) {
             return KeepAliveResult(
                 promptTimestampMs = prompt.timestampMs,
                 completedTimestampMs = System.currentTimeMillis(),
@@ -1866,7 +1886,7 @@ class G1BleClient(
     }
 
     private fun scheduleGattReconnect(reason: String, delayMs: Long? = null) {
-        if (isSleeping()) {
+        if (isSleepModeActive()) {
             return
         }
         if (!_state.value.bonded) {

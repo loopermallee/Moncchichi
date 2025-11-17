@@ -297,8 +297,7 @@ class DualLensConnectionOrchestrator(
 
         reconnectJobs.values.forEach { it.cancel() }
         reconnectJobs.clear()
-        heartbeatJob?.cancel()
-        heartbeatJob = null
+        stopHeartbeat()
         wakeJob?.cancel()
         wakeJob = null
         heartbeatStates.values.forEach { it.reset() }
@@ -921,8 +920,7 @@ class DualLensConnectionOrchestrator(
         sleeping = true
         wakeJob?.cancel()
         wakeJob = null
-        heartbeatJob?.cancel()
-        heartbeatJob = null
+        stopHeartbeat()
         val cachedLeftMac = leftSession?.id?.mac ?: lastLeftMac
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
         val leftReason = resolveSleepReason(snapshot, Lens.LEFT, now)
@@ -1067,9 +1065,13 @@ class DualLensConnectionOrchestrator(
         }
     }
 
-    private fun startHeartbeat() {
+    private fun stopHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+    }
+
+    private fun startHeartbeat() {
+        stopHeartbeat()
         if (isIdleSleepState()) {
             return
         }
