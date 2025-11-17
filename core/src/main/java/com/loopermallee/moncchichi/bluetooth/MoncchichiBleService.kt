@@ -354,6 +354,15 @@ class MoncchichiBleService(
             }
         }
     }
+    private val sleepReconnectJob = scope.launch {
+        idleSleepState.collectLatest { sleeping ->
+            if (sleeping) {
+                reconnectCoordinator.freeze()
+            } else {
+                reconnectCoordinator.unfreeze()
+            }
+        }
+    }
     private val telemetrySnapshotJob = telemetryRepository?.let { repository ->
         scope.launch {
             repository.snapshot.collect { snapshot ->
@@ -3058,6 +3067,7 @@ internal class ReconnectCoordinator(
     }
 
     fun freeze() {
+        if (frozen) return
         frozen = true
         MoncchichiBleService.Lens.values().forEach { lens -> cancel(lens) }
     }
