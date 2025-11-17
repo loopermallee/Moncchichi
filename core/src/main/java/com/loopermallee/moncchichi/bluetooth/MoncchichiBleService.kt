@@ -2253,15 +2253,24 @@ private class HeartbeatSupervisor(
     }
 
     private fun handleSleepEvent(event: BleTelemetryRepository.SleepEvent) {
+        val perLens = when (event) {
+            is BleTelemetryRepository.SleepEvent.SleepEntered -> event.lens
+            is BleTelemetryRepository.SleepEvent.SleepExited -> event.lens
+        }
+        if (perLens != null) {
+            log("[SLEEP][${perLens.shortLabel}] Ignoring per-lens SleepEvent; expecting headset scope")
+            return
+        }
+
         val timestamp = System.currentTimeMillis()
         when (event) {
             is BleTelemetryRepository.SleepEvent.SleepEntered -> {
-                log("[SLEEP][${event.lens?.shortLabel ?: "HEADSET"}] SleepEvent")
-                applySleepEventState(event.lens, sleeping = true, timestamp = timestamp)
+                log("[SLEEP][HEADSET] SleepEvent")
+                applySleepEventState(lens = null, sleeping = true, timestamp = timestamp)
             }
             is BleTelemetryRepository.SleepEvent.SleepExited -> {
-                log("[WAKE][${event.lens?.shortLabel ?: "HEADSET"}] SleepEvent")
-                applySleepEventState(event.lens, sleeping = false, timestamp = timestamp)
+                log("[WAKE][HEADSET] SleepEvent")
+                applySleepEventState(lens = null, sleeping = false, timestamp = timestamp)
                 if (!isSleepModeActive()) {
                     scope.launch { triggerWakeTelemetryRefresh() }
                 }
