@@ -41,7 +41,6 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -469,21 +468,6 @@ class G1BleClient(
     @Volatile private var pairingDialogRunnable: Runnable? = null
     @Volatile private var settingsLaunchedThisSession: Boolean = false
 
-    init {
-        uartClient.onConnectAction = { gatt -> scheduleServiceDiscovery(gatt) }
-        idleSleepJob = scope.launch {
-            idleSleepFlow
-                .distinctUntilChanged()
-                .collect { sleeping ->
-                    if (sleeping) {
-                        stopAckWatchdog()
-                    } else if (_awake.value) {
-                        startAckWatchdog()
-                    }
-                }
-        }
-    }
-
     private fun isSleepModeActive(): Boolean {
         return isSleeping() || idleSleepFlow.value
     }
@@ -577,6 +561,18 @@ class G1BleClient(
     @Volatile private var bondRemovalInFlight: Boolean = false
     private var ackWatchdogJob: Job? = null
     private var idleSleepJob: Job? = null
+    init {
+        uartClient.onConnectAction = { gatt -> scheduleServiceDiscovery(gatt) }
+        idleSleepJob = scope.launch {
+            idleSleepFlow.collect { sleeping ->
+                if (sleeping) {
+                    stopAckWatchdog()
+                } else if (_awake.value) {
+                    startAckWatchdog()
+                }
+            }
+        }
+    }
     @Volatile private var linkLoggedThisSession: Boolean = false
     @Volatile private var ackLoggedThisSession: Boolean = false
     private val lensSide: LensSide = when {
