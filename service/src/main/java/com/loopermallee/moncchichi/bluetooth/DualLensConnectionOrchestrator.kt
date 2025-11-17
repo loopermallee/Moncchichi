@@ -20,11 +20,12 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
 import kotlin.collections.ArrayDeque
 import kotlin.math.min
 
@@ -769,7 +770,7 @@ class DualLensConnectionOrchestrator(
 
     private suspend fun awaitLeftPrimeCompletion() {
         val session = leftSession ?: return
-        while (sessionActive && isActive) {
+        while (sessionActive && coroutineContext.isActive) {
             if (shouldAbortConnectionAttempt()) {
                 return
             }
