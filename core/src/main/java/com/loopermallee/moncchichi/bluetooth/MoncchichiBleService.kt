@@ -333,6 +333,7 @@ class MoncchichiBleService(
     private val sleepStateLock = Any()
     @Volatile
     private var idleSleepActive: Boolean = false
+    private var suppressedDuringSleepCount: Int = 0
     private val idleSleepState = MutableStateFlow(false)
     private val sleepMonitorJob = scope.launch {
         while (isActive) {
@@ -674,6 +675,7 @@ class MoncchichiBleService(
         retryDelayMs: Long = G1Protocols.RETRY_BACKOFF_MS,
     ): Boolean {
         if (isSleepModeActive()) {
+            suppressedDuringSleepCount += 1
             return false
         }
         val records = when (target) {
@@ -716,6 +718,7 @@ class MoncchichiBleService(
 
     suspend fun rearmNotifications(target: Target = Target.Both): Boolean {
         if (isSleepModeActive()) {
+            suppressedDuringSleepCount += 1
             return false
         }
         val records = when (target) {
@@ -749,6 +752,7 @@ class MoncchichiBleService(
             return false
         }
         if (isSleepModeActive()) {
+            suppressedDuringSleepCount += 1
             return false
         }
         if (!record.client.awake.value) {
@@ -764,6 +768,7 @@ class MoncchichiBleService(
 
     suspend fun requestLeftRefresh(): Boolean {
         if (isSleepModeActive()) {
+            suppressedDuringSleepCount += 1
             return false
         }
         val commands = listOf(
@@ -2325,6 +2330,7 @@ private class HeartbeatSupervisor(
         if (idleSleepState.value != idleSleepActive) {
             idleSleepState.value = idleSleepActive
         }
+        suppressedDuringSleepCount = 0
     }
 
     private fun onSleepModeExited(timestamp: Long) {
@@ -2335,7 +2341,6 @@ private class HeartbeatSupervisor(
             heartbeatSupervisor.updateLensAwake(record.lens, true)
         }
         reconnectCoordinator.unfreeze()
-        ensureHeartbeatLoop()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
         }
@@ -2343,6 +2348,11 @@ private class HeartbeatSupervisor(
         if (idleSleepState.value != idleSleepActive) {
             idleSleepState.value = idleSleepActive
         }
+        if (suppressedDuringSleepCount > 0) {
+            log("[WAKE] Suppressed $suppressedDuringSleepCount host commands during IdleSleep")
+        }
+        suppressedDuringSleepCount = 0
+        ensureHeartbeatLoop()
     }
 
     private fun resetTelemetryTimers(lens: Lens, timestamp: Long) {
