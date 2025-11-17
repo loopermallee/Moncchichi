@@ -223,6 +223,13 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
         return AckOutcome.Success(opcode = null, status = normalizedStatus)
     }
 
+    if (size == 2 && opcode == G1Protocols.STATUS_OK) {
+        val status = this[1].toInt() and 0xFF
+        if (status == 0x04) {
+            return AckOutcome.Success(opcode = null, status = G1Protocols.STATUS_OK)
+        }
+    }
+
     val statusByteFromHeader = getOrNull(1)?.toInt()?.and(0xFF)
     when (statusByteFromHeader) {
         G1Protocols.STATUS_OK -> return AckOutcome.Success(opcode, statusByteFromHeader)
@@ -309,6 +316,9 @@ private fun AckOutcome.matchesOpcode(expectedOpcode: Int?): Boolean {
     if (expectedOpcode == null) {
         return ackOpcode == null
     }
+    if (this is AckOutcome.Success && ackOpcode == null && status == G1Protocols.STATUS_OK) {
+        return true
+    }
     if (expectedOpcode == OPCODE_SET_MTU) {
         if (ackOpcode == OPCODE_SET_MTU) {
             return true
@@ -336,6 +346,7 @@ class G1BleClient(
     private val label: String,
     private val logger: MoncchichiLogger,
     private val lensLabel: String = "?",
+    private val isSleeping: () -> Boolean = { false },
     private val uartClientFactory: (
         Context,
         BluetoothDevice,
@@ -1097,6 +1108,9 @@ class G1BleClient(
 
     suspend fun enqueueHeartbeat(sequence: Int, payload: ByteArray): Boolean {
         if (!_awake.value) {
+            return false
+        }
+        if (isSleeping()) {
             return false
         }
         val ready = if (_notifyReady.value) true else awaitNotifyReady()
