@@ -101,6 +101,7 @@ class BleTelemetryRepository(
         val inCase: Boolean? = null,
         val silentMode: Boolean? = null,
         val caseOpen: Boolean? = null,
+        val foldState: Boolean? = null,
         val bonded: Boolean = false,
         val disconnectReason: Int? = null,
         val bondTransitions: Int = 0,
@@ -132,6 +133,7 @@ class BleTelemetryRepository(
         val heartbeatLastPingAt: Long? = null,
         val heartbeatMissCount: Int = 0,
         val ackMode: MoncchichiBleService.AckType? = null,
+        val lastVitalsTimestamp: Long? = null,
     )
 
     data class CaseStatus(
@@ -166,6 +168,10 @@ class BleTelemetryRepository(
     data class Snapshot(
         val left: LensTelemetry = LensTelemetry(),
         val right: LensTelemetry = LensTelemetry(),
+        val caseOpen: Boolean? = null,
+        val inCase: Boolean? = null,
+        val foldState: Boolean? = null,
+        val lastVitalsTimestamp: Long? = null,
         val uptimeSeconds: Long? = null,
         val lastLens: Lens? = null,
         val lastFrameHex: String? = null,
@@ -882,6 +888,18 @@ class BleTelemetryRepository(
     )
     val stateEvents: SharedFlow<StateChangedEvent> = _stateEvents.asSharedFlow()
 
+    sealed class SleepEvent {
+        data class SleepEntered(val lens: Lens?) : SleepEvent()
+        data class SleepExited(val lens: Lens?) : SleepEvent()
+    }
+
+    private val _sleepEvents = MutableSharedFlow<SleepEvent>(
+        replay = 0,
+        extraBufferCapacity = 32,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val sleepEvents: SharedFlow<SleepEvent> = _sleepEvents.asSharedFlow()
+
     private val consoleTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
     private val telemetryValidator: TelemetryConsistencyValidator? =
@@ -901,6 +919,11 @@ class BleTelemetryRepository(
     private val lastRebondCounts = EnumMap<Lens, Int>(Lens::class.java).apply {
         Lens.values().forEach { lens -> put(lens, 0) }
     }
+
+    private val lastLensSleepState = EnumMap<Lens, Boolean>(Lens::class.java).apply {
+        Lens.values().forEach { lens -> put(lens, false) }
+    }
+    private var lastHeadsetSleeping: Boolean? = null
 
     init {
         persistenceScope.launch {
@@ -2051,6 +2074,7 @@ class BleTelemetryRepository(
             if (existing.lastStateUpdatedAt != timestamp) {
                 updated = updated.copy(lastStateUpdatedAt = timestamp)
             }
+            updated = updated.withVitalsTimestamp(timestamp)
             val next = if (updated == existing) current else current.updateLens(lens, updated)
             next.withFrame(lens, hex)
         }
@@ -2112,6 +2136,7 @@ class BleTelemetryRepository(
                 }
                 updated = updated.copy(lastPowerOpcode = opcode, lastPowerUpdatedAt = timestamp)
             }
+            updated = updated.withVitalsTimestamp(timestamp)
             val next = if (updated == existing) current else current.updateLens(lens, updated)
             next.withFrame(lens, hex)
         }
@@ -2136,10 +2161,13 @@ class BleTelemetryRepository(
         val uptime = event.uptimeSeconds
         _uptime.value = uptime
         updateSnapshot(eventTimestamp = timestamp) { current ->
-            if (current.uptimeSeconds == uptime && current.lastLens == lens && current.lastFrameHex == hex) {
+            val updatedLens = current.lens(lens).withVitalsTimestamp(timestamp)
+            val withLens = if (updatedLens == current.lens(lens)) current else current.updateLens(lens, updatedLens)
+            val withUptime = withLens.copy(uptimeSeconds = uptime)
+            if (withUptime.uptimeSeconds == current.uptimeSeconds && current.lastLens == lens && current.lastFrameHex == hex && updatedLens == current.lens(lens)) {
                 current
             } else {
-                current.copy(uptimeSeconds = uptime).withFrame(lens, hex)
+                withUptime.withFrame(lens, hex)
             }
         }
         emitConsole("UPTIME", lens, "secs=${uptime}", timestamp)
@@ -2275,6 +2303,7 @@ class BleTelemetryRepository(
 
         updateSnapshot(eventTimestamp = timestamp) { current ->
             var telemetry = current.lens(lens)
+            val existingTelemetry = telemetry
             var changed = false
             var stateChanged = false
             event.wearing?.let { value ->
@@ -2296,7 +2325,8 @@ class BleTelemetryRepository(
                     }
                 }
             }
-            if (!changed) {
+            telemetry = telemetry.withVitalsTimestamp(timestamp)
+            if (!changed && telemetry == existingTelemetry) {
                 current
             } else {
                 val updatedTelemetry = telemetry.copy(
@@ -2510,7 +2540,19 @@ class BleTelemetryRepository(
                 if (!snapshotChanged) {
                     current
                 } else {
-                    current.copy(left = left, right = right)
+                    val updatedLeft = left.withVitalsTimestamp(timestamp)
+                    val updatedRight = right.withVitalsTimestamp(timestamp)
+                    current.copy(
+                        left = updatedLeft,
+                        right = updatedRight,
+                        caseOpen = status.lidOpen ?: current.caseOpen,
+                        lastVitalsTimestamp = maxOfNonNull(
+                            current.lastVitalsTimestamp,
+                            updatedLeft.lastVitalsTimestamp,
+                            updatedRight.lastVitalsTimestamp,
+                            timestamp,
+                        ),
+                    )
                 }
             }
         }
@@ -2652,6 +2694,7 @@ class BleTelemetryRepository(
                 updated = updated.copy(lastPowerOpcode = opcode, lastPowerUpdatedAt = timestamp)
             }
 
+            updated = updated.withVitalsTimestamp(timestamp)
             if (updated != existing) {
                 updated = updated.copy(lastUpdatedAt = lensUpdatedAt)
                 current.updateLens(lens, updated).withFrame(lens, hex)
@@ -3078,9 +3121,33 @@ class BleTelemetryRepository(
         lens: Lens,
         telemetry: LensTelemetry,
     ): Snapshot {
+        val other = when (lens) {
+            Lens.LEFT -> right
+            Lens.RIGHT -> left
+        }
+        val mergedCaseOpen = telemetry.caseOpen ?: other.caseOpen ?: caseOpen
+        val mergedInCase = telemetry.inCase ?: other.inCase ?: inCase
+        val mergedFoldState = telemetry.foldState ?: other.foldState ?: foldState
+        val mergedVitals = maxOfNonNull(telemetry.lastVitalsTimestamp, other.lastVitalsTimestamp, lastVitalsTimestamp)
+        val normalizedTelemetry = telemetry.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedVitals)
+        val normalizedOther = other.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedVitals)
         val updated = when (lens) {
-            Lens.LEFT -> copy(left = telemetry)
-            Lens.RIGHT -> copy(right = telemetry)
+            Lens.LEFT -> copy(
+                left = normalizedTelemetry,
+                right = normalizedOther,
+                caseOpen = mergedCaseOpen,
+                inCase = mergedInCase,
+                foldState = mergedFoldState,
+                lastVitalsTimestamp = mergedVitals,
+            )
+            Lens.RIGHT -> copy(
+                left = normalizedOther,
+                right = normalizedTelemetry,
+                caseOpen = mergedCaseOpen,
+                inCase = mergedInCase,
+                foldState = mergedFoldState,
+                lastVitalsTimestamp = mergedVitals,
+            )
         }
         return updated.recalculateDerived()
     }
@@ -3302,11 +3369,59 @@ class BleTelemetryRepository(
         if (persist && updated != previous) {
             persistSnapshot(updated, eventTimestamp)
         }
+        if (updated != previous) {
+            maybeEmitSleepTransitions(previous, updated, eventTimestamp ?: System.currentTimeMillis())
+        }
     }
 
     private fun persistSnapshot(snapshot: Snapshot, eventTimestamp: Long?) {
         val recordedAt = eventTimestamp ?: System.currentTimeMillis()
         persistDeviceTelemetrySnapshots(recordedAt)
+    }
+
+    fun isLensSleeping(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        return isLensSleeping(_snapshot.value, lens, nowMillis)
+    }
+
+    fun isHeadsetSleeping(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val snapshot = _snapshot.value
+        return Lens.values().all { lens -> isLensSleeping(snapshot, lens, nowMillis) }
+    }
+
+    private fun isLensSleeping(snapshot: Snapshot, lens: Lens, nowMillis: Long): Boolean {
+        val lensSnapshot = snapshot.lens(lens)
+        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
+        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
+        val resolvedFolded = lensSnapshot.foldState ?: snapshot.foldState
+        val charging = lensSnapshot.charging
+        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
+        if (resolvedCaseOpen == null || resolvedInCase == null || resolvedFolded == null || lastVitals == null) {
+            return false
+        }
+        if (charging == true) return false
+        val quiet = nowMillis - lastVitals >= SLEEP_QUIET_WINDOW_MS
+        return resolvedFolded && resolvedInCase && resolvedCaseOpen && quiet
+    }
+
+    private fun maybeEmitSleepTransitions(previous: Snapshot, updated: Snapshot, timestamp: Long) {
+        Lens.values().forEach { lens ->
+            val before = isLensSleeping(previous, lens, timestamp)
+            val after = isLensSleeping(updated, lens, timestamp)
+            if (before != after) {
+                lastLensSleepState[lens] = after
+                val event = if (after) SleepEvent.SleepEntered(lens) else SleepEvent.SleepExited(lens)
+                _sleepEvents.tryEmit(event)
+            }
+        }
+        val previousHeadset = lastHeadsetSleeping ?: Lens.values().all { lens ->
+            isLensSleeping(previous, lens, timestamp)
+        }
+        val updatedHeadset = Lens.values().all { lens -> isLensSleeping(updated, lens, timestamp) }
+        if (previousHeadset != updatedHeadset) {
+            lastHeadsetSleeping = updatedHeadset
+            val event = if (updatedHeadset) SleepEvent.SleepEntered(null) else SleepEvent.SleepExited(null)
+            _sleepEvents.tryEmit(event)
+        }
     }
 
     private fun LensTelemetry.toRecord(): MemoryRepository.LensSnapshot =
@@ -3330,6 +3445,25 @@ class BleTelemetryRepository(
             snapshotJson = null,
             heartbeatMissCount = heartbeatMissCount,
         )
+
+    private fun LensTelemetry.withSharedValues(
+        caseOpenValue: Boolean?,
+        inCaseValue: Boolean?,
+        foldStateValue: Boolean?,
+        lastVitalsValue: Long?,
+    ): LensTelemetry {
+        return copy(
+            caseOpen = caseOpen ?: caseOpenValue,
+            inCase = inCase ?: inCaseValue,
+            foldState = foldState ?: foldStateValue,
+            lastVitalsTimestamp = lastVitalsTimestamp ?: lastVitalsValue,
+        )
+    }
+
+    private fun LensTelemetry.withVitalsTimestamp(timestamp: Long?): LensTelemetry {
+        val merged = maxOfNonNull(lastVitalsTimestamp, timestamp)
+        return if (merged == lastVitalsTimestamp) this else copy(lastVitalsTimestamp = merged)
+    }
 
     private fun MoncchichiBleService.Target.toLensOrNull(): Lens? = when (this) {
         MoncchichiBleService.Target.Left -> Lens.LEFT
@@ -3842,9 +3976,14 @@ class BleTelemetryRepository(
         private const val CASE_REFRESH_MIN_INTERVAL_MS = 3_000L
         private const val BATTERY_LOG_INTERVAL_MS = 30_000L
         private const val ACK_LOG_DEDUP_WINDOW_MS = 3_000L
+        private const val SLEEP_QUIET_WINDOW_MS = 3_000L
     }
 }
 
 private fun Byte.toHexLabel(): String = toInt().toHexLabel()
 
 private fun Int.toHexLabel(): String = String.format("0x%02X", this and 0xFF)
+
+private fun maxOfNonNull(vararg values: Long?): Long? {
+    return values.filterNotNull().maxOrNull()
+}

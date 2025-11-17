@@ -11,9 +11,11 @@ import com.loopermallee.moncchichi.hub.telemetry.BleTelemetryParser
 import com.loopermallee.moncchichi.telemetry.BleTelemetryRepository as CoreBleTelemetryRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.assertNull
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -131,6 +133,7 @@ class BleTelemetryRepositoryUtf8Test {
 
         val snapshot = repository.snapshot.value
         assertEquals(100, snapshot.left.batteryPercent)
+        assertNotNull(snapshot.left.lastVitalsTimestamp)
 
         val caseStatus = repository.caseStatus.value
         assertEquals(50, caseStatus.batteryPercent)
@@ -268,6 +271,70 @@ class BleTelemetryRepositoryUtf8Test {
 
         val consoleLine = console.await()
         assertTrue(consoleLine.contains("[GESTURE][L] single"))
+    }
+
+    @Test
+    fun `sleep events follow predicate transitions`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+        val events = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.sleepEvents.take(6).toList(mutableListOf())
+        }
+
+        val snapshotField = repository.javaClass.getDeclaredField("_snapshot").apply { isAccessible = true }
+        val snapshotFlow = snapshotField.get(repository) as MutableStateFlow<BleTelemetryRepository.Snapshot>
+        val previous = snapshotFlow.value
+        val sleepySnapshot = BleTelemetryRepository.Snapshot(
+            left = BleTelemetryRepository.LensTelemetry(
+                inCase = true,
+                caseOpen = true,
+                foldState = true,
+                charging = false,
+                lastVitalsTimestamp = 0L,
+            ),
+            right = BleTelemetryRepository.LensTelemetry(
+                inCase = true,
+                caseOpen = true,
+                foldState = true,
+                charging = false,
+                lastVitalsTimestamp = 0L,
+            ),
+            caseOpen = true,
+            inCase = true,
+            foldState = true,
+            lastVitalsTimestamp = 0L,
+        )
+        snapshotFlow.value = sleepySnapshot
+        val transitionMethod = repository.javaClass.getDeclaredMethod(
+            "maybeEmitSleepTransitions",
+            BleTelemetryRepository.Snapshot::class.java,
+            BleTelemetryRepository.Snapshot::class.java,
+            Long::class.javaPrimitiveType,
+        ).apply { isAccessible = true }
+
+        transitionMethod.invoke(repository, previous, sleepySnapshot, 10_000L)
+
+        val awakeSnapshot = sleepySnapshot.copy(
+            left = sleepySnapshot.left.copy(lastVitalsTimestamp = 10_000L),
+            right = sleepySnapshot.right.copy(lastVitalsTimestamp = 10_000L),
+            lastVitalsTimestamp = 10_000L,
+        )
+        snapshotFlow.value = awakeSnapshot
+        transitionMethod.invoke(repository, sleepySnapshot, awakeSnapshot, 10_000L)
+
+        val emitted = events.await()
+        assertEquals(6, emitted.size)
+        assertTrue(emitted[0] is BleTelemetryRepository.SleepEvent.SleepEntered &&
+            (emitted[0] as BleTelemetryRepository.SleepEvent.SleepEntered).lens == Lens.LEFT)
+        assertTrue(emitted[1] is BleTelemetryRepository.SleepEvent.SleepEntered &&
+            (emitted[1] as BleTelemetryRepository.SleepEvent.SleepEntered).lens == Lens.RIGHT)
+        assertTrue(emitted[2] is BleTelemetryRepository.SleepEvent.SleepEntered &&
+            (emitted[2] as BleTelemetryRepository.SleepEvent.SleepEntered).lens == null)
+        assertTrue(emitted[3] is BleTelemetryRepository.SleepEvent.SleepExited &&
+            (emitted[3] as BleTelemetryRepository.SleepEvent.SleepExited).lens == Lens.LEFT)
+        assertTrue(emitted[4] is BleTelemetryRepository.SleepEvent.SleepExited &&
+            (emitted[4] as BleTelemetryRepository.SleepEvent.SleepExited).lens == Lens.RIGHT)
+        assertTrue(emitted[5] is BleTelemetryRepository.SleepEvent.SleepExited &&
+            (emitted[5] as BleTelemetryRepository.SleepEvent.SleepExited).lens == null)
     }
 
     @Test
