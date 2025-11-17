@@ -904,13 +904,12 @@ class DualLensConnectionOrchestrator(
         val now = System.currentTimeMillis()
         when (event) {
             is BleTelemetryRepository.SleepEvent.SleepEntered -> {
-                if (!sleeping && telemetryRepository.isHeadsetSleeping(now) && _connectionState.value.isActiveState()) {
+                if (!sleeping && _connectionState.value.isActiveState()) {
                     enterIdleSleep(snapshot, now)
                 }
             }
             is BleTelemetryRepository.SleepEvent.SleepExited -> {
-                val fullyAwake = telemetryRepository.isAwake(Lens.LEFT, now) && telemetryRepository.isAwake(Lens.RIGHT, now)
-                if (sleeping && fullyAwake) {
+                if (sleeping) {
                     exitIdleSleep(snapshot)
                 }
             }
@@ -943,21 +942,25 @@ class DualLensConnectionOrchestrator(
         logger("[WAKE] Headset → Awake")
         logger("[WAKE][${Lens.LEFT.logLabel()}] $leftReason")
         logger("[WAKE][${Lens.RIGHT.logLabel()}] $rightReason")
-        val leftMac = leftSession?.id?.mac ?: lastLeftMac
-        val rightMac = rightSession?.id?.mac ?: lastRightMac
-        lastLeftMac = leftMac
-        lastRightMac = rightMac
-        wakeJob?.cancel()
-        if (leftMac == null || rightMac == null) {
-            disconnectHeadset()
-            _connectionState.value = State.Idle
-            return
+        val leftConnected = latestLeft?.connected == true
+        val rightConnected = latestRight?.connected == true
+        when {
+            leftConnected && rightConnected -> _connectionState.value = State.Stable
+            leftConnected -> {
+                _connectionState.value = State.RecoveringRight
+                scheduleReconnect(Lens.RIGHT)
+            }
+            rightConnected -> {
+                _connectionState.value = State.RecoveringLeft
+                scheduleReconnect(Lens.LEFT)
+            }
+            else -> {
+                _connectionState.value = State.Idle
+                scheduleReconnect(Lens.LEFT)
+                scheduleReconnect(Lens.RIGHT)
+            }
         }
-        _connectionState.value = State.ConnectingLeft
-        wakeJob = scope.launch {
-            disconnectHeadset()
-            connectHeadset(pairKey, leftMac, rightMac)
-        }
+        startHeartbeat()
     }
 
     private fun isIdleSleepState(): Boolean {

@@ -2239,17 +2239,7 @@ private class HeartbeatSupervisor(
         val targets = lens?.let { listOf(it) } ?: Lens.values().toList()
         targets.forEach { target ->
             updateSleepState(target, timestamp) { current ->
-                if (sleeping) {
-                    SleepState(
-                        caseClosed = true,
-                        inCase = true,
-                        folded = true,
-                        charging = current.charging,
-                        lastVitalsAt = timestamp,
-                    ).withDerived(timestamp)
-                } else {
-                    SleepState(lastVitalsAt = timestamp).withDerived(timestamp)
-                }
+                current.copy(sleepEvent = sleeping)
             }
         }
     }
@@ -2614,6 +2604,7 @@ private class HeartbeatSupervisor(
         val inCase: Boolean = false,
         val folded: Boolean = false,
         val manualExit: Boolean = false,
+        val sleepEvent: Boolean = false,
         val charging: Boolean? = null,
         val caseClosedNoCharge: Boolean = false,
         val vitalsTimeout: Boolean = false,
@@ -2638,6 +2629,7 @@ private class HeartbeatSupervisor(
             if (inCase) triggers += SleepTrigger.IN_CASE
             if (folded) triggers += SleepTrigger.FOLDED
             if (manualExit) triggers += SleepTrigger.MANUAL_EXIT
+            if (sleepEvent) triggers += SleepTrigger.SLEEP_EVENT
             if (caseClosedNoCharge) triggers += SleepTrigger.CASE_CLOSED_NO_CHARGE
             if (vitalsTimeout) triggers += SleepTrigger.VITALS_TIMEOUT
             return triggers
@@ -2653,6 +2645,7 @@ private class HeartbeatSupervisor(
         FOLDED(3, "Folded"),
         MANUAL_EXIT(4, "ManualExit"),
         VITALS_TIMEOUT(5, "VitalsTimeout"),
+        SLEEP_EVENT(6, "SleepEvent"),
     }
 
     private fun updateLens(lens: Lens, reducer: (LensStatus) -> LensStatus) {
