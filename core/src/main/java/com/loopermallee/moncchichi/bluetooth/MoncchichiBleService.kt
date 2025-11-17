@@ -1886,6 +1886,7 @@ private class HeartbeatSupervisor(
                 warmup = false,
                 type = AckType.BINARY,
             )
+            is AckOutcome.Sleep -> null
             is AckOutcome.Continue -> null
             is AckOutcome.Complete -> null
         } ?: return
