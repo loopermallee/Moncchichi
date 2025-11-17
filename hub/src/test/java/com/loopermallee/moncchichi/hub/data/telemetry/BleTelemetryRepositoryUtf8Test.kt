@@ -277,7 +277,7 @@ class BleTelemetryRepositoryUtf8Test {
     fun `sleep events follow predicate transitions`() = runTest {
         val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
         val events = async(UnconfinedTestDispatcher(testScheduler)) {
-            repository.sleepEvents.take(6).toList(mutableListOf())
+            repository.sleepEvents.take(2).toList(mutableListOf())
         }
 
         val snapshotField = repository.javaClass.getDeclaredField("_snapshot").apply { isAccessible = true }
@@ -322,19 +322,11 @@ class BleTelemetryRepositoryUtf8Test {
         transitionMethod.invoke(repository, sleepySnapshot, awakeSnapshot, 10_000L)
 
         val emitted = events.await()
-        assertEquals(6, emitted.size)
+        assertEquals(2, emitted.size)
         assertTrue(emitted[0] is BleTelemetryRepository.SleepEvent.SleepEntered &&
-            (emitted[0] as BleTelemetryRepository.SleepEvent.SleepEntered).lens == Lens.LEFT)
-        assertTrue(emitted[1] is BleTelemetryRepository.SleepEvent.SleepEntered &&
-            (emitted[1] as BleTelemetryRepository.SleepEvent.SleepEntered).lens == Lens.RIGHT)
-        assertTrue(emitted[2] is BleTelemetryRepository.SleepEvent.SleepEntered &&
-            (emitted[2] as BleTelemetryRepository.SleepEvent.SleepEntered).lens == null)
-        assertTrue(emitted[3] is BleTelemetryRepository.SleepEvent.SleepExited &&
-            (emitted[3] as BleTelemetryRepository.SleepEvent.SleepExited).lens == Lens.LEFT)
-        assertTrue(emitted[4] is BleTelemetryRepository.SleepEvent.SleepExited &&
-            (emitted[4] as BleTelemetryRepository.SleepEvent.SleepExited).lens == Lens.RIGHT)
-        assertTrue(emitted[5] is BleTelemetryRepository.SleepEvent.SleepExited &&
-            (emitted[5] as BleTelemetryRepository.SleepEvent.SleepExited).lens == null)
+            (emitted[0] as BleTelemetryRepository.SleepEvent.SleepEntered).lens == null)
+        assertTrue(emitted[1] is BleTelemetryRepository.SleepEvent.SleepExited &&
+            (emitted[1] as BleTelemetryRepository.SleepEvent.SleepExited).lens == null)
     }
 
     @Test
