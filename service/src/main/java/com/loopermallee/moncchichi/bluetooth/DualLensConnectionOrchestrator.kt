@@ -5,6 +5,7 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.BATT_SUB_DETAIL
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_BATT_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_CASE_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.SLEEP_VITALS_TIMEOUT_MS
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.bluetooth.LinkStatus
 import com.loopermallee.moncchichi.telemetry.BleTelemetryRepository
@@ -1007,7 +1008,7 @@ class DualLensConnectionOrchestrator(
             return "Folded"
         }
         val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        val vitalsExpired = lastVitals?.let { now - it > TELEMETRY_SLEEP_TIMEOUT_MS } ?: false
+        val vitalsExpired = lastVitals?.let { now - it > SLEEP_VITALS_TIMEOUT_MS } ?: false
         if (vitalsExpired) {
             return "VitalsTimeout"
         }
@@ -1048,7 +1049,6 @@ class DualLensConnectionOrchestrator(
         private const val MAX_HEARTBEAT_MISSES = 3
         private const val FAILURE_WINDOW_MS = 60_000L
         private const val FULL_RECONNECT_DELAY_MS = 300L
-        private const val TELEMETRY_SLEEP_TIMEOUT_MS = 3_000L
     }
 
     private data class HeartbeatState(
