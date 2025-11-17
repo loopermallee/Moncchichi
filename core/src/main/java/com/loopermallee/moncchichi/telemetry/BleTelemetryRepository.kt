@@ -30,6 +30,7 @@ class BleTelemetryRepository(
         val caseOpen: Boolean? = null,
         val inCase: Boolean? = null,
         val foldState: Boolean? = null,
+        val charging: Boolean? = null,
         val lastVitalsTimestamp: Long? = null,
     )
 
@@ -47,6 +48,7 @@ class BleTelemetryRepository(
         val caseOpen: Boolean? = null,
         val inCase: Boolean? = null,
         val foldState: Boolean? = null,
+        val charging: Boolean? = null,
         val lastVitalsTimestamp: Long? = null,
         val recordedAt: Long = System.currentTimeMillis(),
     )
@@ -69,6 +71,14 @@ class BleTelemetryRepository(
     private val _caseSnapshot = MutableStateFlow<CaseSnapshot?>(null)
     val caseSnapshot: StateFlow<CaseSnapshot?> = _caseSnapshot.asStateFlow()
 
+    sealed class SleepEvent {
+        data class SleepEntered(val lens: Lens?) : SleepEvent()
+        data class SleepExited(val lens: Lens?) : SleepEvent()
+    }
+
+    private val _sleepEvents = MutableStateFlow<SleepEvent?>(null)
+    val sleepEvents: StateFlow<SleepEvent?> = _sleepEvents.asStateFlow()
+
     private val firstTelemetryAt = AtomicLong(0L)
     private var lastPersisted: SnapshotRecord? = null
 
@@ -77,7 +87,11 @@ class BleTelemetryRepository(
         mutex.withLock {
             val current = _snapshot.value
             val updatedLens = current.lens(side).merge(telemetry, now)
-            _snapshot.value = current.update(side, updatedLens, now)
+            val updated = current.update(side, updatedLens, now)
+            if (updated != current) {
+                _snapshot.value = updated
+                maybeEmitSleepTransitions(current, updated)
+            }
             if (firstTelemetryAt.get() == 0L) {
                 firstTelemetryAt.compareAndSet(0L, now)
             }
@@ -167,9 +181,10 @@ class BleTelemetryRepository(
         val mergedCaseOpen = lens.caseOpen ?: other.caseOpen ?: caseOpen
         val mergedInCase = lens.inCase ?: other.inCase ?: inCase
         val mergedFoldState = lens.foldState ?: other.foldState ?: foldState
+        val mergedCharging = lens.charging ?: other.charging ?: charging
         val mergedVitals = maxOfNonNull(lens.lastVitalsTimestamp, other.lastVitalsTimestamp, lastVitalsTimestamp)
-        val normalizedLens = lens.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedVitals)
-        val normalizedOther = other.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedVitals)
+        val normalizedLens = lens.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedCharging, mergedVitals)
+        val normalizedOther = other.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedCharging, mergedVitals)
         return when (side) {
             Lens.LEFT -> copy(
                 left = normalizedLens,
@@ -177,6 +192,7 @@ class BleTelemetryRepository(
                 caseOpen = mergedCaseOpen,
                 inCase = mergedInCase,
                 foldState = mergedFoldState,
+                charging = mergedCharging,
                 lastVitalsTimestamp = mergedVitals,
                 recordedAt = timestamp,
             )
@@ -186,6 +202,7 @@ class BleTelemetryRepository(
                 caseOpen = mergedCaseOpen,
                 inCase = mergedInCase,
                 foldState = mergedFoldState,
+                charging = mergedCharging,
                 lastVitalsTimestamp = mergedVitals,
                 recordedAt = timestamp,
             )
@@ -206,6 +223,7 @@ class BleTelemetryRepository(
                 "caseOpen" -> snapshot = snapshot.copy(caseOpen = raw.toBooleanOrNull(snapshot.caseOpen))
                 "inCase" -> snapshot = snapshot.copy(inCase = raw.toBooleanOrNull(snapshot.inCase))
                 "foldState", "folded" -> snapshot = snapshot.copy(foldState = raw.toBooleanOrNull(snapshot.foldState))
+                "charging" -> snapshot = snapshot.copy(charging = raw.toBooleanOrNull(snapshot.charging))
                 "lastVitalsTimestamp" -> snapshot = snapshot.copy(lastVitalsTimestamp = raw.toLongOrNull(snapshot.lastVitalsTimestamp))
             }
         }
@@ -217,12 +235,14 @@ class BleTelemetryRepository(
         caseOpenValue: Boolean?,
         inCaseValue: Boolean?,
         foldStateValue: Boolean?,
+        chargingValue: Boolean?,
         lastVitalsValue: Long?,
     ): LensSnapshot {
         return copy(
             caseOpen = caseOpen ?: caseOpenValue,
             inCase = inCase ?: inCaseValue,
             foldState = foldState ?: foldStateValue,
+            charging = charging ?: chargingValue,
             lastVitalsTimestamp = lastVitalsTimestamp ?: lastVitalsValue,
         )
     }
@@ -253,6 +273,7 @@ class BleTelemetryRepository(
             json.put("foldState", it)
             json.put("folded", it)
         }
+        charging?.let { json.put("charging", it) }
         lastVitalsTimestamp?.let { json.put("lastVitalsTimestamp", it) }
         return json.takeUnless { it.length() == 0 }?.toString()
     }
@@ -299,33 +320,48 @@ class BleTelemetryRepository(
 
     fun isSleeping(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
         val snapshot = _snapshot.value
-        val lensSnapshot = snapshot.lens(lens)
-        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
-        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
-        val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
-        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        if (resolvedCaseOpen == null || resolvedInCase == null || resolvedFoldState == null || lastVitals == null) {
-            return false
-        }
-        val vitalsFresh = nowMillis - lastVitals <= VITALS_SLEEP_TIMEOUT_MS
-        return (resolvedCaseOpen == false) && (resolvedInCase == true) && (resolvedFoldState == true) && vitalsFresh
+        return isLensSleeping(snapshot, lens, nowMillis)
     }
 
     fun isAwake(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
         val snapshot = _snapshot.value
+        return !isLensSleeping(snapshot, lens, nowMillis)
+    }
+
+    fun isLensSleeping(snapshot: Snapshot, lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
         val lensSnapshot = snapshot.lens(lens)
         val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
         val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
         val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
+        val resolvedCharging = lensSnapshot.charging ?: snapshot.charging
         val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        val vitalsStale = lastVitals?.let { nowMillis - it > VITALS_SLEEP_TIMEOUT_MS } ?: true
-        if (resolvedCaseOpen == null && resolvedInCase == null && resolvedFoldState == null && lastVitals == null) {
+        if (resolvedCaseOpen == null || resolvedInCase == null || resolvedFoldState == null || lastVitals == null) {
             return false
         }
-        if (resolvedCaseOpen == true) return true
-        if (resolvedInCase == false) return true
-        if (resolvedFoldState == false) return true
-        return vitalsStale
+        val quiet = nowMillis - lastVitals >= QUIET_WINDOW_MS
+        return resolvedCaseOpen && resolvedInCase && resolvedFoldState && (resolvedCharging == false) && quiet
+    }
+
+    fun isLensSleeping(lens: Lens): Boolean = isLensSleeping(_snapshot.value, lens)
+
+    fun isHeadsetSleeping(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val snapshot = _snapshot.value
+        return Lens.values().all { lens -> isLensSleeping(snapshot, lens, nowMillis) }
+    }
+
+    private fun maybeEmitSleepTransitions(previous: Snapshot, updated: Snapshot) {
+        Lens.values().forEach { lens ->
+            val before = isLensSleeping(previous, lens)
+            val after = isLensSleeping(updated, lens)
+            if (before != after) {
+                _sleepEvents.value = if (after) SleepEvent.SleepEntered(lens) else SleepEvent.SleepExited(lens)
+            }
+        }
+        val previousHeadset = Lens.values().all { lens -> isLensSleeping(previous, lens) }
+        val updatedHeadset = Lens.values().all { lens -> isLensSleeping(updated, lens) }
+        if (previousHeadset != updatedHeadset) {
+            _sleepEvents.value = if (updatedHeadset) SleepEvent.SleepEntered(null) else SleepEvent.SleepExited(null)
+        }
     }
 
     private fun SnapshotRecord?.hasSameContent(other: SnapshotRecord?): Boolean {
@@ -334,7 +370,7 @@ class BleTelemetryRepository(
     }
 
     companion object {
-        private const val VITALS_SLEEP_TIMEOUT_MS = 3_000L
+        private const val QUIET_WINDOW_MS = 3_000L
     }
 }
 
