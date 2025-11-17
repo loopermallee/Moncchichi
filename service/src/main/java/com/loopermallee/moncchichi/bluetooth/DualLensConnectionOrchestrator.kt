@@ -375,7 +375,8 @@ class DualLensConnectionOrchestrator(
             return false
         }
         if (isIdleSleepState()) {
-            return sendDuringIdleSleep(payload)
+            logger("[SLEEP] Dropping host command during IdleSleep opcode=0x%02X".format(payload.first()))
+            return false
         }
         val opcode = payload.first().toInt() and 0xFF
         val subOpcode = payload.getOrNull(1)?.toInt()?.and(0xFF)
@@ -945,28 +946,37 @@ class DualLensConnectionOrchestrator(
         logger("[WAKE][${Lens.RIGHT.logLabel()}] $rightReason")
         val leftConnected = latestLeft?.connected == true
         val rightConnected = latestRight?.connected == true
+        val leftReady = latestLeft?.isReady == true || leftPrimed
+        val rightReady = latestRight?.isReady == true || rightPrimed
         when {
-            leftConnected && rightConnected -> _connectionState.value = State.Stable
-            leftConnected -> {
+            leftConnected && leftReady && rightConnected && rightReady -> {
+                _connectionState.value = State.Stable
+                requestTelemetryRefresh(Lens.RIGHT)
+            }
+            leftConnected && !rightConnected -> {
                 _connectionState.value = State.RecoveringRight
                 scheduleReconnect(Lens.RIGHT)
             }
-            rightConnected -> {
+            rightConnected && !leftConnected -> {
                 _connectionState.value = State.RecoveringLeft
                 scheduleReconnect(Lens.LEFT)
             }
-            else -> {
+            !leftConnected && !rightConnected -> {
                 _connectionState.value = State.ConnectingLeft
                 scheduleReconnect(Lens.LEFT)
                 wakeJob = scope.launch {
                     while (sessionActive && !sleeping) {
-                        if (latestLeft?.connected == true) {
+                        if (latestLeft?.connected == true && (latestLeft?.isReady == true || leftPrimed)) {
                             scheduleReconnect(Lens.RIGHT)
                             break
                         }
                         delay(EVEN_SEQUENCE_DELAY_MS)
                     }
                 }
+            }
+            else -> {
+                _connectionState.value = State.Repriming
+                requestTelemetryRefresh(Lens.RIGHT)
             }
         }
         startHeartbeat()
