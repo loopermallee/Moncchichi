@@ -81,6 +81,7 @@ class BleTelemetryRepository(
     val sleepEvents: StateFlow<SleepEvent?> = _sleepEvents.asStateFlow()
 
     private val firstTelemetryAt = AtomicLong(0L)
+    private var lastHeadsetSleeping: Boolean? = null
     private var lastPersisted: SnapshotRecord? = null
 
     suspend fun recordTelemetry(side: Lens, telemetry: Map<String, Any>) {
@@ -355,9 +356,10 @@ class BleTelemetryRepository(
 
     private fun maybeEmitSleepTransitions(previous: Snapshot, updated: Snapshot) {
         val now = System.currentTimeMillis()
-        val previousHeadset = isHeadsetSleeping(previous, now)
+        val previousHeadset = lastHeadsetSleeping ?: isHeadsetSleeping(previous, now)
         val updatedHeadset = isHeadsetSleeping(updated, now)
         if (previousHeadset != updatedHeadset) {
+            lastHeadsetSleeping = updatedHeadset
             _sleepEvents.value = if (updatedHeadset) SleepEvent.SleepEntered(null) else SleepEvent.SleepExited(null)
         }
     }
