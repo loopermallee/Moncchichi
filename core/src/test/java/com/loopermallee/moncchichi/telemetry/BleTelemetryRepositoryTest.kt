@@ -29,26 +29,74 @@ class BleTelemetryRepositoryTest {
     }
 
     @Test
+    fun lastVitalsTimestampOnlyUpdatesFromPayload() = runTest {
+        val repository = BleTelemetryRepository()
+
+        repository.recordTelemetry(
+            MoncchichiBleService.Lens.LEFT,
+            mapOf("batteryPercent" to 50),
+        )
+
+        val afterBattery = repository.snapshot.value
+        assertEquals(null, afterBattery.left.lastVitalsTimestamp)
+
+        repository.recordTelemetry(
+            MoncchichiBleService.Lens.LEFT,
+            mapOf("lastVitalsTimestamp" to 2_000L),
+        )
+
+        val snapshot = repository.snapshot.value
+        assertEquals(2_000L, snapshot.left.lastVitalsTimestamp)
+        assertEquals(null, snapshot.right.lastVitalsTimestamp)
+        assertEquals(2_000L, snapshot.lastVitalsTimestamp)
+
+        repository.recordTelemetry(
+            MoncchichiBleService.Lens.LEFT,
+            mapOf("rssi" to -42),
+        )
+
+        val finalSnapshot = repository.snapshot.value
+        assertEquals(2_000L, finalSnapshot.left.lastVitalsTimestamp)
+        assertEquals(null, finalSnapshot.right.lastVitalsTimestamp)
+        assertEquals(2_000L, finalSnapshot.lastVitalsTimestamp)
+    }
+
+    @Test
     fun sleepingRequiresAllConditionsAndFreshVitals() = runTest {
         val repository = BleTelemetryRepository()
         repository.recordTelemetry(
             MoncchichiBleService.Lens.LEFT,
             mapOf(
-                "caseOpen" to false,
+                "caseOpen" to true,
                 "inCase" to true,
                 "foldState" to true,
+                "charging" to false,
+            ),
+        )
+
+        val firstSnapshot = repository.snapshot.value
+        assertEquals(null, firstSnapshot.left.lastVitalsTimestamp)
+
+        val vitalsTimestamp = 1_000L
+        repository.recordTelemetry(
+            MoncchichiBleService.Lens.LEFT,
+            mapOf(
+                "caseOpen" to true,
+                "inCase" to true,
+                "foldState" to true,
+                "charging" to false,
+                "lastVitalsTimestamp" to vitalsTimestamp,
             ),
         )
 
         val snapshot = repository.snapshot.value
         val lastVitals = snapshot.left.lastVitalsTimestamp ?: error("missing vitals timestamp")
-        val freshNow = lastVitals + 1_000
+        val awakeNow = lastVitals + 1_000
+        assertEquals(false, repository.isSleeping(MoncchichiBleService.Lens.LEFT, awakeNow))
+        assertEquals(true, repository.isAwake(MoncchichiBleService.Lens.LEFT, awakeNow))
 
-        assertEquals(true, repository.isSleeping(MoncchichiBleService.Lens.LEFT, freshNow))
-        assertEquals(false, repository.isAwake(MoncchichiBleService.Lens.LEFT, freshNow))
-
-        val staleNow = lastVitals + 4_000
-        assertEquals(false, repository.isSleeping(MoncchichiBleService.Lens.LEFT, staleNow))
-        assertEquals(true, repository.isAwake(MoncchichiBleService.Lens.LEFT, staleNow))
+        val sleepyNow = lastVitals + 4_000
+        assertEquals(true, repository.isSleeping(MoncchichiBleService.Lens.LEFT, sleepyNow))
+        assertEquals(false, repository.isAwake(MoncchichiBleService.Lens.LEFT, sleepyNow))
     }
 }

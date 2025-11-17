@@ -183,8 +183,8 @@ class BleTelemetryRepository(
         val mergedFoldState = lens.foldState ?: other.foldState ?: foldState
         val mergedCharging = lens.charging ?: other.charging ?: charging
         val mergedVitals = maxOfNonNull(lens.lastVitalsTimestamp, other.lastVitalsTimestamp, lastVitalsTimestamp)
-        val normalizedLens = lens.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedCharging, mergedVitals)
-        val normalizedOther = other.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedCharging, mergedVitals)
+        val normalizedLens = lens.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedCharging)
+        val normalizedOther = other.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedCharging)
         return when (side) {
             Lens.LEFT -> copy(
                 left = normalizedLens,
@@ -211,6 +211,7 @@ class BleTelemetryRepository(
 
     private fun LensSnapshot.merge(values: Map<String, Any>, timestamp: Long): LensSnapshot {
         var snapshot = this.copy(lastUpdatedAt = timestamp)
+        var vitalsTimestampUpdated = false
         values.forEach { (key, raw) ->
             when (key) {
                 "batteryPercent" -> snapshot = snapshot.copy(batteryPercent = raw.toIntOrNull(snapshot.batteryPercent))
@@ -224,11 +225,13 @@ class BleTelemetryRepository(
                 "inCase" -> snapshot = snapshot.copy(inCase = raw.toBooleanOrNull(snapshot.inCase))
                 "foldState", "folded" -> snapshot = snapshot.copy(foldState = raw.toBooleanOrNull(snapshot.foldState))
                 "charging" -> snapshot = snapshot.copy(charging = raw.toBooleanOrNull(snapshot.charging))
-                "lastVitalsTimestamp" -> snapshot = snapshot.copy(lastVitalsTimestamp = raw.toLongOrNull(snapshot.lastVitalsTimestamp))
+                "lastVitalsTimestamp" -> {
+                    snapshot = snapshot.copy(lastVitalsTimestamp = raw.toLongOrNull(snapshot.lastVitalsTimestamp))
+                    vitalsTimestampUpdated = true
+                }
             }
         }
-        snapshot = snapshot.copy(lastVitalsTimestamp = maxOfNonNull(snapshot.lastVitalsTimestamp, timestamp))
-        return snapshot
+        return if (vitalsTimestampUpdated) snapshot else snapshot.copy(lastVitalsTimestamp = this.lastVitalsTimestamp)
     }
 
     private fun LensSnapshot.withSharedValues(
@@ -236,14 +239,12 @@ class BleTelemetryRepository(
         inCaseValue: Boolean?,
         foldStateValue: Boolean?,
         chargingValue: Boolean?,
-        lastVitalsValue: Long?,
     ): LensSnapshot {
         return copy(
             caseOpen = caseOpen ?: caseOpenValue,
             inCase = inCase ?: inCaseValue,
             foldState = foldState ?: foldStateValue,
             charging = charging ?: chargingValue,
-            lastVitalsTimestamp = lastVitalsTimestamp ?: lastVitalsValue,
         )
     }
 
