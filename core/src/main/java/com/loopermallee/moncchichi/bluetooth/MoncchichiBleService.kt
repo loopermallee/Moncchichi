@@ -2325,6 +2325,10 @@ private class HeartbeatSupervisor(
         }
         reconnectCoordinator.freeze()
         setStage(ConnectionStage.IdleSleep)
+        idleSleepActive = true
+        if (idleSleepState.value != idleSleepActive) {
+            idleSleepState.value = idleSleepActive
+        }
     }
 
     private fun onSleepModeExited(timestamp: Long) {
@@ -2338,6 +2342,10 @@ private class HeartbeatSupervisor(
         ensureHeartbeatLoop()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
+        }
+        idleSleepActive = false
+        if (idleSleepState.value != idleSleepActive) {
+            idleSleepState.value = idleSleepActive
         }
     }
 
