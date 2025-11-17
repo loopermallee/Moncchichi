@@ -2303,6 +2303,7 @@ class BleTelemetryRepository(
 
         updateSnapshot(eventTimestamp = timestamp) { current ->
             var telemetry = current.lens(lens)
+            val existingTelemetry = telemetry
             var changed = false
             var stateChanged = false
             event.wearing?.let { value ->
@@ -2325,7 +2326,7 @@ class BleTelemetryRepository(
                 }
             }
             telemetry = telemetry.withVitalsTimestamp(timestamp)
-            if (!changed && telemetry == existing) {
+            if (!changed && telemetry == existingTelemetry) {
                 current
             } else {
                 val updatedTelemetry = telemetry.copy(
