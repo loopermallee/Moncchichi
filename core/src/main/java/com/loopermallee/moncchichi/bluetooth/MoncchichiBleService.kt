@@ -2636,7 +2636,7 @@ private class HeartbeatSupervisor(
             } else {
                 false
             }
-            val derivedVitalsTimeout = lastVitalsAt?.let { now - it > SLEEP_VITALS_TIMEOUT_MS } ?: false
+            val derivedVitalsTimeout = lastVitalsAt?.let { now - it > G1Protocols.SLEEP_VITALS_TIMEOUT_MS } ?: false
             return copy(
                 caseClosedNoCharge = derivedCaseClosedNoCharge,
                 vitalsTimeout = derivedVitalsTimeout,
@@ -2878,7 +2878,6 @@ private class HeartbeatSupervisor(
         private const val GATT_FAILURE_WINDOW_MS = 60_000L
         private const val GATT_REFRESH_THRESHOLD = 3
         private const val STALE_BOND_CLEAR_THRESHOLD = 3
-        private const val SLEEP_VITALS_TIMEOUT_MS = 3_000L
         private const val SLEEP_TIMEOUT_POLL_MS = 500L
     }
 }
