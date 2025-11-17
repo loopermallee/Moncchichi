@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -60,6 +61,7 @@ class MoncchichiBleService(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val logger: MoncchichiLogger = MoncchichiLogger(context),
     private val telemetryRepository: BleTelemetryRepository? = null,
+    sleepWakeFlow: Flow<Boolean>? = null,
 ) {
 
     enum class Lens(val shortLabel: String) {
@@ -333,6 +335,13 @@ class MoncchichiBleService(
             delay(SLEEP_TIMEOUT_POLL_MS)
         }
     }
+    private val sleepWakeJob = sleepWakeFlow?.let { flow ->
+        scope.launch {
+            flow.collect { sleeping ->
+                handleSleepWakeSignal(sleeping)
+            }
+        }
+    }
     private val telemetrySnapshotJob = telemetryRepository?.let { repository ->
         scope.launch {
             repository.snapshot.collect { snapshot ->
@@ -340,6 +349,7 @@ class MoncchichiBleService(
             }
         }
     }
+    private var lastSleepWakeSignal: Boolean? = null
 
     suspend fun connect(device: BluetoothDevice, lensOverride: Lens? = null): Boolean =
         withContext(Dispatchers.IO) {
@@ -2173,6 +2183,19 @@ private class HeartbeatSupervisor(
         } else if (previousGlobal && !newGlobal) {
             onSleepModeExited(timestamp)
         }
+    }
+
+    private fun handleSleepWakeSignal(sleeping: Boolean) {
+        if (lastSleepWakeSignal == sleeping) return
+        lastSleepWakeSignal = sleeping
+        val timestamp = System.currentTimeMillis()
+        if (sleeping) {
+            log("[SLEEP] sleep telemetry signal")
+            onSleepModeEntered(timestamp)
+            return
+        }
+        log("[WAKE] wake telemetry signal")
+        onSleepModeExited(timestamp)
     }
 
     private fun selectSleepReason(
