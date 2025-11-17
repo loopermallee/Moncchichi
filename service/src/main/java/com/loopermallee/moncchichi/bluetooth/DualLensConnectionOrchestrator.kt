@@ -43,8 +43,8 @@ class DualLensConnectionOrchestrator(
 ) {
     private val telemetryRepository: BleTelemetryRepository = telemetry ?: BleTelemetryRepository()
     private val sleepMonitorJob = scope.launch {
-        telemetryRepository.snapshot.collect { snapshot ->
-            handleTelemetrySnapshot(snapshot)
+        telemetryRepository.sleepEvents.collect { event ->
+            event?.let { handleSleepEvent(it) }
         }
     }
     sealed class State {
@@ -899,16 +899,20 @@ class DualLensConnectionOrchestrator(
         }
     }
 
-    private suspend fun handleTelemetrySnapshot(snapshot: BleTelemetryRepository.Snapshot) {
+    private suspend fun handleSleepEvent(event: BleTelemetryRepository.SleepEvent) {
+        val snapshot = telemetryRepository.snapshot.value
         val now = System.currentTimeMillis()
-        val leftSleeping = telemetryRepository.isSleeping(Lens.LEFT, now)
-        val rightSleeping = telemetryRepository.isSleeping(Lens.RIGHT, now)
-        val shouldSleep = leftSleeping && rightSleeping
-        val fullyAwake = telemetryRepository.isAwake(Lens.LEFT, now) && telemetryRepository.isAwake(Lens.RIGHT, now)
-        val currentState = _connectionState.value
-        when {
-            shouldSleep && currentState.isActiveState() && !sleeping -> enterIdleSleep(snapshot, now)
-            !shouldSleep && sleeping && fullyAwake -> exitIdleSleep(snapshot)
+        when (event) {
+            is BleTelemetryRepository.SleepEvent.SleepEntered -> {
+                if (!sleeping && _connectionState.value.isActiveState()) {
+                    enterIdleSleep(snapshot, now)
+                }
+            }
+            is BleTelemetryRepository.SleepEvent.SleepExited -> {
+                if (sleeping) {
+                    exitIdleSleep(snapshot)
+                }
+            }
         }
     }
 
@@ -938,21 +942,25 @@ class DualLensConnectionOrchestrator(
         logger("[WAKE] Headset → Awake")
         logger("[WAKE][${Lens.LEFT.logLabel()}] $leftReason")
         logger("[WAKE][${Lens.RIGHT.logLabel()}] $rightReason")
-        val leftMac = leftSession?.id?.mac ?: lastLeftMac
-        val rightMac = rightSession?.id?.mac ?: lastRightMac
-        lastLeftMac = leftMac
-        lastRightMac = rightMac
-        wakeJob?.cancel()
-        if (leftMac == null || rightMac == null) {
-            disconnectHeadset()
-            _connectionState.value = State.Idle
-            return
+        val leftConnected = latestLeft?.connected == true
+        val rightConnected = latestRight?.connected == true
+        when {
+            leftConnected && rightConnected -> _connectionState.value = State.Stable
+            leftConnected -> {
+                _connectionState.value = State.RecoveringRight
+                scheduleReconnect(Lens.RIGHT)
+            }
+            rightConnected -> {
+                _connectionState.value = State.RecoveringLeft
+                scheduleReconnect(Lens.LEFT)
+            }
+            else -> {
+                _connectionState.value = State.Idle
+                scheduleReconnect(Lens.LEFT)
+                scheduleReconnect(Lens.RIGHT)
+            }
         }
-        _connectionState.value = State.ConnectingLeft
-        wakeJob = scope.launch {
-            disconnectHeadset()
-            connectHeadset(pairKey, leftMac, rightMac)
-        }
+        startHeartbeat()
     }
 
     private fun isIdleSleepState(): Boolean {
@@ -1058,6 +1066,10 @@ class DualLensConnectionOrchestrator(
             while (isActive) {
                 if (!sessionActive) {
                     break
+                }
+                if (isIdleSleepState()) {
+                    delay(HEARTBEAT_INTERVAL_MS)
+                    continue
                 }
                 val now = SystemClock.elapsedRealtime()
                 Lens.values().forEach { side ->

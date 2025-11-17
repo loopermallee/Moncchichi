@@ -45,6 +45,7 @@ import java.util.Locale
 import java.io.ByteArrayOutputStream
 import java.util.EnumMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.text.SimpleDateFormat
 import kotlin.coroutines.coroutineContext
@@ -242,6 +243,7 @@ class MoncchichiBleService(
     private val staleBondFailureStreak = EnumMap<Lens, Int>(Lens::class.java).apply {
         Lens.values().forEach { lens -> put(lens, 0) }
     }
+    private val wakeTelemetryRefreshQueued = AtomicBoolean(false)
     private val reconnectCoordinator = ReconnectCoordinator(
         scope = scope,
         shouldContinue = { lens -> shouldAutoReconnect(lens) },
@@ -333,6 +335,13 @@ class MoncchichiBleService(
         while (isActive) {
             checkSleepTimeouts()
             delay(SLEEP_TIMEOUT_POLL_MS)
+        }
+    }
+    private val sleepEventsJob = telemetryRepository?.let { repository ->
+        scope.launch {
+            repository.sleepEvents.collectLatest { event ->
+                event?.let { handleSleepEvent(it) }
+            }
         }
     }
     private val sleepWakeJob = sleepWakeFlow?.let { flow ->
@@ -1160,6 +1169,16 @@ class MoncchichiBleService(
         scope.launch(Dispatchers.IO) {
             requestCaseTelemetry(lens)
             subscribeCaseEvents(lens)
+        }
+    }
+
+    private suspend fun triggerWakeTelemetryRefresh() {
+        if (!wakeTelemetryRefreshQueued.compareAndSet(false, true)) return
+        try {
+            scheduleCaseTelemetry(Lens.LEFT)
+            scheduleCaseTelemetry(Lens.RIGHT)
+        } finally {
+            wakeTelemetryRefreshQueued.set(false)
         }
     }
 
@@ -2199,6 +2218,32 @@ private class HeartbeatSupervisor(
         onSleepModeExited(timestamp)
     }
 
+    private fun handleSleepEvent(event: BleTelemetryRepository.SleepEvent) {
+        val timestamp = System.currentTimeMillis()
+        when (event) {
+            is BleTelemetryRepository.SleepEvent.SleepEntered -> {
+                log("[SLEEP][${event.lens?.shortLabel ?: "HEADSET"}] SleepEvent")
+                applySleepEventState(event.lens, sleeping = true, timestamp = timestamp)
+            }
+            is BleTelemetryRepository.SleepEvent.SleepExited -> {
+                log("[WAKE][${event.lens?.shortLabel ?: "HEADSET"}] SleepEvent")
+                applySleepEventState(event.lens, sleeping = false, timestamp = timestamp)
+                if (!isSleepModeActive()) {
+                    scope.launch { triggerWakeTelemetryRefresh() }
+                }
+            }
+        }
+    }
+
+    private fun applySleepEventState(lens: Lens?, sleeping: Boolean, timestamp: Long) {
+        val targets = lens?.let { listOf(it) } ?: Lens.values().toList()
+        targets.forEach { target ->
+            updateSleepState(target, timestamp) { current ->
+                current.copy(sleepEvent = sleeping)
+            }
+        }
+    }
+
     private fun selectSleepReason(
         previous: Set<SleepTrigger>,
         current: Set<SleepTrigger>,
@@ -2559,6 +2604,7 @@ private class HeartbeatSupervisor(
         val inCase: Boolean = false,
         val folded: Boolean = false,
         val manualExit: Boolean = false,
+        val sleepEvent: Boolean = false,
         val charging: Boolean? = null,
         val caseClosedNoCharge: Boolean = false,
         val vitalsTimeout: Boolean = false,
@@ -2583,6 +2629,7 @@ private class HeartbeatSupervisor(
             if (inCase) triggers += SleepTrigger.IN_CASE
             if (folded) triggers += SleepTrigger.FOLDED
             if (manualExit) triggers += SleepTrigger.MANUAL_EXIT
+            if (sleepEvent) triggers += SleepTrigger.SLEEP_EVENT
             if (caseClosedNoCharge) triggers += SleepTrigger.CASE_CLOSED_NO_CHARGE
             if (vitalsTimeout) triggers += SleepTrigger.VITALS_TIMEOUT
             return triggers
@@ -2598,6 +2645,7 @@ private class HeartbeatSupervisor(
         FOLDED(3, "Folded"),
         MANUAL_EXIT(4, "ManualExit"),
         VITALS_TIMEOUT(5, "VitalsTimeout"),
+        SLEEP_EVENT(6, "SleepEvent"),
     }
 
     private fun updateLens(lens: Lens, reducer: (LensStatus) -> LensStatus) {
