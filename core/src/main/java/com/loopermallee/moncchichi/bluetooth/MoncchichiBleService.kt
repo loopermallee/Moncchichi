@@ -2655,7 +2655,7 @@ private class HeartbeatSupervisor(
             return triggers
         }
 
-        val sleeping: Boolean get() = activeTriggers().isNotEmpty()
+        val sleeping: Boolean get() = sleepEvent
     }
 
     private enum class SleepTrigger(val priority: Int, val logLabel: String) {

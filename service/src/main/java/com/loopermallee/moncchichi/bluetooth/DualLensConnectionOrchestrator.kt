@@ -920,6 +920,8 @@ class DualLensConnectionOrchestrator(
         sleeping = true
         wakeJob?.cancel()
         wakeJob = null
+        heartbeatJob?.cancel()
+        heartbeatJob = null
         val cachedLeftMac = leftSession?.id?.mac ?: lastLeftMac
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
         val leftReason = resolveSleepReason(snapshot, Lens.LEFT, now)
@@ -1066,19 +1068,17 @@ class DualLensConnectionOrchestrator(
     }
 
     private fun startHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
         if (isIdleSleepState()) {
             return
         }
-        heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
             while (isActive) {
                 if (!sessionActive) {
                     break
                 }
-                if (isIdleSleepState()) {
-                    delay(HEARTBEAT_INTERVAL_MS)
-                    continue
-                }
+                if (isIdleSleepState()) break
                 val now = SystemClock.elapsedRealtime()
                 Lens.values().forEach { side ->
                     val state = heartbeatStates[side] ?: return@forEach

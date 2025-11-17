@@ -1504,15 +1504,7 @@ class G1BleClient(
         stopAckWatchdog()
         ackWatchdogJob = scope.launch {
             while (isActive) {
-                if (!_awake.value) {
-                    delay(ACK_HEALTH_POLL_INTERVAL_MS)
-                    continue
-                }
-                if (isSleeping()) {
-                    resetAckTelemetry()
-                    delay(ACK_HEALTH_POLL_INTERVAL_MS)
-                    continue
-                }
+                if (!_awake.value || isSleeping()) break
                 val lastRealtime = lastAckRealtime.get()
                 val nowRealtime = SystemClock.elapsedRealtime()
                 val elapsed = if (lastRealtime == 0L) null else nowRealtime - lastRealtime
