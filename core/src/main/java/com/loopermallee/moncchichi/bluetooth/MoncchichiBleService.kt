@@ -333,6 +333,7 @@ class MoncchichiBleService(
     private val sleepStateLock = Any()
     @Volatile
     private var idleSleepActive: Boolean = false
+    private var suppressedDuringSleepCount: Int = 0
     private val idleSleepState = MutableStateFlow(false)
     private val sleepMonitorJob = scope.launch {
         while (isActive) {
@@ -674,7 +675,7 @@ class MoncchichiBleService(
         retryDelayMs: Long = G1Protocols.RETRY_BACKOFF_MS,
     ): Boolean {
         if (isSleepModeActive()) {
-            log("[BLE] Send skipped (IdleSleep)")
+            suppressedDuringSleepCount += 1
             return false
         }
         val records = when (target) {
@@ -717,7 +718,7 @@ class MoncchichiBleService(
 
     suspend fun rearmNotifications(target: Target = Target.Both): Boolean {
         if (isSleepModeActive()) {
-            log("[BLE] Notify re-arm skipped (IdleSleep)")
+            suppressedDuringSleepCount += 1
             return false
         }
         val records = when (target) {
@@ -751,7 +752,7 @@ class MoncchichiBleService(
             return false
         }
         if (isSleepModeActive()) {
-            logWarn("[PAIRING] HELLO quick action skipped – IdleSleep active")
+            suppressedDuringSleepCount += 1
             return false
         }
         if (!record.client.awake.value) {
@@ -767,7 +768,7 @@ class MoncchichiBleService(
 
     suspend fun requestLeftRefresh(): Boolean {
         if (isSleepModeActive()) {
-            log("[BLE][${Lens.LEFT.shortLabel}] Left refresh skipped (IdleSleep)")
+            suppressedDuringSleepCount += 1
             return false
         }
         val commands = listOf(
@@ -2329,6 +2330,7 @@ private class HeartbeatSupervisor(
         if (idleSleepState.value != idleSleepActive) {
             idleSleepState.value = idleSleepActive
         }
+        suppressedDuringSleepCount = 0
     }
 
     private fun onSleepModeExited(timestamp: Long) {
@@ -2339,7 +2341,6 @@ private class HeartbeatSupervisor(
             heartbeatSupervisor.updateLensAwake(record.lens, true)
         }
         reconnectCoordinator.unfreeze()
-        ensureHeartbeatLoop()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
         }
@@ -2347,6 +2348,11 @@ private class HeartbeatSupervisor(
         if (idleSleepState.value != idleSleepActive) {
             idleSleepState.value = idleSleepActive
         }
+        if (suppressedDuringSleepCount > 0) {
+            log("[WAKE] Suppressed $suppressedDuringSleepCount host commands during IdleSleep")
+        }
+        suppressedDuringSleepCount = 0
+        ensureHeartbeatLoop()
     }
 
     private fun resetTelemetryTimers(lens: Lens, timestamp: Long) {
@@ -2816,16 +2822,35 @@ private class HeartbeatSupervisor(
     private fun setStage(stage: ConnectionStage) {
         if (_connectionStage.value != stage) {
             _connectionStage.value = stage
-            log("Stage -> ${stage.name}")
+            if (!isSleepModeActive()) {
+                log("Stage -> ${stage.name}")
+            }
         }
     }
 
     private fun log(message: String) {
+        if (!shouldLogWhileSleeping(message)) {
+            return
+        }
         logger.i(TAG, "${tt()} $message")
     }
 
     private fun logWarn(message: String) {
+        if (!shouldLogWhileSleeping(message)) {
+            return
+        }
         logger.w(TAG, "${tt()} $message")
+    }
+
+    private fun shouldLogWhileSleeping(message: String): Boolean {
+        if (!isSleepModeActive()) {
+            return true
+        }
+        val normalized = message.lowercase(Locale.US)
+        return message.startsWith("[SLEEP]") ||
+            message.startsWith("[WAKE]") ||
+            normalized.contains("vitals") ||
+            normalized.contains("case")
     }
 
     private fun G1BleClient.State.isReadyForCompanion(): Boolean {

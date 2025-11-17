@@ -375,7 +375,6 @@ class DualLensConnectionOrchestrator(
             return false
         }
         if (isIdleSleepState()) {
-            logger("[SLEEP] Dropping host command during IdleSleep opcode=0x%02X".format(payload.first()))
             return false
         }
         val opcode = payload.first().toInt() and 0xFF
