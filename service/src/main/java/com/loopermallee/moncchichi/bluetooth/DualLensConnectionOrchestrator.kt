@@ -955,9 +955,17 @@ class DualLensConnectionOrchestrator(
                 scheduleReconnect(Lens.LEFT)
             }
             else -> {
-                _connectionState.value = State.Idle
+                _connectionState.value = State.ConnectingLeft
                 scheduleReconnect(Lens.LEFT)
-                scheduleReconnect(Lens.RIGHT)
+                wakeJob = scope.launch {
+                    while (sessionActive && !sleeping) {
+                        if (latestLeft?.connected == true) {
+                            scheduleReconnect(Lens.RIGHT)
+                            break
+                        }
+                        delay(EVEN_SEQUENCE_DELAY_MS)
+                    }
+                }
             }
         }
         startHeartbeat()

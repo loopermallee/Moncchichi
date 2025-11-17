@@ -1094,6 +1094,9 @@ class G1BleClient(
         expectAck: Boolean = true,
         onAttemptResult: ((CommandAttemptTelemetry) -> Unit)? = null,
     ): Boolean {
+        if (!_awake.value || isSleeping()) {
+            return false
+        }
         return writeMutex.withLock {
             sendCommandLocked(
                 payload = payload,
@@ -1148,6 +1151,9 @@ class G1BleClient(
     suspend fun forceHelloHandshake(): Boolean {
         if (!_awake.value) {
             beginWakeHandshake()
+        }
+        if (isSleeping()) {
+            return false
         }
         val ready = if (_notifyReady.value) true else awaitNotifyReady()
         if (!ready) {
