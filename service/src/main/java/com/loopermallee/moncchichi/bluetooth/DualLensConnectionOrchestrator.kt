@@ -900,8 +900,12 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun handleSleepEvent(event: BleTelemetryRepository.SleepEvent) {
-        if (event.lens != null) {
-            logger("[SLEEP][${event.lens.logLabel()}] Ignoring per-lens SleepEvent; expecting headset scope")
+        val perLens = when (event) {
+            is BleTelemetryRepository.SleepEvent.SleepEntered -> event.lens
+            is BleTelemetryRepository.SleepEvent.SleepExited -> event.lens
+        }
+        if (perLens != null) {
+            logger("[SLEEP][${perLens.logLabel()}] Ignoring per-lens SleepEvent; expecting headset scope")
             return
         }
 

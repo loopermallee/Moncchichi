@@ -2253,8 +2253,12 @@ private class HeartbeatSupervisor(
     }
 
     private fun handleSleepEvent(event: BleTelemetryRepository.SleepEvent) {
-        if (event.lens != null) {
-            log("[SLEEP][${event.lens.shortLabel}] Ignoring per-lens SleepEvent; expecting headset scope")
+        val perLens = when (event) {
+            is BleTelemetryRepository.SleepEvent.SleepEntered -> event.lens
+            is BleTelemetryRepository.SleepEvent.SleepExited -> event.lens
+        }
+        if (perLens != null) {
+            log("[SLEEP][${perLens.shortLabel}] Ignoring per-lens SleepEvent; expecting headset scope")
             return
         }
 
