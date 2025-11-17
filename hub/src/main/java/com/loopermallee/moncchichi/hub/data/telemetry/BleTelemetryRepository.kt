@@ -49,6 +49,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
@@ -102,6 +103,9 @@ class BleTelemetryRepository(
         val silentMode: Boolean? = null,
         val caseOpen: Boolean? = null,
         val foldState: Boolean? = null,
+        val sleepState: SleepState = SleepState.UNKNOWN,
+        val lastSleepAt: Long? = null,
+        val lastWakeAt: Long? = null,
         val bonded: Boolean = false,
         val disconnectReason: Int? = null,
         val bondTransitions: Int = 0,
@@ -144,6 +148,9 @@ class BleTelemetryRepository(
         val voltageMv: Int? = null,
         val updatedAt: Long = System.currentTimeMillis(),
     )
+
+    /** Describes the sleep state reported by the lens UART stream. */
+    enum class SleepState { UNKNOWN, AWAKE, SLEEPING }
 
     enum class ValidationState { Idle, Running, Passed, Failed }
 
@@ -899,6 +906,27 @@ class BleTelemetryRepository(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val sleepEvents: SharedFlow<SleepEvent> = _sleepEvents.asSharedFlow()
+
+    val sleepStates: StateFlow<Map<Lens, SleepState>> = snapshot
+        .map { current ->
+            mapOf(
+                Lens.LEFT to current.left.sleepState,
+                Lens.RIGHT to current.right.sleepState,
+            )
+        }
+        .stateIn(
+            scope = deviceTelemetryScope,
+            started = SharingStarted.Eagerly,
+            initialValue = Lens.values().associateWith { SleepState.UNKNOWN },
+        )
+
+    val isSleepingFlow: StateFlow<Boolean> = snapshot
+        .map { current -> Lens.values().all { lens -> current.lens(lens).sleepState == SleepState.SLEEPING } }
+        .stateIn(
+            scope = deviceTelemetryScope,
+            started = SharingStarted.Eagerly,
+            initialValue = false,
+        )
 
     private val consoleTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
@@ -2725,7 +2753,7 @@ class BleTelemetryRepository(
 
         if (firmwareChanged) {
             firmwareBanner?.let { line ->
-                parseTextMetadata(lens, line)
+                parseTextMetadata(lens, line, timestamp)
                 _uartText.tryEmit(UartLine(lens, line))
             }
         }
@@ -3244,8 +3272,9 @@ class BleTelemetryRepository(
         if (text.isNullOrBlank()) return false
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (lines.isEmpty()) return false
+        val timestamp = System.currentTimeMillis()
         lines.forEach { line ->
-            parseTextMetadata(lens, line)
+            parseTextMetadata(lens, line, timestamp)
             _uartText.tryEmit(UartLine(lens, line))
         }
         return true
@@ -3266,6 +3295,7 @@ class BleTelemetryRepository(
         val parts = accumulated.split("\r", "\n")
         if (parts.isEmpty()) return false
         val hasTerminator = accumulated.endsWith("\n") || accumulated.endsWith("\r")
+        val timestamp = System.currentTimeMillis()
         var emitted = false
         parts.forEachIndexed { index, raw ->
             val trimmed = raw.trim()
@@ -3277,7 +3307,7 @@ class BleTelemetryRepository(
                 }
             } else {
                 if (trimmed.isNotEmpty()) {
-                    parseTextMetadata(lens, trimmed)
+                    parseTextMetadata(lens, trimmed, timestamp)
                     _uartText.tryEmit(UartLine(lens, trimmed))
                     emitted = true
                 }
@@ -3299,7 +3329,8 @@ class BleTelemetryRepository(
         return unsigned == 0x0A || unsigned == 0x0D || unsigned in 0x20..0x7E
     }
 
-    private fun parseTextMetadata(lens: Lens, line: String) {
+    private fun parseTextMetadata(lens: Lens, line: String, timestamp: Long = System.currentTimeMillis()) {
+        maybeHandleSleepWakeLine(lens, line, timestamp)
         var parsedFirmware: String? = null
         var parsedDeviceId: String? = null
         var firmwareChanged = false
@@ -3355,6 +3386,35 @@ class BleTelemetryRepository(
         }
     }
 
+    private fun maybeHandleSleepWakeLine(lens: Lens, line: String, timestamp: Long) {
+        val normalized = line.trim().lowercase(Locale.US)
+        val state = when (normalized) {
+            "sleep" -> SleepState.SLEEPING
+            "wake" -> SleepState.AWAKE
+            else -> return
+        }
+
+        updateSnapshot(eventTimestamp = timestamp) { current ->
+            val existing = current.lens(lens)
+            val updated = when (state) {
+                SleepState.SLEEPING -> existing.copy(
+                    sleepState = state,
+                    lastSleepAt = timestamp,
+                    lastStateUpdatedAt = timestamp,
+                )
+
+                SleepState.AWAKE -> existing.copy(
+                    sleepState = state,
+                    lastWakeAt = timestamp,
+                    lastStateUpdatedAt = timestamp,
+                )
+
+                else -> existing
+            }
+            if (updated == existing) current else current.updateLens(lens, updated)
+        }
+    }
+
     private fun ByteArray.toHex(): String = joinToString(separator = "") { byte ->
         ((byte.toInt() and 0xFF).toString(16)).padStart(2, '0')
     }
@@ -3370,7 +3430,7 @@ class BleTelemetryRepository(
             persistSnapshot(updated, eventTimestamp)
         }
         if (updated != previous) {
-            maybeEmitSleepTransitions(previous, updated, eventTimestamp ?: System.currentTimeMillis())
+            maybeEmitSleepTransitions(previous, updated)
         }
     }
 
@@ -3379,34 +3439,28 @@ class BleTelemetryRepository(
         persistDeviceTelemetrySnapshots(recordedAt)
     }
 
-    fun isLensSleeping(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
-        return isLensSleeping(_snapshot.value, lens, nowMillis)
+    fun isLensSleeping(lens: Lens): Boolean {
+        return isLensSleeping(_snapshot.value, lens)
     }
 
-    fun isHeadsetSleeping(nowMillis: Long = System.currentTimeMillis()): Boolean {
+    fun isHeadsetSleeping(): Boolean {
         val snapshot = _snapshot.value
-        return Lens.values().all { lens -> isLensSleeping(snapshot, lens, nowMillis) }
+        return Lens.values().all { lens -> isLensSleeping(snapshot, lens) }
     }
 
-    private fun isLensSleeping(snapshot: Snapshot, lens: Lens, nowMillis: Long): Boolean {
+    fun isSleeping(lens: Lens? = null): Boolean {
+        return lens?.let { isLensSleeping(it) } ?: isHeadsetSleeping()
+    }
+
+    private fun isLensSleeping(snapshot: Snapshot, lens: Lens): Boolean {
         val lensSnapshot = snapshot.lens(lens)
-        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
-        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
-        val resolvedFolded = lensSnapshot.foldState ?: snapshot.foldState
-        val charging = lensSnapshot.charging
-        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        if (resolvedCaseOpen == null || resolvedInCase == null || resolvedFolded == null || lastVitals == null) {
-            return false
-        }
-        if (charging == true) return false
-        val quiet = nowMillis - lastVitals >= SLEEP_QUIET_WINDOW_MS
-        return resolvedFolded && resolvedInCase && resolvedCaseOpen && quiet
+        return lensSnapshot.sleepState == SleepState.SLEEPING
     }
 
-    private fun maybeEmitSleepTransitions(previous: Snapshot, updated: Snapshot, timestamp: Long) {
+    private fun maybeEmitSleepTransitions(previous: Snapshot, updated: Snapshot) {
         Lens.values().forEach { lens ->
-            val before = isLensSleeping(previous, lens, timestamp)
-            val after = isLensSleeping(updated, lens, timestamp)
+            val before = isLensSleeping(previous, lens)
+            val after = isLensSleeping(updated, lens)
             if (before != after) {
                 lastLensSleepState[lens] = after
                 val event = if (after) SleepEvent.SleepEntered(lens) else SleepEvent.SleepExited(lens)
@@ -3414,9 +3468,9 @@ class BleTelemetryRepository(
             }
         }
         val previousHeadset = lastHeadsetSleeping ?: Lens.values().all { lens ->
-            isLensSleeping(previous, lens, timestamp)
+            isLensSleeping(previous, lens)
         }
-        val updatedHeadset = Lens.values().all { lens -> isLensSleeping(updated, lens, timestamp) }
+        val updatedHeadset = Lens.values().all { lens -> isLensSleeping(updated, lens) }
         if (previousHeadset != updatedHeadset) {
             lastHeadsetSleeping = updatedHeadset
             val event = if (updatedHeadset) SleepEvent.SleepEntered(null) else SleepEvent.SleepExited(null)
@@ -3976,7 +4030,6 @@ class BleTelemetryRepository(
         private const val CASE_REFRESH_MIN_INTERVAL_MS = 3_000L
         private const val BATTERY_LOG_INTERVAL_MS = 30_000L
         private const val ACK_LOG_DEDUP_WINDOW_MS = 3_000L
-        private const val SLEEP_QUIET_WINDOW_MS = 3_000L
     }
 }
 
