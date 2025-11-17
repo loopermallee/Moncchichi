@@ -1,307 +1,655 @@
-CONTEXT ENGINEERING – EVEN REALITY PARITY (SLEEP / WAKE / HANDSHAKE)
+CONTEXT_ENGINEERING – Phase 5.x
+Idle Sleep Parity With Even Reality (Folded + In Case + Idle)
 
-Patch: Sleep/Wake Parity, ACK Parity, LEFT-first Warmup, and Reconnect Behaviour
 
-Purpose of this CE Section
+---
 
-Codex must understand what the EvenReality app does, how your current code differs, and what the patch must correct.
+0. High-level intent (what you’re aiming for)
 
-This CE provides:
-	•	definitive behavior requirements
-	•	references to the authoritative protocol source
-	•	explanation of each failure mode
-	•	constraints Codex must follow
-	•	file locations in your repo where logic must change
+Make Moncchichi Hub behave exactly like the Even Reality G1 app when the glasses are:
 
-Codex must use this CE when modifying files, not summarise it.
+Folded
 
-⸻
+Sitting in the case
 
-1. Authoritative Protocol Source
+Case lid open
 
-Codex must treat the following as the primary BLE reference:
+Case not charging
 
-Even Reality G1 BLE Protocol Wiki
+No gestures or user interaction
 
-https://github.com/JohnRThomas/EvenDemoApp/wiki/BLE-Protocol
 
-This defines:
-	•	actual opcodes
-	•	actual UART messages
-	•	real Sleep/Wake signalling
-	•	binary vs text ACK responses
-	•	correct notification descriptors
-	•	real G1 warmup behavior
-	•	handshake message ordering
-	•	expected timing between steps
+In this state:
 
-⸻
+The BLE links must stay connected.
 
-2. What the Official Even App Actually Does (must be matched)
+The phone must stop “poking” the glasses (no PINGs, no test commands).
 
-2.1 Sleep and Wake
+The app must not treat this as an error or instability.
 
-EvenReality produces explicit UART messages:
+The traffic profile must match Even’s idle logs: only device-initiated notifications, no host writes.
 
-Sleep
-Wake
 
-These messages are the only correct signals for sleep/wake.
+This phase is not about improving battery, connection speed, or UX. It is purely protocol parity.
 
-Codex must ensure:
-	•	parse these UART lines
-	•	generate a telemetry event
-	•	store them in BleTelemetryRepository
-	•	drive the connection orchestrator into IdleSleep
-	•	suppress reconnects while in IdleSleep
-	•	exit IdleSleep only when a “Wake” message arrives
 
-Fold state, case state, RSSI, battery, or heartbeat MUST NOT be used to infer sleep.
+---
 
-⸻
+1. Ground truth – What Even actually does when idle
 
-2.2 LEFT-first Warmup
+From the Even nRF logs in the “folded + in case + idle” scenario:
 
-EvenReality always connects lenses in this order:
-	1.	Connect LEFT
-	2.	Enable notifications for LEFT (in specific order)
-	3.	Wait ~150–300ms
-	4.	Send HELLO to LEFT
-	5.	After LEFT ACKs → connect RIGHT
-	6.	Enable notifications for RIGHT
-	7.	Send HELLO to RIGHT
+The phone keeps the GATT connections open to both lenses.
 
-Codex must enforce:
-	•	RIGHT must NOT connect if LEFT has not completed warmup
-	•	No parallel connections
-	•	No HELLO before notifications
-	•	Maintain delay between steps
-	•	Follow correct descriptor enabling order
+Traffic characteristics:
 
-Codex must reference the wiki section:
-“Connection Flow → Warmup”.
+No periodic host-initiated Write Command keepalives (no PINGs).
 
-⸻
+No “test ping”, no command bursts.
 
-2.3 ACK Handling – Text ACK vs Binary ACK
+Only occasional Handle Value Notification packets from the glasses:
 
-EvenReality uses two types of ACK:
+Case state / vitals / wear detect frames.
 
-Text ACK (UART)
 
-OK
+No repeated disconnect/reconnect.
 
-Binary ACK (Notify frame)
 
-C9 04
+No indication that the phone is upset about missing ACKs (because it doesn’t expect any).
 
-The official app accepts both.
 
-Codex must:
-	•	Add dual-mode ACK validator
-	•	Accept “OK” as valid
-	•	Accept C9 04 as valid
-	•	Never mark “OK” as failure
+Interpretation:
 
-This fixes all:
-	•	“PING ERR”
-	•	“Handshake ERR”
-false negatives.
+Even has a concept of “headset is sleeping”:
 
-⸻
+It knows the headset is folded + in case + lid open + not charging.
 
-2.4 Notification Enable Order
-
-Official app enables GATT notifications in the same predictable order:
-	1.	control characteristic
-	2.	uart characteristic
-	3.	battery characteristic
-	4.	state characteristic
+While in that mode, it behaves as a passive listener:
 
-With deliberate spacing (~150–200ms).
+No heartbeats.
 
-Your app currently:
-	•	does not maintain order
-	•	sometimes sends HELLO before descriptors apply
-	•	causes GATT “ENABLE_NOTIFICATION_FAILED”
+No reconnect loops.
 
-Codex must:
-	•	reorder descriptor writes
-	•	add small delays
-	•	ensure sequencing before HELLO
+No “stability” warnings.
 
-⸻
 
-2.5 Reconnect Backoff + Sleep Suppression
 
-EvenReality reconnect behavior:
-	•	If awake:
-	•	retry → 0ms
-	•	retry → 500ms
-	•	retry → 1000ms
-	•	retry → 5000ms
-	•	If sleeping:
-	•	STOP reconnecting entirely
-	•	Wait for “Wake” UART line
-	•	Resume LEFT-first warmup
 
-Codex must implement the same:
-	•	Backoff logic
-	•	No reconnect while sleeping
-	•	Wake message restores normal flow
+That is the gold standard you must mirror.
 
-⸻
 
-3. Where These Behaviors Must Be Implemented (Your Repo)
+---
 
-3.1 BLE telemetry parsing
+2. Current Moncchichi behavior – What’s wrong
 
-File:
-hub/src/main/java/com/loopermallee/moncchichi/hub/data/telemetry/BleTelemetryRepository.kt
+From Moncchichi logs in the same scenario:
 
-Changes required:
-	•	add fields:
-	•	lastSleepTimestamp
-	•	lastWakeTimestamp
-	•	isSleeping helper
-	•	parse UART “Sleep” / “Wake”
-	•	store last seen sleep/wake state
-	•	expose a flow or getter for orchestrator and service
+App continues sending periodic heartbeats ([BLE] ❤️ Keepalive).
 
-⸻
+Because the headset is sleeping and ignores those pings:
 
-3.2 Connection orchestrator
+You see [BLE] ❤️ Keepalive → ERR.
 
-File:
-service/src/main/java/com/loopermallee/moncchichi/bluetooth/DualLensConnectionOrchestrator.kt
+You see [WARN][ACK] stalled for L/R.
 
-Changes required:
-	•	add IdleSleep state
-	•	stop scanning when IdleSleep is active
-	•	wait for telemetry wake event
-	•	enforce LEFT-first warmup
-	•	block RIGHT until LEFT finishes
-	•	implement state transitions:
-	•	Awake → IdleSleep
-	•	IdleSleep → Awake
+Telemetry shows heartbeat miss counts increasing.
 
-⸻
+Sometimes reconnect behavior or GATT refresh is triggered.
 
-3.3 BLE service (top level)
 
-File:
-core/src/main/java/com/loopermallee/moncchichi/bluetooth/MoncchichiBleService.kt
-
-Changes required:
-	•	listen for Sleep/Wake telemetry updates
-	•	log "[SLEEP]" and "[WAKE]"
-	•	cancel heartbeat job during sleep
-	•	cancel reconnect scheduling during sleep
-	•	resume on wake
+Telemetry / status snapshot:
 
-⸻
-
-3.4 G1BleClient heartbeat
-
-File:
-core/src/main/java/com/loopermallee/moncchichi/bluetooth/G1BleClient.kt
-
-Changes required:
-	•	heartbeat coroutine must check isSleeping
-	•	if sleeping → do not send PING
-	•	ignore ACK timeouts during sleep
-	•	restart heartbeat only when awake
-
-⸻
-
-3.5 ACK logic
-
-File:
-Likely in:
-core/.../G1BleClient.kt
-or
-core/.../bluetooth/CommandRouter.kt
-
-Changes required:
-	•	treat UART “OK” as valid ACK
-	•	treat binary C9 04 as valid ACK
-	•	replace “binary-only” logic
-
-⸻
-
-3.6 Descriptor enabling order
-
-File:
-core/.../G1BleClient.kt
-Function area:
-	•	enableNotifications()
-	•	configureDescriptors()
-
-Changes required:
-	•	reorder
-	•	insert delay
-	•	ensure HELLO only sent after all descriptors enabled
-
-⸻
-
-4. Constraints Codex Must Follow
-
-Codex cannot:
-	•	run Gradle
-	•	execute app
-	•	verify MTU
-	•	get logs
-	•	test Bluetooth
-	•	run the app on a device
-
-Codex can only:
-	•	read files
-	•	update files
-	•	create new files
-	•	follow CE instructions
-	•	ask you questions when unclear
-
-If code needs testing, Codex must write:
-
-“User must run ./gradlew assembleDebug locally to validate.”
-
-⸻
-
-5. Questions Codex Should Ask If Unsure
-
-Codex must ask when unclear:
-	•	“Which file should contain the IdleSleep state enum?”
-	•	“Where should the Sleep/Wake event flow be exposed?”
-	•	“Is this HELLO message timing acceptable?”
-	•	“Should RIGHT wait for LEFT only on wake-up, or on all connections?”
-	•	“Where should delays be implemented — in orchestrator or client?”
-
-⸻
-
-6. Definition of Success (Exit Criteria)
-
-The patch is successful when:
-	1.	Connection order is: LEFT → delay → RIGHT
-	2.	All HELLO messages only run after descriptor enable
-	3.	“Sleep” message instantly triggers IdleSleep state
-	4.	“Wake” message instantly resumes orchestrator
-	5.	Heartbeats stop during sleep
-	6.	Reconnect scheduling stops during sleep
-	7.	Reconnect uses backoff pattern
-	8.	“OK” and “C9 04” both count as ACK
-	9.	No reconnect storm appears in logs
-	10.	Lens warmup succeeds consistently
-
-⸻
-
-7. Codex Implementation Sequence (What Codex Must Do in Order)
-	1.	Add telemetry sleep/wake parsing
-	2.	Add IdleSleep state + transitions
-	3.	Wire service to send sleep/wake signals to orchestrator
-	4.	Gate heartbeats
-	5.	Gate reconnects
-	6.	Enforce LEFT-first warmup ordering
-	7.	Add ACK logic (text + binary)
-	8.	Fix descriptor order + delays
-	9.	Add logs
-	10.	Ask user to run assembleDebug
+Holds battery/RSSI data etc.
+
+But does not track:
+
+caseOpen, inCase, foldState, charging as a combined sleep signal.
+
+lastVitalsTimestamp or a “quiet window”.
+
+A single isHeadsetSleeping boolean.
+
+
+
+
+Net effect:
+
+The physical BLE connection may still be OK.
+
+But your app constantly behaves as if the link is unstable, rather than “asleep”.
+
+
+
+---
+
+3. Design goals (must vs must-not)
+
+Must do
+
+Detect sleep at the headset level using vitals/case state.
+
+Enter an explicit IdleSleep state when both lenses are sleeping.
+
+While in IdleSleep:
+
+Suspend heartbeat PINGs and ACK monitoring entirely.
+
+Suppress reconnect logic triggered by missing ACKs.
+
+Keep connections open; no active teardown.
+
+
+On wake:
+
+Exit IdleSleep.
+
+Resume heartbeats, reconnect logic, and normal stability monitoring.
+
+Refresh left/right telemetry once.
+
+
+
+Must NOT do
+
+Must not disconnect purely because the headset is sleeping.
+
+Must not treat sleep as a “degraded” or “error” state.
+
+Must not send any host commands during idle sleep, except:
+
+Explicit user-triggered commands (e.g., if you later allow that).
+
+
+Must not “optimize” beyond Even’s observable behavior.
+
+
+
+---
+
+4. Telemetry changes – BleTelemetryRepository
+
+4.1. New data tracked per lens
+
+Extend the telemetry snapshot / per-lens model to include:
+
+caseOpen: Boolean?
+
+inCase: Boolean?
+
+foldState: FoldState?
+
+Example enum: UNFOLDED, FOLDED, UNKNOWN.
+
+
+charging: Boolean? (if not already present)
+
+lastVitalsTimestamp: Long?
+
+Timestamp of the last vitals/case/wear notification for that lens.
+
+
+
+These should be populated from:
+
+Parsed vitals notifications (e.g., from G1ReplyParser → vitals object).
+
+Any case/wear frames the glasses emit.
+
+
+4.2. Sleep detection helpers
+
+Add helpers:
+
+fun isLensSleeping(lens: Lens): Boolean
+
+fun isHeadsetSleeping(): Boolean
+
+
+A reasonable definition (must match Even semantics as closely as the data allows):
+
+For a single lens:
+
+foldState == FOLDED
+
+inCase == true
+
+caseOpen == true  (case lid open)
+
+charging == false or charging == null
+
+lastVitalsTimestamp older than some quiet window (e.g., N seconds)
+(This prevents flapping the instant vitals update arrives.)
+
+
+For headset:
+
+Both LEFT and RIGHT satisfy isLensSleeping(lens).
+
+
+Codex should centralize this in BleTelemetryRepository so all components use the same logic.
+
+4.3. Sleep events
+
+Introduce a small event stream for sleep/wake transitions, e.g.:
+
+SleepEvent.SleepEntered – headset has just transitioned from non-sleeping → sleeping.
+
+SleepEvent.SleepExited – headset has just transitioned from sleeping → non-sleeping.
+
+
+Key semantics:
+
+Events are headset-level, not per lens.
+
+Only emit when the boolean isHeadsetSleeping() changes value.
+
+Do not emit repeatedly while state is unchanged.
+
+Keep this free of reconnect logic; it is purely detection.
+
+
+
+---
+
+5. Heartbeats – G1BleClient behavior
+
+Right now:
+
+Once notifications are armed and _awake is true, enqueueHeartbeat keeps sending PINGs.
+
+Missing ACKs can cause:
+
+ERR logs.
+
+Reconnect attempts.
+
+
+
+Parity requirement with Even:
+
+No PING traffic at all during idle sleep.
+
+
+Desired behavior:
+
+G1BleClient must be aware of “headset sleeping” (directly or via a callback/flag).
+
+Heartbeat coroutine must be gated by this state:
+
+When isHeadsetSleeping == true:
+
+Do not enqueue new heartbeats.
+
+Cancel/suspend existing heartbeat coroutine.
+
+Do not wait on ACKs.
+
+Do not trigger reconnects or ERR logs because of missing ACKs.
+
+
+When isHeadsetSleeping == false and the lens is connected/primed:
+
+Heartbeat may run as it does today.
+
+ACK stall and reconnect logic applies only in this awake state.
+
+
+
+
+Implementation options Codex can choose (no code here, just logic):
+
+Option A: MoncchichiBleService informs each G1BleClient when the headset enters/exits sleep via a flag or method, and the client gates its heartbeat loops on that flag.
+
+Option B: G1BleClient subscribes to a StateFlow<Boolean> for isHeadsetSleeping and checks it before scheduling heartbeats.
+
+
+The key requirement is no host-initiated keepalive traffic when sleeping.
+
+
+---
+
+6. MoncchichiBleService – Sleep/wake orchestration
+
+MoncchichiBleService is the orchestrator that:
+
+Sees raw incoming frames.
+
+Maintains LensStatus.
+
+Owns the reconnect coordinator and stability metrics.
+
+
+It should be the place that:
+
+1. Subscribes to SleepEvent from BleTelemetryRepository.
+
+
+2. Logs headset-level sleep/wake.
+
+
+3. Coordinates heartbeat/reconnect suppression.
+
+
+
+6.1. On SleepEntered
+
+When a sleep event fires:
+
+Log once:
+
+[SLEEP] Headset → IdleSleep
+(with timestamp consistent with other console logs.)
+
+
+Instruct:
+
+ReconnectCoordinator to freeze:
+
+No new reconnect attempts while sleep is active.
+
+
+Heartbeat logic to suspend:
+
+Either via a shared flag used by G1BleClient or by broadcasting a “sleep” signal.
+
+
+Stability metrics:
+
+Suppress “degraded”, “ACK stalled”, and “keepalive ERR” logging while sleeping.
+
+
+
+
+Important:
+
+Do not disconnect.
+
+Do not clear known devices or GATT clients.
+
+The app should simply become passive.
+
+
+6.2. On SleepExited
+
+When a wake event fires:
+
+Log once:
+
+[WAKE] Headset → Awake
+
+
+Actions:
+
+Re-enable reconnect coordinator:
+
+If any lens is actually disconnected, now the reconnect loops may run.
+
+
+Resume heartbeat permission:
+
+G1BleClient should be allowed to restart heartbeat coroutine on each primed lens.
+
+
+Trigger a one-off telemetry refresh:
+
+E.g., request CASE, BATT_DETAIL, WEAR_DETECT or equivalent, once, to resync state.
+
+This should be minimal and only happen once per wake.
+
+
+
+
+
+---
+
+7. DualLensConnectionOrchestrator – State machine
+
+The orchestrator currently focuses on:
+
+Connecting left/right.
+
+Priming lenses.
+
+Recovering from disconnect.
+
+Handling degraded states.
+
+
+It needs an explicit headset-level IdleSleep state.
+
+7.1. New state
+
+Add:
+
+IdleSleep
+
+
+7.2. State transitions
+
+Stable → IdleSleep
+
+Trigger: SleepEvent.SleepEntered.
+
+Precondition: both lenses either connected or gracefully sleeping; no active reconnect in progress.
+
+
+IdleSleep → Stable
+
+Trigger: SleepEvent.SleepExited AND both lenses are connected & primed.
+
+On transition: mark headset stable; schedule telemetry refresh.
+
+
+IdleSleep → RecoveringLeft / RecoveringRight
+
+Trigger: wake event shows that a lens is actually disconnected.
+
+Then normal reconnect flow can proceed.
+
+
+
+7.3. Behavior in IdleSleep
+
+While in IdleSleep:
+
+Do not:
+
+Send periodic commands.
+
+Run priming logic.
+
+Run reconnect loops.
+
+Schedule left refresh or mirror commands.
+
+
+Do:
+
+Maintain the GATT connection if it’s still alive.
+
+Accept incoming notifications (case/vitals/wear).
+
+Allow explicit user commands if later you want that (but default is: no traffic).
+
+
+
+This ensures the BLE traffic profile matches Even’s logs: the phone is essentially idle.
+
+
+---
+
+8. Logging expectations
+
+During idle sleep, logs must resemble Even’s:
+
+Allowed:
+
+Case/vitals logs (e.g., updates to case open/close, battery, etc.).
+
+Sleep/wake markers:
+
+[SLEEP] Headset → IdleSleep
+
+[WAKE] Headset → Awake
+
+
+
+Not allowed while sleeping:
+
+[BLE] ❤️ Keepalive → ERR
+
+[WARN][ACK] stalled
+
+Reconnect warning spam.
+
+GATT cache refresh logs.
+
+Any host command send logs (PING, test ping, etc.).
+
+
+
+When awake again, normal logging resumes.
+
+
+---
+
+9. Edge cases & precedence rules
+
+Codex should apply these rules when behavior conflicts:
+
+1. One lens asleep, one awake.
+
+isHeadsetSleeping() must only be true if both lenses satisfy isLensSleeping.
+
+If only one lens is sleeping:
+
+Headset is not in IdleSleep.
+
+Heartbeats/reconnect logic may still run, but avoid hammering the sleeping lens (e.g., only heartbeat the awake side).
+
+
+
+
+2. Charging in case.
+
+If charging behavior differs (e.g., Even does not sleep while charging), treat charging == true as “not sleeping” unless logs prove otherwise.
+
+For now, prefer conservative behavior: only treat as sleeping when charging == false.
+
+
+
+3. User commands during sleep.
+
+Base spec: don’t send automatic commands in IdleSleep.
+
+If UI triggers a command, it may be allowed to wake the headset (like Even might), but do not add that behavior unless you know Even does it.
+
+
+
+4. Disconnect during sleep.
+
+If a lens genuinely disconnects while in idle sleep:
+
+Do not auto-reconnect until a wake signal occurs.
+
+On wake, if the lens is still disconnected:
+
+Then enter recovery state and run reconnect.
+
+
+
+
+
+5. Flapping signals.
+
+Use lastVitalsTimestamp and a quiet window to avoid entering/exiting sleep repeatedly on noisy case/vitals updates.
+
+
+
+
+
+---
+
+10. Testing scenarios Codex should reason through
+
+Given that Codex’s environment may not have Android SDK, focus on logical / unit-level verification:
+
+1. Idle sleep entry:
+
+Both lenses report:
+
+foldState = FOLDED
+
+inCase = true
+
+caseOpen = true
+
+charging = false
+
+
+No vitals for N seconds.
+
+Expect:
+
+isLensSleeping(lens) → true for both.
+
+isHeadsetSleeping() → true.
+
+SleepEvent.SleepEntered emitted once.
+
+Orchestrator state → IdleSleep.
+
+Heartbeat coroutine stops; no more PING scheduling.
+
+ReconnectCoordinator paused.
+
+
+
+
+2. Idle period:
+
+Simulate 3–5 minutes with no state changes.
+
+Expect:
+
+No heartbeat scheduling.
+
+No reconnect scheduling.
+
+No keepalive ERR logs.
+
+Only case/vitals logs if device sends them.
+
+
+
+
+3. Wake:
+
+Change conditions (e.g., foldState = UNFOLDED or inCase = false).
+
+Expect:
+
+isHeadsetSleeping() → false.
+
+SleepEvent.SleepExited emitted once.
+
+Orchestrator IdleSleep → Stable (or Recovering* if a lens is gone).
+
+Heartbeats allowed again.
+
+Single telemetry refresh run.
+
+
+
+
+4. Lens disconnect while sleeping, wake later:
+
+While in IdleSleep, mark one lens disconnected.
+
+No reconnect should run yet.
+
+When wake happens:
+
+Orchestrator transitions to a recovery state.
+
+Reconnect logic can now start.
