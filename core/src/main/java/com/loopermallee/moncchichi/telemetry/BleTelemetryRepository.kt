@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.telemetry
 
 import com.loopermallee.moncchichi.bluetooth.G1MessageParser
+import com.loopermallee.moncchichi.bluetooth.G1Protocols
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -341,7 +342,7 @@ class BleTelemetryRepository(
 
         val caseClosed = resolvedCaseOpen == false
         val folded = resolvedFoldState == true
-        val staleVitals = lastVitals?.let { nowMillis - it >= QUIET_WINDOW_MS } ?: false
+        val staleVitals = lastVitals?.let { nowMillis - it >= G1Protocols.SLEEP_VITALS_TIMEOUT_MS } ?: false
         val inCaseOrStaleVitals = (resolvedInCase == true) || staleVitals
 
         return caseClosed && folded && inCaseOrStaleVitals
@@ -370,9 +371,6 @@ class BleTelemetryRepository(
         return caseJson == other.caseJson && leftJson == other.leftJson && rightJson == other.rightJson
     }
 
-    companion object {
-        private const val QUIET_WINDOW_MS = 3_000L
-    }
 }
 
 private fun G1MessageParser.TelemetryUpdate.toRepositoryMap(): Map<String, Any> {

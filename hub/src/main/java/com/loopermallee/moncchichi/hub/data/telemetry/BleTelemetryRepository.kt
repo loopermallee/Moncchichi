@@ -3463,7 +3463,7 @@ class BleTelemetryRepository(
 
         val caseClosed = resolvedCaseOpen == false
         val folded = resolvedFoldState == true
-        val staleVitals = lastVitals?.let { nowMillis - it >= SLEEP_VITALS_TIMEOUT_MS } ?: false
+        val staleVitals = lastVitals?.let { nowMillis - it >= G1Protocols.SLEEP_VITALS_TIMEOUT_MS } ?: false
         val inCaseOrStaleVitals = (resolvedInCase == true) || staleVitals
 
         return caseClosed && folded && inCaseOrStaleVitals
@@ -4039,7 +4039,6 @@ class BleTelemetryRepository(
         private const val CASE_REFRESH_MIN_INTERVAL_MS = 3_000L
         private const val BATTERY_LOG_INTERVAL_MS = 30_000L
         private const val ACK_LOG_DEDUP_WINDOW_MS = 3_000L
-        private const val SLEEP_VITALS_TIMEOUT_MS = 3_000L
     }
 }
 
