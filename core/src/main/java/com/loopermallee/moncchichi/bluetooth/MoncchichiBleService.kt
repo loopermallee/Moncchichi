@@ -354,6 +354,15 @@ class MoncchichiBleService(
             }
         }
     }
+    private val sleepReconnectJob = scope.launch {
+        idleSleepState.collectLatest { sleeping ->
+            if (sleeping) {
+                reconnectCoordinator.freeze()
+            } else {
+                reconnectCoordinator.unfreeze()
+            }
+        }
+    }
     private val telemetrySnapshotJob = telemetryRepository?.let { repository ->
         scope.launch {
             repository.snapshot.collect { snapshot ->
@@ -2316,6 +2325,10 @@ private class HeartbeatSupervisor(
         }
         reconnectCoordinator.freeze()
         setStage(ConnectionStage.IdleSleep)
+        idleSleepActive = true
+        if (idleSleepState.value != idleSleepActive) {
+            idleSleepState.value = idleSleepActive
+        }
     }
 
     private fun onSleepModeExited(timestamp: Long) {
@@ -2329,6 +2342,10 @@ private class HeartbeatSupervisor(
         ensureHeartbeatLoop()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
+        }
+        idleSleepActive = false
+        if (idleSleepState.value != idleSleepActive) {
+            idleSleepState.value = idleSleepActive
         }
     }
 
@@ -3058,6 +3075,7 @@ internal class ReconnectCoordinator(
     }
 
     fun freeze() {
+        if (frozen) return
         frozen = true
         MoncchichiBleService.Lens.values().forEach { lens -> cancel(lens) }
     }
