@@ -836,6 +836,7 @@ class MoncchichiBleService(
             label = "$TAG[$lens]",
             lensLabel = lens.shortLabel,
             logger = logger,
+            isSleeping = { telemetryRepository?.isSleeping(lens) == true },
         )
         val jobs = mutableListOf<Job>()
         jobs += scope.launch {
