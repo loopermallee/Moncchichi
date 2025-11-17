@@ -872,7 +872,7 @@ class G1BleClient(
                     )
                     _ackEvents.tryEmit(event)
                     keepAlivePrompt?.let { prompt ->
-                        if (_awake.value) {
+                        if (_awake.value && !isSleeping()) {
                             _keepAlivePrompts.tryEmit(prompt)
                         }
                     }
@@ -1377,7 +1377,7 @@ class G1BleClient(
                 }
                 null -> {
                     pendingAsciiAck = false
-                    if (_awake.value) {
+                    if (_awake.value && !isSleeping()) {
                         logger.w(
                             label,
                             "${tt()} ACK timeout opcode=${opcode.toLabel()} (attempt ${attempt + 1})",
@@ -1469,6 +1469,7 @@ class G1BleClient(
     }
 
     private fun handleAckTimeout(ackTimeoutMs: Long) {
+        if (isSleeping()) return
         if (ackTimeoutMs <= ACK_DELAY_THRESHOLD_MS) return
         val streak = ackTimeoutStreak.incrementAndGet()
         val lastRealtime = lastAckRealtime.get().takeIf { it != 0L }
@@ -1498,6 +1499,11 @@ class G1BleClient(
         ackWatchdogJob = scope.launch {
             while (isActive) {
                 if (!_awake.value) {
+                    delay(ACK_HEALTH_POLL_INTERVAL_MS)
+                    continue
+                }
+                if (isSleeping()) {
+                    resetAckTelemetry()
                     delay(ACK_HEALTH_POLL_INTERVAL_MS)
                     continue
                 }
@@ -1582,7 +1588,7 @@ class G1BleClient(
     }
 
     suspend fun respondToKeepAlivePrompt(prompt: KeepAlivePrompt): KeepAliveResult {
-        if (!_awake.value) {
+        if (!_awake.value || isSleeping()) {
             return KeepAliveResult(
                 promptTimestampMs = prompt.timestampMs,
                 completedTimestampMs = System.currentTimeMillis(),
@@ -1862,6 +1868,9 @@ class G1BleClient(
     }
 
     private fun scheduleGattReconnect(reason: String, delayMs: Long? = null) {
+        if (isSleeping()) {
+            return
+        }
         if (!_state.value.bonded) {
             logger.i(label, "${tt()} [GATT] Reconnect skipped; bond missing ($reason)")
             return
