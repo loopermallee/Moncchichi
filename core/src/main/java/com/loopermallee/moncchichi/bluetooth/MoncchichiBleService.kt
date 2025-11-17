@@ -331,6 +331,8 @@ class MoncchichiBleService(
         Lens.values().forEach { lens -> put(lens, SleepState()) }
     }
     private val sleepStateLock = Any()
+    @Volatile
+    private var idleSleepActive: Boolean = false
     private val sleepMonitorJob = scope.launch {
         while (isActive) {
             checkSleepTimeouts()
@@ -661,6 +663,10 @@ class MoncchichiBleService(
         retries: Int = G1Protocols.MAX_RETRIES,
         retryDelayMs: Long = G1Protocols.RETRY_BACKOFF_MS,
     ): Boolean {
+        if (isSleepModeActive()) {
+            log("[BLE] Send skipped (IdleSleep)")
+            return false
+        }
         val records = when (target) {
             Target.Left -> listOfNotNull(clientRecords[Lens.LEFT]?.takeIf { it.clientState().isConnected })
             Target.Right -> listOfNotNull(clientRecords[Lens.RIGHT]?.takeIf { it.clientState().isConnected })
@@ -700,6 +706,10 @@ class MoncchichiBleService(
     }
 
     suspend fun rearmNotifications(target: Target = Target.Both): Boolean {
+        if (isSleepModeActive()) {
+            log("[BLE] Notify re-arm skipped (IdleSleep)")
+            return false
+        }
         val records = when (target) {
             Target.Left -> listOfNotNull(clientRecords[Lens.LEFT]?.takeIf { it.clientState().isConnected })
             Target.Right -> listOfNotNull(clientRecords[Lens.RIGHT]?.takeIf { it.clientState().isConnected })
@@ -730,6 +740,10 @@ class MoncchichiBleService(
             logWarn("[PAIRING] HELLO quick action skipped – ${lens.name.lowercase(Locale.US)} lens not connected")
             return false
         }
+        if (isSleepModeActive()) {
+            logWarn("[PAIRING] HELLO quick action skipped – IdleSleep active")
+            return false
+        }
         if (!record.client.awake.value) {
             record.client.beginWakeHandshake()
             heartbeatSupervisor.updateLensAwake(lens, true)
@@ -742,6 +756,10 @@ class MoncchichiBleService(
     }
 
     suspend fun requestLeftRefresh(): Boolean {
+        if (isSleepModeActive()) {
+            log("[BLE][${Lens.LEFT.shortLabel}] Left refresh skipped (IdleSleep)")
+            return false
+        }
         val commands = listOf(
             byteArrayOf(CMD_CASE_GET.toByte()),
             byteArrayOf(CMD_BATT_GET.toByte(), BATT_SUB_DETAIL.toByte()),
@@ -845,7 +863,7 @@ class MoncchichiBleService(
             label = "$TAG[$lens]",
             lensLabel = lens.shortLabel,
             logger = logger,
-            isSleeping = { telemetryRepository?.isSleeping(lens) == true },
+            isSleeping = { idleSleepActive },
         )
         val jobs = mutableListOf<Job>()
         jobs += scope.launch {
@@ -2112,15 +2130,11 @@ private class HeartbeatSupervisor(
     }
 
     private fun isLensSleeping(lens: Lens): Boolean {
-        return synchronized(sleepStateLock) {
-            sleepStates[lens]?.sleeping == true
-        }
+        return synchronized(sleepStateLock) { sleepStates[lens]?.sleepEvent == true }
     }
 
     private fun isSleepModeActive(): Boolean {
-        return synchronized(sleepStateLock) {
-            sleepStates.values.any { it.sleeping }
-        }
+        return idleSleepActive
     }
 
     private fun updateSleepState(
@@ -2130,8 +2144,7 @@ private class HeartbeatSupervisor(
     ) {
         var previous: SleepState? = null
         var updated: SleepState? = null
-        var previousGlobal = false
-        var newGlobal = false
+        val previousAuthority = idleSleepActive
         synchronized(sleepStateLock) {
             val current = sleepStates.getValue(lens)
             val mutated = transform(current).withDerived(timestamp)
@@ -2139,20 +2152,19 @@ private class HeartbeatSupervisor(
                 return
             }
             previous = current
-            previousGlobal = sleepStates.values.any { it.sleeping }
             sleepStates[lens] = mutated
             updated = mutated
-            newGlobal = sleepStates.values.any { it.sleeping }
+            idleSleepActive = sleepStates.values.any { it.sleepEvent } || lastSleepWakeSignal == true
         }
-        handleSleepTransition(lens, previous!!, updated!!, previousGlobal, newGlobal, timestamp)
+        handleSleepTransition(lens, previous!!, updated!!, previousAuthority, idleSleepActive, timestamp)
     }
 
     private fun handleSleepTransition(
         lens: Lens,
         previous: SleepState,
         updated: SleepState,
-        previousGlobal: Boolean,
-        newGlobal: Boolean,
+        previousAuthority: Boolean,
+        newAuthority: Boolean,
         timestamp: Long,
     ) {
         val previousTriggers = previous.activeTriggers()
@@ -2198,9 +2210,19 @@ private class HeartbeatSupervisor(
             heartbeatSupervisor.updateLensAwake(lens, true)
             resetTelemetryTimers(lens, timestamp)
         }
-        if (!previousGlobal && newGlobal) {
+        if (!previousAuthority && newAuthority) {
             onSleepModeEntered(timestamp)
-        } else if (previousGlobal && !newGlobal) {
+        } else if (previousAuthority && !newAuthority) {
+            onSleepModeExited(timestamp)
+        }
+    }
+
+    private fun setIdleSleepAuthority(active: Boolean, timestamp: Long) {
+        val previous = idleSleepActive
+        idleSleepActive = active
+        if (!previous && active) {
+            onSleepModeEntered(timestamp)
+        } else if (previous && !active) {
             onSleepModeExited(timestamp)
         }
     }
@@ -2209,13 +2231,7 @@ private class HeartbeatSupervisor(
         if (lastSleepWakeSignal == sleeping) return
         lastSleepWakeSignal = sleeping
         val timestamp = System.currentTimeMillis()
-        if (sleeping) {
-            log("[SLEEP] sleep telemetry signal")
-            onSleepModeEntered(timestamp)
-            return
-        }
-        log("[WAKE] wake telemetry signal")
-        onSleepModeExited(timestamp)
+        setIdleSleepAuthority(sleeping, timestamp)
     }
 
     private fun handleSleepEvent(event: BleTelemetryRepository.SleepEvent) {
@@ -2242,6 +2258,8 @@ private class HeartbeatSupervisor(
                 current.copy(sleepEvent = sleeping)
             }
         }
+        val authorityActive = synchronized(sleepStateLock) { sleepStates.values.any { it.sleepEvent } }
+        setIdleSleepAuthority(authorityActive, timestamp)
     }
 
     private fun selectSleepReason(
@@ -2288,6 +2306,7 @@ private class HeartbeatSupervisor(
                 )
             }
         }
+        reconnectCoordinator.freeze()
         setStage(ConnectionStage.IdleSleep)
     }
 
@@ -2298,6 +2317,7 @@ private class HeartbeatSupervisor(
             record.client.beginWakeHandshake()
             heartbeatSupervisor.updateLensAwake(record.lens, true)
         }
+        reconnectCoordinator.unfreeze()
         ensureHeartbeatLoop()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
@@ -2635,7 +2655,7 @@ private class HeartbeatSupervisor(
             return triggers
         }
 
-        val sleeping: Boolean get() = activeTriggers().isNotEmpty()
+        val sleeping: Boolean get() = sleepEvent
     }
 
     private enum class SleepTrigger(val priority: Int, val logLabel: String) {
@@ -2889,8 +2909,13 @@ internal class ReconnectCoordinator(
         MoncchichiBleService.Lens.values().forEach { put(it, 0) }
     }
     private val stableSince = EnumMap<MoncchichiBleService.Lens, Long?>(MoncchichiBleService.Lens::class.java)
+    @Volatile
+    private var frozen: Boolean = false
 
     fun schedule(lens: MoncchichiBleService.Lens, reason: String) {
+        if (frozen) {
+            return
+        }
         stableSince.remove(lens)
         val existingJob = jobs[lens]
         if (existingJob?.isActive == true) {
@@ -2917,6 +2942,9 @@ internal class ReconnectCoordinator(
     }
 
     fun reset(lens: MoncchichiBleService.Lens) {
+        if (frozen) {
+            return
+        }
         val job = jobs[lens]
         val index = (backoffIndexes[lens] ?: 0).coerceAtLeast(0)
         if (index == 0) {
@@ -2968,7 +2996,7 @@ internal class ReconnectCoordinator(
         val job = coroutineContext[Job] ?: return
         var completedSuccessfully = false
         try {
-            while (scope.isActive && shouldContinue(lens)) {
+            while (scope.isActive && shouldContinue(lens) && !frozen) {
                 val nextAttempt = (attempts[lens] ?: 0) + 1
                 if (nextAttempt > maxAttempts) {
                     return
@@ -3020,5 +3048,14 @@ internal class ReconnectCoordinator(
                 }
             }
         }
+    }
+
+    fun freeze() {
+        frozen = true
+        MoncchichiBleService.Lens.values().forEach { lens -> cancel(lens) }
+    }
+
+    fun unfreeze() {
+        frozen = false
     }
 }
