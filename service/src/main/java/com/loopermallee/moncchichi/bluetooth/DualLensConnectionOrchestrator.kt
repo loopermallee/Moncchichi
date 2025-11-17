@@ -6,6 +6,7 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_BATT_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_CASE_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
+import com.loopermallee.moncchichi.bluetooth.LinkStatus
 import com.loopermallee.moncchichi.telemetry.BleTelemetryRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -19,11 +20,12 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
 import kotlin.collections.ArrayDeque
 import kotlin.math.min
 
@@ -139,9 +141,9 @@ class DualLensConnectionOrchestrator(
         Lens.LEFT to HeartbeatState(),
         Lens.RIGHT to HeartbeatState(),
     )
-    private val reconnectDelayMs: MutableMap<Lens, Long> = mutableMapOf(
-        Lens.LEFT to INITIAL_RECONNECT_DELAY_MS,
-        Lens.RIGHT to INITIAL_RECONNECT_DELAY_MS,
+    private val reconnectBackoffStep: MutableMap<Lens, Int> = mutableMapOf(
+        Lens.LEFT to 0,
+        Lens.RIGHT to 0,
     )
     private val reconnectFailures: MutableMap<Lens, ArrayDeque<Long>> = mutableMapOf(
         Lens.LEFT to ArrayDeque(),
@@ -236,6 +238,11 @@ class DualLensConnectionOrchestrator(
             return@coroutineScope
         }
 
+        awaitLeftPrimeCompletion()
+        if (shouldAbortConnectionAttempt()) {
+            return@coroutineScope
+        }
+
         delay(EVEN_SEQUENCE_DELAY_MS)
         _connectionState.value = State.ConnectingRight
         val rightResult = runCatching {
@@ -294,7 +301,7 @@ class DualLensConnectionOrchestrator(
         wakeJob?.cancel()
         wakeJob = null
         heartbeatStates.values.forEach { it.reset() }
-        reconnectDelayMs.keys.forEach { reconnectDelayMs[it] = INITIAL_RECONNECT_DELAY_MS }
+        reconnectBackoffStep.keys.forEach { reconnectBackoffStep[it] = 0 }
         reconnectFailures.values.forEach { it.clear() }
         bondLossCounters.keys.forEach { bondLossCounters[it] = 0 }
 
@@ -761,6 +768,21 @@ class DualLensConnectionOrchestrator(
         commands.forEach { sendTo(Lens.LEFT, it) }
     }
 
+    private suspend fun awaitLeftPrimeCompletion() {
+        val session = leftSession ?: return
+        while (sessionActive && coroutineContext.isActive) {
+            if (shouldAbortConnectionAttempt()) {
+                return
+            }
+            val state = session.client.state.value
+            val ready = state.readyProbePassed && state.status == LinkStatus.READY
+            if (ready) {
+                return
+            }
+            delay(EVEN_SEQUENCE_DELAY_MS)
+        }
+    }
+
     private fun scheduleReconnect(side: Lens, fromHeartbeat: Boolean = false) {
         if (!sessionActive) {
             return
@@ -784,8 +806,12 @@ class DualLensConnectionOrchestrator(
         }
 
         reconnectJobs[side] = scope.launch {
-            var delayMs = reconnectDelayMs[side] ?: INITIAL_RECONNECT_DELAY_MS
+            var backoffIndex = reconnectBackoffStep[side] ?: 0
             while (sessionActive && isActive) {
+                val delayMs = RECONNECT_BACKOFF_MS.getOrElse(backoffIndex) { RECONNECT_BACKOFF_MS.last() }
+                if (delayMs > 0) {
+                    delay(delayMs)
+                }
                 if (shouldAbortConnectionAttempt()) {
                     reconnectJobs.remove(side)
                     return@launch
@@ -824,7 +850,7 @@ class DualLensConnectionOrchestrator(
                     success = false
                 }
                 if (success) {
-                    reconnectDelayMs[side] = INITIAL_RECONNECT_DELAY_MS
+                    reconnectBackoffStep[side] = 0
                     reconnectFailures[side]?.clear()
                     requestTelemetryRefresh(side)
                     if (!isIdleSleepState()) {
@@ -845,9 +871,8 @@ class DualLensConnectionOrchestrator(
                     return@launch
                 }
                 recordReconnectFailure(side, now)
-                delay(delayMs)
-                delayMs = min(delayMs * 2, MAX_RECONNECT_DELAY_MS)
-                reconnectDelayMs[side] = delayMs
+                backoffIndex = min(backoffIndex + 1, RECONNECT_BACKOFF_MS.lastIndex)
+                reconnectBackoffStep[side] = backoffIndex
             }
             reconnectJobs.remove(side)
             if (!isIdleSleepState()) {
@@ -900,6 +925,7 @@ class DualLensConnectionOrchestrator(
         logger("[SLEEP][${Lens.RIGHT.logLabel()}] $rightReason")
         reconnectJobs.values.forEach { it.cancel() }
         reconnectJobs.clear()
+        reconnectBackoffStep.keys.forEach { reconnectBackoffStep[it] = 0 }
         lastLeftMac = cachedLeftMac
         lastRightMac = cachedRightMac
         _connectionState.value = State.IdleSleep
@@ -999,8 +1025,7 @@ class DualLensConnectionOrchestrator(
     }
 
     companion object {
-        private const val INITIAL_RECONNECT_DELAY_MS = 1_000L
-        private const val MAX_RECONNECT_DELAY_MS = 8_000L
+        private val RECONNECT_BACKOFF_MS = longArrayOf(0L, 500L, 1_000L, 5_000L)
         private const val HEARTBEAT_INTERVAL_MS = 5_000L
         private const val MAX_HEARTBEAT_MISSES = 3
         private const val FAILURE_WINDOW_MS = 60_000L
