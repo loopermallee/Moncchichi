@@ -324,7 +324,8 @@ class BleTelemetryRepository(
     }
 
     fun isAwake(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
-        return !isLensSleeping(lens, nowMillis)
+        val snapshot = _snapshot.value
+        return !isLensSleeping(snapshot, lens, nowMillis)
     }
 
     fun isLensSleeping(snapshot: Snapshot, lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
