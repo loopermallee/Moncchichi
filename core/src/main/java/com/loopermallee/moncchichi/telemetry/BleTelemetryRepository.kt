@@ -334,13 +334,17 @@ class BleTelemetryRepository(
         val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
         val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
         val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
-        val resolvedCharging = lensSnapshot.charging ?: snapshot.charging
         val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        if (resolvedCaseOpen == null || resolvedInCase == null || resolvedFoldState == null || lastVitals == null) {
+        if (resolvedCaseOpen == null || resolvedFoldState == null) {
             return false
         }
-        val quiet = nowMillis - lastVitals >= QUIET_WINDOW_MS
-        return resolvedCaseOpen && resolvedInCase && resolvedFoldState && (resolvedCharging == false) && quiet
+
+        val caseClosed = resolvedCaseOpen == false
+        val folded = resolvedFoldState == true
+        val staleVitals = lastVitals?.let { nowMillis - it >= QUIET_WINDOW_MS } ?: false
+        val inCaseOrStaleVitals = (resolvedInCase == true) || staleVitals
+
+        return caseClosed && folded && inCaseOrStaleVitals
     }
 
     fun isLensSleeping(lens: Lens): Boolean = isLensSleeping(_snapshot.value, lens)
@@ -351,15 +355,16 @@ class BleTelemetryRepository(
     }
 
     private fun maybeEmitSleepTransitions(previous: Snapshot, updated: Snapshot) {
+        val now = System.currentTimeMillis()
         Lens.values().forEach { lens ->
-            val before = isLensSleeping(previous, lens)
-            val after = isLensSleeping(updated, lens)
+            val before = isLensSleeping(previous, lens, now)
+            val after = isLensSleeping(updated, lens, now)
             if (before != after) {
                 _sleepEvents.value = if (after) SleepEvent.SleepEntered(lens) else SleepEvent.SleepExited(lens)
             }
         }
-        val previousHeadset = Lens.values().all { lens -> isLensSleeping(previous, lens) }
-        val updatedHeadset = Lens.values().all { lens -> isLensSleeping(updated, lens) }
+        val previousHeadset = Lens.values().all { lens -> isLensSleeping(previous, lens, now) }
+        val updatedHeadset = Lens.values().all { lens -> isLensSleeping(updated, lens, now) }
         if (previousHeadset != updatedHeadset) {
             _sleepEvents.value = if (updatedHeadset) SleepEvent.SleepEntered(null) else SleepEvent.SleepExited(null)
         }

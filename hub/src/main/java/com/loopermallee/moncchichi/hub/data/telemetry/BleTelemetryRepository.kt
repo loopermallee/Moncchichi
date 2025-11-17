@@ -3439,28 +3439,46 @@ class BleTelemetryRepository(
         persistDeviceTelemetrySnapshots(recordedAt)
     }
 
-    fun isLensSleeping(lens: Lens): Boolean {
-        return isLensSleeping(_snapshot.value, lens)
+    fun isLensSleeping(lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        return isLensSleeping(_snapshot.value, lens, nowMillis)
     }
 
-    fun isHeadsetSleeping(): Boolean {
+    fun isHeadsetSleeping(nowMillis: Long = System.currentTimeMillis()): Boolean {
         val snapshot = _snapshot.value
-        return Lens.values().all { lens -> isLensSleeping(snapshot, lens) }
+        return Lens.values().all { lens -> isLensSleeping(snapshot, lens, nowMillis) }
     }
 
-    fun isSleeping(lens: Lens? = null): Boolean {
-        return lens?.let { isLensSleeping(it) } ?: isHeadsetSleeping()
+    fun isSleeping(lens: Lens? = null, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        return lens?.let { isLensSleeping(it, nowMillis) } ?: isHeadsetSleeping(nowMillis)
     }
 
-    private fun isLensSleeping(snapshot: Snapshot, lens: Lens): Boolean {
+    private fun isLensSleeping(
+        snapshot: Snapshot,
+        lens: Lens,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
         val lensSnapshot = snapshot.lens(lens)
-        return lensSnapshot.sleepState == SleepState.SLEEPING
+        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
+        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
+        val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
+        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
+        if (resolvedCaseOpen == null || resolvedFoldState == null) {
+            return false
+        }
+
+        val caseClosed = resolvedCaseOpen == false
+        val folded = resolvedFoldState == true
+        val staleVitals = lastVitals?.let { nowMillis - it >= SLEEP_VITALS_TIMEOUT_MS } ?: false
+        val inCaseOrStaleVitals = (resolvedInCase == true) || staleVitals
+
+        return caseClosed && folded && inCaseOrStaleVitals
     }
 
     private fun maybeEmitSleepTransitions(previous: Snapshot, updated: Snapshot) {
+        val now = System.currentTimeMillis()
         Lens.values().forEach { lens ->
-            val before = isLensSleeping(previous, lens)
-            val after = isLensSleeping(updated, lens)
+            val before = isLensSleeping(previous, lens, now)
+            val after = isLensSleeping(updated, lens, now)
             if (before != after) {
                 lastLensSleepState[lens] = after
                 val event = if (after) SleepEvent.SleepEntered(lens) else SleepEvent.SleepExited(lens)
@@ -3468,9 +3486,9 @@ class BleTelemetryRepository(
             }
         }
         val previousHeadset = lastHeadsetSleeping ?: Lens.values().all { lens ->
-            isLensSleeping(previous, lens)
+            isLensSleeping(previous, lens, now)
         }
-        val updatedHeadset = Lens.values().all { lens -> isLensSleeping(updated, lens) }
+        val updatedHeadset = Lens.values().all { lens -> isLensSleeping(updated, lens, now) }
         if (previousHeadset != updatedHeadset) {
             lastHeadsetSleeping = updatedHeadset
             val event = if (updatedHeadset) SleepEvent.SleepEntered(null) else SleepEvent.SleepExited(null)
@@ -4030,6 +4048,7 @@ class BleTelemetryRepository(
         private const val CASE_REFRESH_MIN_INTERVAL_MS = 3_000L
         private const val BATTERY_LOG_INTERVAL_MS = 30_000L
         private const val ACK_LOG_DEDUP_WINDOW_MS = 3_000L
+        private const val SLEEP_VITALS_TIMEOUT_MS = 3_000L
     }
 }
 
