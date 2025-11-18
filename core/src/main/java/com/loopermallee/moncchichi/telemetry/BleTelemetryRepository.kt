@@ -184,7 +184,12 @@ class BleTelemetryRepository(
         val mergedInCase = lens.inCase ?: other.inCase ?: inCase
         val mergedFoldState = lens.foldState ?: other.foldState ?: foldState
         val mergedCharging = lens.charging ?: other.charging ?: charging
-        val mergedVitals = maxOfNonNull(lens.lastVitalsTimestamp, other.lastVitalsTimestamp, lastVitalsTimestamp)
+        val mergedVitals = maxOfNonNull(
+            lens.lastVitalsTimestamp ?: timestamp,
+            other.lastVitalsTimestamp,
+            lastVitalsTimestamp,
+            timestamp,
+        )
         val normalizedLens = lens.withSharedValues(
             caseOpenValue = mergedCaseOpen,
             inCaseValue = mergedInCase,
@@ -245,7 +250,12 @@ class BleTelemetryRepository(
                 }
             }
         }
-        return if (vitalsTimestampUpdated) snapshot else snapshot.copy(lastVitalsTimestamp = this.lastVitalsTimestamp)
+        val resolvedVitals = if (vitalsTimestampUpdated) {
+            snapshot.lastVitalsTimestamp ?: timestamp
+        } else {
+            timestamp
+        }
+        return snapshot.copy(lastVitalsTimestamp = resolvedVitals)
     }
 
     private fun LensSnapshot.withSharedValues(
@@ -367,7 +377,7 @@ class BleTelemetryRepository(
             resolvedInCase &&
             resolvedCaseOpen &&
             !resolvedCharging &&
-            quietFor > G1Protocols.SLEEP_VITALS_TIMEOUT_MS
+            quietFor > G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS
     }
 
     fun isLensSleeping(lens: Lens): Boolean = isLensSleeping(_snapshot.value, lens)
@@ -404,6 +414,8 @@ private fun G1MessageParser.TelemetryUpdate.toRepositoryMap(): Map<String, Any> 
     caseOpen?.let { map["caseOpen"] = it }
     inCase?.let { map["inCase"] = it }
     foldState?.let { map["foldState"] = it }
+    charging?.let { map["charging"] = it }
+    lastVitalsTimestamp?.let { map["lastVitalsTimestamp"] = it }
     return map
 }
 

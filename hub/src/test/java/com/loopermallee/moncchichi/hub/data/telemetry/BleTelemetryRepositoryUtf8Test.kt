@@ -312,7 +312,7 @@ class BleTelemetryRepositoryUtf8Test {
             Long::class.javaPrimitiveType,
         ).apply { isAccessible = true }
 
-        val sleepyNow = G1Protocols.SLEEP_VITALS_TIMEOUT_MS + 5_000L
+        val sleepyNow = G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS + 5_000L
         transitionMethod.invoke(repository, previous, sleepySnapshot, sleepyNow)
 
         val awakeSnapshot = sleepySnapshot.copy(
