@@ -451,6 +451,7 @@ class G1BleClient(
     private val lastAckTimeoutReported = AtomicLong(0L)
     @Volatile private var pendingAsciiAck: Boolean = false
     private val refreshOnConnect = AtomicBoolean(false)
+    private val sleepGateActive = AtomicBoolean(false)
     private val bondMutex = Mutex()
     data class BondEvent(val state: Int, val reason: Int, val timestampMs: Long)
     private val bondEvents = MutableSharedFlow<BondEvent>(replay = 1, extraBufferCapacity = 8)
@@ -469,7 +470,16 @@ class G1BleClient(
     @Volatile private var settingsLaunchedThisSession: Boolean = false
 
     private fun isSleepModeActive(): Boolean {
-        return isSleeping() || idleSleepFlow.value
+        return sleepGateActive.get() || isSleeping() || idleSleepFlow.value
+    }
+
+    private fun activateSleepGate() {
+        sleepGateActive.set(true)
+        stopAckWatchdog()
+        keepAliveInFlight.set(0)
+        resetAckTelemetry()
+        lastWriteRealtime.set(0L)
+        lastAckTimeoutReported.set(0L)
     }
 
     data class KeepAlivePrompt(
@@ -566,9 +576,7 @@ class G1BleClient(
         idleSleepJob = scope.launch {
             idleSleepFlow.collect { sleeping ->
                 if (sleeping) {
-                    stopAckWatchdog()
-                } else if (_awake.value) {
-                    startAckWatchdog()
+                    activateSleepGate()
                 }
             }
         }
@@ -969,6 +977,7 @@ class G1BleClient(
         lastAckRealtime.set(0L)
         ackTimeoutStreak.set(0)
         _awake.value = true
+        sleepGateActive.set(false)
         _notifyReady.value = false
         cancelPairingDialogWatchdog()
         dismissPairingNotification()
@@ -984,11 +993,7 @@ class G1BleClient(
     fun enterSleepMode() {
         if (!_awake.value) return
         _awake.value = false
-        stopAckWatchdog()
-        keepAliveInFlight.set(0)
-        resetAckTelemetry()
-        lastWriteRealtime.set(0L)
-        lastAckTimeoutReported.set(0L)
+        activateSleepGate()
         pendingAsciiAck = false
         while (ackSignals.tryReceive().isSuccess) {
             // Drain any pending ACK completions before signalling cancellation.
@@ -1003,10 +1008,11 @@ class G1BleClient(
             keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
             keepAliveInFlight.set(0)
             resetAckTelemetry()
-            while (ackSignals.tryReceive().isSuccess) {
-                // Clear any stale sleep sentinel before resuming work.
-            }
         }
+        while (ackSignals.tryReceive().isSuccess) {
+            // Clear any stale sleep sentinel before resuming work.
+        }
+        sleepGateActive.set(false)
         startAckWatchdog()
     }
 
@@ -1225,6 +1231,22 @@ class G1BleClient(
             }
         }
         repeat(retries) { attempt ->
+            if (!_awake.value || isSleepModeActive()) {
+                logger.w(
+                    label,
+                    "${tt()} Write aborted opcode=${opcode.toLabel()} (sleep)",
+                )
+                onAttemptResult?.invoke(
+                    CommandAttemptTelemetry(
+                        attemptIndex = attempt + 1,
+                        success = false,
+                        ackTimedOut = false,
+                        ackFailed = false,
+                        queueFailed = false,
+                    ),
+                )
+                return false
+            }
             if (expectAck) {
                 // Clear any stale ACK before writing.
                 while (ackSignals.tryReceive().isSuccess) {
