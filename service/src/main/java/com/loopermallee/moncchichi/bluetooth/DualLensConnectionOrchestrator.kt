@@ -506,6 +506,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendRightOrQueue(payload: ByteArray, mirror: Boolean): Boolean {
+        if (isIdleSleepState()) {
+            return false
+        }
         if (mirror) {
             return sendBothOrQueue(payload, true)
         }
@@ -535,6 +538,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendBothOrQueue(payload: ByteArray, mirror: Boolean): Boolean {
+        if (isIdleSleepState()) {
+            return false
+        }
         if (leftPrimed) {
             flushPendingMirrors()
         }
@@ -591,6 +597,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendEventsImmediate(payload: ByteArray): Boolean {
+        if (isIdleSleepState()) {
+            return false
+        }
         var sent = false
         leftSession?.let {
             sent = sendTo(Lens.LEFT, payload) || sent
@@ -602,6 +611,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendRightImmediate(payload: ByteArray): Boolean {
+        if (isIdleSleepState()) {
+            return false
+        }
         return sendTo(Lens.RIGHT, payload)
     }
 
@@ -914,6 +926,10 @@ class DualLensConnectionOrchestrator(
         wakeJob?.cancel()
         wakeJob = null
         stopHeartbeat()
+        heartbeatStates.values.forEach { it.reset() }
+        mirrorLock.withLock { pendingMirrors.clear() }
+        leftRefreshLock.withLock { pendingLeftRefresh.clear() }
+        leftRefreshRequested = false
         val cachedLeftMac = leftSession?.id?.mac ?: lastLeftMac
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
         logger("[SLEEP] Headset → IdleSleep")
