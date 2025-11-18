@@ -937,7 +937,7 @@ class DualLensConnectionOrchestrator(
             }
             is BleTelemetryRepository.SleepEvent.SleepExited -> {
                 if (sleeping) {
-                    exitIdleSleep(snapshot)
+                    exitIdleSleep()
                 }
             }
         }
@@ -971,12 +971,37 @@ class DualLensConnectionOrchestrator(
         _connectionState.value = State.IdleSleep
     }
 
-    private suspend fun exitIdleSleep(snapshot: BleTelemetryRepository.Snapshot) {
-        awaitingWakeTelemetry = true
-        wakeQuietActive = true
+    private suspend fun exitIdleSleep() {
+        sleeping = false
+        awaitingWakeTelemetry = false
+        wakeQuietActive = false
+        wakeQuietUntilElapsed = 0L
         resetWakeTelemetryTracking()
-        wakeQuietUntilElapsed = SystemClock.elapsedRealtime() + CE_IDLE_SLEEP_QUIET_WINDOW_MS
-        logger("[WAKE] Headset → Awake (waiting for telemetry)")
+        logger("[WAKE] Headset → Awake")
+        val leftConnected = latestLeft?.connected == true
+        val rightConnected = latestRight?.connected == true
+        val leftReady = latestLeft?.isReady == true || leftPrimed
+        val rightReady = latestRight?.isReady == true || rightPrimed
+        when {
+            leftConnected && leftReady && rightConnected && rightReady -> {
+                _connectionState.value = State.Stable
+            }
+            leftConnected && !rightConnected -> {
+                _connectionState.value = State.RecoveringRight
+                scheduleReconnect(Lens.RIGHT)
+            }
+            rightConnected && !leftConnected -> {
+                _connectionState.value = State.RecoveringLeft
+                scheduleReconnect(Lens.LEFT)
+            }
+            else -> {
+                _connectionState.value = State.RecoveringLeft
+                scheduleReconnect(Lens.LEFT)
+                scheduleReconnect(Lens.RIGHT)
+            }
+        }
+        startHeartbeat()
+        requestWakeTelemetryRefresh()
     }
 
     private suspend fun thawFromTelemetry(side: Lens, event: ClientEvent.Telemetry) {
