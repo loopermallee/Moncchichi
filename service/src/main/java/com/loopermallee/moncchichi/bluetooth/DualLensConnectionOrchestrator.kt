@@ -937,7 +937,7 @@ class DualLensConnectionOrchestrator(
             }
             is BleTelemetryRepository.SleepEvent.SleepExited -> {
                 if (sleeping) {
-                    exitIdleSleep(snapshot)
+                    exitIdleSleep()
                 }
             }
         }
@@ -971,11 +971,11 @@ class DualLensConnectionOrchestrator(
         _connectionState.value = State.IdleSleep
     }
 
-    private suspend fun exitIdleSleep(snapshot: BleTelemetryRepository.Snapshot) {
+    private suspend fun exitIdleSleep() {
         awaitingWakeTelemetry = true
         wakeQuietActive = true
-        resetWakeTelemetryTracking()
         wakeQuietUntilElapsed = SystemClock.elapsedRealtime() + CE_IDLE_SLEEP_QUIET_WINDOW_MS
+        resetWakeTelemetryTracking()
         logger("[WAKE] Headset → Awake (waiting for telemetry)")
     }
 
@@ -1032,11 +1032,11 @@ class DualLensConnectionOrchestrator(
     }
 
     private fun isIdleSleepState(): Boolean {
-        return sleeping || _connectionState.value is State.IdleSleep
+        return sleeping || awaitingWakeTelemetry || wakeQuietActive || _connectionState.value is State.IdleSleep
     }
 
     private fun isHeartbeatSuppressed(): Boolean {
-        return isIdleSleepState() || awaitingWakeTelemetry || wakeQuietActive
+        return isIdleSleepState()
     }
 
     private fun isQualifyingWakeTelemetry(event: ClientEvent.Telemetry): Boolean {
