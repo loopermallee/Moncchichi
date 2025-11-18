@@ -480,6 +480,7 @@ class G1BleClient(
         resetAckTelemetry()
         lastWriteRealtime.set(0L)
         lastAckTimeoutReported.set(0L)
+        ackSignals.trySend(AckOutcome.Sleep)
     }
 
     data class KeepAlivePrompt(

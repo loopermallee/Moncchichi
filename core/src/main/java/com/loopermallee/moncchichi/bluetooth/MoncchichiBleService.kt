@@ -1386,6 +1386,10 @@ class MoncchichiBleService(
     }
 
     private fun ensureHeartbeatLoop() {
+        if (isSleepModeActive()) {
+            heartbeatSupervisor.shutdown()
+            return
+        }
         heartbeatSupervisor.updateLensConnection(Lens.LEFT, state.value.left.isConnected)
         heartbeatSupervisor.updateLensConnection(Lens.RIGHT, state.value.right.isConnected)
     }
@@ -1402,6 +1406,9 @@ class MoncchichiBleService(
     }
 
     private suspend fun waitForHeartbeatAck(lens: Lens, since: Long, timeoutMs: Long): AckSignal? {
+        if (isSleepModeActive()) {
+            return null
+        }
         return withTimeoutOrNull(timeoutMs) {
             ackSignalFlow.filter { signal ->
                 signal.lens == lens && signal.timestamp >= since
@@ -1411,6 +1418,9 @@ class MoncchichiBleService(
 
     private suspend fun performHeartbeat(lens: Lens): HeartbeatResult? {
         val record = clientRecords[lens] ?: return null
+        if (isSleepModeActive()) {
+            return null
+        }
         if (!record.client.awake.value || isLensSleeping(lens)) {
             return null
         }
