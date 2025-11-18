@@ -908,6 +908,9 @@ class BleTelemetryRepository(
     )
     val sleepEvents: SharedFlow<SleepEvent> = _sleepEvents.asSharedFlow()
 
+    @Volatile
+    private var idleSleepGateActive: Boolean = false
+
     val sleepStates: StateFlow<Map<Lens, SleepState>> = snapshot
         .map { current ->
             mapOf(
@@ -1881,6 +1884,9 @@ class BleTelemetryRepository(
     }
 
     private fun handleTelemetryEvent(event: BleTelemetryParser.TelemetryEvent) {
+        if (shouldGateIdleSleep(event)) {
+            return
+        }
         when (event) {
             is BleTelemetryParser.TelemetryEvent.DeviceStatusEvent -> {
                 val hex = event.rawFrame.toHex()
@@ -2003,6 +2009,20 @@ class BleTelemetryRepository(
             is BleTelemetryParser.TelemetryEvent.SerialNumberEvent -> {
                 handleSerialEvent(event)
             }
+        }
+    }
+
+    private fun shouldGateIdleSleep(event: BleTelemetryParser.TelemetryEvent): Boolean {
+        if (!idleSleepGateActive) return false
+        return when (event) {
+            is BleTelemetryParser.TelemetryEvent.DeviceStatusEvent,
+            is BleTelemetryParser.TelemetryEvent.CaseUpdate -> true
+            is BleTelemetryParser.TelemetryEvent.SystemEvent ->
+                event.wearing != null ||
+                    event.caseOpen != null ||
+                    event.charging != null ||
+                    event.caseBatteryPercent != null
+            else -> false
         }
     }
 
@@ -3499,6 +3519,7 @@ class BleTelemetryRepository(
     ) {
         val previousHeadset = lastHeadsetSleeping ?: isHeadsetSleeping(previous, nowMillis)
         val updatedHeadset = isHeadsetSleeping(updated, nowMillis)
+        idleSleepGateActive = updatedHeadset
         if (previousHeadset != updatedHeadset) {
             lastHeadsetSleeping = updatedHeadset
             val event = if (updatedHeadset) SleepEvent.SleepEntered(null) else SleepEvent.SleepExited(null)
