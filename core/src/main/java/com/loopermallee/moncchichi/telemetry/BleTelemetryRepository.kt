@@ -51,6 +51,8 @@ class BleTelemetryRepository(
         val foldState: Boolean? = null,
         val charging: Boolean? = null,
         val lastVitalsTimestamp: Long? = null,
+        val sleepPhase: SleepPhase = SleepPhase.ACTIVE,
+        val quietPhaseStartedAt: Long? = null,
         val recordedAt: Long = System.currentTimeMillis(),
     )
 
@@ -76,6 +78,8 @@ class BleTelemetryRepository(
         data class SleepEntered(val lens: Lens?) : SleepEvent()
         data class SleepExited(val lens: Lens?) : SleepEvent()
     }
+
+    enum class SleepPhase { ACTIVE, QUIET, SLEEP_CONFIRMED }
 
     private val _sleepEvents = MutableStateFlow<SleepEvent?>(null)
     val sleepEvents: StateFlow<SleepEvent?> = _sleepEvents.asStateFlow()
@@ -204,7 +208,7 @@ class BleTelemetryRepository(
             chargingValue = mergedCharging,
             lastVitalsValue = mergedVitals,
         )
-        return when (side) {
+        val updated = when (side) {
             Lens.LEFT -> copy(
                 left = normalizedLens,
                 right = normalizedOther,
@@ -226,6 +230,7 @@ class BleTelemetryRepository(
                 recordedAt = timestamp,
             )
         }
+        return updated.withSleepPhase(previous = this, nowMillis = timestamp)
     }
 
     private fun LensSnapshot.merge(values: Map<String, Any>, timestamp: Long): LensSnapshot {
@@ -250,10 +255,10 @@ class BleTelemetryRepository(
                 }
             }
         }
-        val resolvedVitals = if (vitalsTimestampUpdated) {
-            snapshot.lastVitalsTimestamp ?: timestamp
-        } else {
-            timestamp
+        val resolvedVitals = when {
+            vitalsTimestampUpdated -> snapshot.lastVitalsTimestamp ?: timestamp
+            snapshot.lastVitalsTimestamp != null -> snapshot.lastVitalsTimestamp
+            else -> null
         }
         return snapshot.copy(lastVitalsTimestamp = resolvedVitals)
     }
@@ -356,28 +361,7 @@ class BleTelemetryRepository(
     }
 
     fun isLensSleeping(snapshot: Snapshot, lens: Lens, nowMillis: Long = System.currentTimeMillis()): Boolean {
-        val lensSnapshot = snapshot.lens(lens)
-        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
-        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
-        val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
-        val resolvedCharging = lensSnapshot.charging ?: snapshot.charging
-        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        if (
-            resolvedCaseOpen == null ||
-            resolvedInCase == null ||
-            resolvedFoldState == null ||
-            resolvedCharging == null ||
-            lastVitals == null
-        ) {
-            return false
-        }
-
-        val quietFor = nowMillis - lastVitals
-        return resolvedFoldState &&
-            resolvedInCase &&
-            resolvedCaseOpen &&
-            !resolvedCharging &&
-            quietFor > G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS
+        return snapshot.sleepPhase == SleepPhase.SLEEP_CONFIRMED
     }
 
     fun isLensSleeping(lens: Lens): Boolean = isLensSleeping(_snapshot.value, lens)
@@ -396,7 +380,7 @@ class BleTelemetryRepository(
     }
 
     private fun isHeadsetSleeping(snapshot: Snapshot, nowMillis: Long): Boolean {
-        return Lens.values().all { lens -> isLensSleeping(snapshot, lens, nowMillis) }
+        return snapshot.sleepPhase == SleepPhase.SLEEP_CONFIRMED
     }
 
     private fun SnapshotRecord?.hasSameContent(other: SnapshotRecord?): Boolean {
@@ -404,6 +388,46 @@ class BleTelemetryRepository(
         return caseJson == other.caseJson && leftJson == other.leftJson && rightJson == other.rightJson
     }
 
+}
+
+private fun BleTelemetryRepository.Snapshot.withSleepPhase(previous: BleTelemetryRepository.Snapshot, nowMillis: Long):
+    BleTelemetryRepository.Snapshot {
+    val caseOpen = caseOpen ?: return copy(sleepPhase = BleTelemetryRepository.SleepPhase.ACTIVE, quietPhaseStartedAt = null)
+    val inCase = inCase ?: return copy(sleepPhase = BleTelemetryRepository.SleepPhase.ACTIVE, quietPhaseStartedAt = null)
+    val foldState = foldState ?: return copy(sleepPhase = BleTelemetryRepository.SleepPhase.ACTIVE, quietPhaseStartedAt = null)
+    val charging = charging ?: return copy(sleepPhase = BleTelemetryRepository.SleepPhase.ACTIVE, quietPhaseStartedAt = null)
+    val lastVitals = lastVitalsTimestamp ?: return copy(sleepPhase = BleTelemetryRepository.SleepPhase.ACTIVE, quietPhaseStartedAt = null)
+
+    val ceChanged = listOf(caseOpen to previous.caseOpen, inCase to previous.inCase, foldState to previous.foldState, charging to previous.charging)
+        .any { (updated, prior) -> prior != null && updated != prior }
+    val vitalsChanged = previous.lastVitalsTimestamp != null && lastVitalsTimestamp != previous.lastVitalsTimestamp
+    if (ceChanged || (previous.sleepPhase != BleTelemetryRepository.SleepPhase.ACTIVE && vitalsChanged)) {
+        return copy(sleepPhase = BleTelemetryRepository.SleepPhase.ACTIVE, quietPhaseStartedAt = null)
+    }
+
+    if (!foldState || !inCase || !caseOpen || charging) {
+        return copy(sleepPhase = BleTelemetryRepository.SleepPhase.ACTIVE, quietPhaseStartedAt = null)
+    }
+
+    var quietStartedAt = previous.quietPhaseStartedAt ?: nowMillis
+    var phase = previous.sleepPhase
+    if (phase == BleTelemetryRepository.SleepPhase.ACTIVE) {
+        phase = BleTelemetryRepository.SleepPhase.QUIET
+        quietStartedAt = nowMillis
+    }
+
+    val quietFor = nowMillis - quietStartedAt
+    val vitalsQuietFor = nowMillis - lastVitals
+    val confirmed = quietFor >= G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS &&
+        vitalsQuietFor >= G1Protocols.SLEEP_VITALS_TIMEOUT_MS
+
+    phase = when {
+        confirmed -> BleTelemetryRepository.SleepPhase.SLEEP_CONFIRMED
+        phase == BleTelemetryRepository.SleepPhase.SLEEP_CONFIRMED -> BleTelemetryRepository.SleepPhase.QUIET
+        else -> phase
+    }
+
+    return copy(sleepPhase = phase, quietPhaseStartedAt = quietStartedAt)
 }
 
 private fun G1MessageParser.TelemetryUpdate.toRepositoryMap(): Map<String, Any> {

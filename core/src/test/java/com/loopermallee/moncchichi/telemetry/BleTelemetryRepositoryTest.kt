@@ -1,8 +1,8 @@
 package com.loopermallee.moncchichi.telemetry
 
 import com.loopermallee.moncchichi.bluetooth.G1MessageParser
-import com.loopermallee.moncchichi.bluetooth.G1Protocols
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -68,39 +68,51 @@ class BleTelemetryRepositoryTest {
     @Test
     fun sleepingRequiresAllConditionsAndFreshVitals() = runTest {
         val repository = BleTelemetryRepository()
-        repository.recordTelemetry(
-            MoncchichiBleService.Lens.LEFT,
-            mapOf(
-                "caseOpen" to true,
-                "inCase" to true,
-                "foldState" to true,
-                "charging" to false,
+        val snapshotField = repository.javaClass.getDeclaredField("_snapshot").apply { isAccessible = true }
+        val snapshotFlow = snapshotField.get(repository) as MutableStateFlow<BleTelemetryRepository.Snapshot>
+
+        val quietSnapshot = BleTelemetryRepository.Snapshot(
+            left = BleTelemetryRepository.LensSnapshot(
+                caseOpen = true,
+                inCase = true,
+                foldState = true,
+                charging = false,
+                lastVitalsTimestamp = 0L,
             ),
+            right = BleTelemetryRepository.LensSnapshot(
+                caseOpen = true,
+                inCase = true,
+                foldState = true,
+                charging = false,
+                lastVitalsTimestamp = 0L,
+            ),
+            caseOpen = true,
+            inCase = true,
+            foldState = true,
+            charging = false,
+            lastVitalsTimestamp = 0L,
+            sleepPhase = BleTelemetryRepository.SleepPhase.QUIET,
+            quietPhaseStartedAt = 0L,
         )
 
-        val firstSnapshot = repository.snapshot.value
-        assertEquals(null, firstSnapshot.left.lastVitalsTimestamp)
+        snapshotFlow.value = quietSnapshot
 
-        val vitalsTimestamp = 1_000L
         repository.recordTelemetry(
             MoncchichiBleService.Lens.LEFT,
-            mapOf(
-                "caseOpen" to true,
-                "inCase" to true,
-                "foldState" to true,
-                "charging" to false,
-                "lastVitalsTimestamp" to vitalsTimestamp,
-            ),
+            mapOf("caseOpen" to true),
         )
 
-        val snapshot = repository.snapshot.value
-        val lastVitals = snapshot.left.lastVitalsTimestamp ?: error("missing vitals timestamp")
-        val awakeNow = lastVitals + (G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS / 2)
-        assertEquals(false, repository.isSleeping(MoncchichiBleService.Lens.LEFT, awakeNow))
-        assertEquals(true, repository.isAwake(MoncchichiBleService.Lens.LEFT, awakeNow))
+        val sleepySnapshot = repository.snapshot.value
+        assertEquals(BleTelemetryRepository.SleepPhase.SLEEP_CONFIRMED, sleepySnapshot.sleepPhase)
+        assertEquals(BleTelemetryRepository.SleepEvent.SleepEntered(null), repository.sleepEvents.value)
 
-        val sleepyNow = lastVitals + G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS + 1_000
-        assertEquals(true, repository.isSleeping(MoncchichiBleService.Lens.LEFT, sleepyNow))
-        assertEquals(false, repository.isAwake(MoncchichiBleService.Lens.LEFT, sleepyNow))
+        repository.recordTelemetry(
+            MoncchichiBleService.Lens.LEFT,
+            mapOf("caseOpen" to false),
+        )
+
+        val awakeSnapshot = repository.snapshot.value
+        assertEquals(BleTelemetryRepository.SleepPhase.ACTIVE, awakeSnapshot.sleepPhase)
+        assertEquals(BleTelemetryRepository.SleepEvent.SleepExited(null), repository.sleepEvents.value)
     }
 }
