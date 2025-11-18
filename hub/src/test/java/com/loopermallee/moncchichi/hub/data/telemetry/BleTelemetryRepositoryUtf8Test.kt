@@ -1,5 +1,6 @@
 package com.loopermallee.moncchichi.hub.data.telemetry
 
+import com.loopermallee.moncchichi.bluetooth.G1Protocols
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.hub.data.db.AssistantEntry
@@ -311,7 +312,8 @@ class BleTelemetryRepositoryUtf8Test {
             Long::class.javaPrimitiveType,
         ).apply { isAccessible = true }
 
-        transitionMethod.invoke(repository, previous, sleepySnapshot, 10_000L)
+        val sleepyNow = G1Protocols.SLEEP_VITALS_TIMEOUT_MS + 5_000L
+        transitionMethod.invoke(repository, previous, sleepySnapshot, sleepyNow)
 
         val awakeSnapshot = sleepySnapshot.copy(
             left = sleepySnapshot.left.copy(lastVitalsTimestamp = 10_000L),
@@ -319,7 +321,7 @@ class BleTelemetryRepositoryUtf8Test {
             lastVitalsTimestamp = 10_000L,
         )
         snapshotFlow.value = awakeSnapshot
-        transitionMethod.invoke(repository, sleepySnapshot, awakeSnapshot, 10_000L)
+        transitionMethod.invoke(repository, sleepySnapshot, awakeSnapshot, sleepyNow)
 
         val emitted = events.await()
         assertEquals(2, emitted.size)

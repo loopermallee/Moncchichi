@@ -59,7 +59,7 @@ object G1Protocols {
     const val MAX_RETRIES = 3
     const val RETRY_BACKOFF_MS = 150L
     const val WRITE_LOCK_TIMEOUT_MS = 1_000L
-    const val SLEEP_VITALS_TIMEOUT_MS = 3_000L
+    const val SLEEP_VITALS_TIMEOUT_MS = 15_000L
 
     const val MTU_ACK_TIMEOUT_MS = 1_500L
     const val MTU_WARMUP_GRACE_MS = 7_500L
