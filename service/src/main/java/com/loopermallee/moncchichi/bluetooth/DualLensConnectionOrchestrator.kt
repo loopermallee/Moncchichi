@@ -2,6 +2,7 @@ package com.loopermallee.moncchichi.bluetooth
 
 import android.os.SystemClock
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.BATT_SUB_DETAIL
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_BATT_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_CASE_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
@@ -167,6 +168,9 @@ class DualLensConnectionOrchestrator(
     private var sleeping: Boolean = false
     private var awaitingWakeTelemetry: Boolean = false
     private var wakeRefreshIssued: Boolean = false
+    private var wakeQuietUntilElapsed: Long = 0L
+    private var wakeVitalsObserved: Boolean = false
+    private var wakeQuietActive: Boolean = false
 
     suspend fun connectHeadset(pairKey: PairKey, leftMac: String, rightMac: String) = coroutineScope {
         require(pairKey == this@DualLensConnectionOrchestrator.pairKey) {
@@ -337,6 +341,9 @@ class DualLensConnectionOrchestrator(
         leftPrimed = false
         awaitingWakeTelemetry = false
         wakeRefreshIssued = false
+        wakeQuietActive = false
+        wakeQuietUntilElapsed = 0L
+        wakeVitalsObserved = false
     }
 
     fun close() {
@@ -493,7 +500,7 @@ class DualLensConnectionOrchestrator(
                         put("timestamp", System.currentTimeMillis())
                     },
                 )
-                thawFromTelemetry()
+                thawFromTelemetry(event)
                 markHeartbeatAck(side)
                 heartbeatStates[side]?.let { heartbeat ->
                     telemetryRepository.updateHeartbeat(
@@ -941,6 +948,9 @@ class DualLensConnectionOrchestrator(
         leftRefreshRequested = false
         awaitingWakeTelemetry = false
         wakeRefreshIssued = false
+        wakeQuietActive = false
+        wakeQuietUntilElapsed = 0L
+        wakeVitalsObserved = false
         val cachedLeftMac = leftSession?.id?.mac ?: lastLeftMac
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
         logger("[SLEEP] Headset → IdleSleep")
@@ -954,14 +964,26 @@ class DualLensConnectionOrchestrator(
 
     private suspend fun exitIdleSleep(snapshot: BleTelemetryRepository.Snapshot) {
         awaitingWakeTelemetry = true
+        wakeQuietActive = true
+        wakeVitalsObserved = false
+        wakeQuietUntilElapsed = SystemClock.elapsedRealtime() + CE_IDLE_SLEEP_QUIET_WINDOW_MS
         logger("[WAKE] Headset → Awake (waiting for telemetry)")
     }
 
-    private suspend fun thawFromTelemetry() {
+    private suspend fun thawFromTelemetry(event: ClientEvent.Telemetry) {
         if (!sleeping || !awaitingWakeTelemetry) return
 
+        if (isQualifyingWakeTelemetry(event)) {
+            wakeVitalsObserved = true
+        }
+        val quietElapsed = !wakeQuietActive || SystemClock.elapsedRealtime() >= wakeQuietUntilElapsed
+        if (!wakeVitalsObserved || !quietElapsed) {
+            return
+        }
         sleeping = false
         awaitingWakeTelemetry = false
+        wakeQuietActive = false
+        wakeQuietUntilElapsed = 0L
         logger("[WAKE] Headset → Awake")
         val leftConnected = latestLeft?.connected == true
         val rightConnected = latestRight?.connected == true
@@ -994,7 +1016,11 @@ class DualLensConnectionOrchestrator(
     }
 
     private fun isHeartbeatSuppressed(): Boolean {
-        return isIdleSleepState() || awaitingWakeTelemetry
+        return isIdleSleepState() || awaitingWakeTelemetry || wakeQuietActive
+    }
+
+    private fun isQualifyingWakeTelemetry(event: ClientEvent.Telemetry): Boolean {
+        return event.batteryPct != null
     }
 
     private fun State.isActiveState(): Boolean {
