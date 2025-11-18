@@ -304,6 +304,8 @@ class BleTelemetryRepositoryUtf8Test {
             inCase = true,
             foldState = true,
             lastVitalsTimestamp = 0L,
+            sleepPhase = BleTelemetryRepository.SleepPhase.SLEEP_CONFIRMED,
+            quietPhaseStartedAt = 0L,
         )
         snapshotFlow.value = sleepySnapshot
         val transitionMethod = repository.javaClass.getDeclaredMethod(
@@ -320,6 +322,8 @@ class BleTelemetryRepositoryUtf8Test {
             left = sleepySnapshot.left.copy(lastVitalsTimestamp = 10_000L),
             right = sleepySnapshot.right.copy(lastVitalsTimestamp = 10_000L),
             lastVitalsTimestamp = 10_000L,
+            sleepPhase = BleTelemetryRepository.SleepPhase.ACTIVE,
+            quietPhaseStartedAt = null,
         )
         snapshotFlow.value = awakeSnapshot
         transitionMethod.invoke(repository, sleepySnapshot, awakeSnapshot, sleepyNow)
@@ -373,6 +377,8 @@ class BleTelemetryRepositoryUtf8Test {
             foldState = true,
             charging = false,
             lastVitalsTimestamp = 0L,
+            sleepPhase = BleTelemetryRepository.SleepPhase.SLEEP_CONFIRMED,
+            quietPhaseStartedAt = 0L,
         )
         snapshotFlow.value = sleepySnapshot
         val sleepyNow = G1Protocols.SLEEP_VITALS_TIMEOUT_MS + 5_000L
