@@ -104,6 +104,7 @@ class BleTelemetryRepository(
         val caseOpen: Boolean? = null,
         val foldState: Boolean? = null,
         val sleepState: SleepState = SleepState.UNKNOWN,
+        val idleSleepState: IdleSleepState = IdleSleepState.ACTIVE,
         val lastSleepAt: Long? = null,
         val lastWakeAt: Long? = null,
         val bonded: Boolean = false,
@@ -151,6 +152,8 @@ class BleTelemetryRepository(
 
     /** Describes the sleep state reported by the lens UART stream. */
     enum class SleepState { UNKNOWN, AWAKE, SLEEPING }
+
+    enum class IdleSleepState { ACTIVE, QUIET_PHASE_1, SLEEP_CONFIRMED }
 
     enum class ValidationState { Idle, Running, Passed, Failed }
 
@@ -3177,6 +3180,53 @@ class BleTelemetryRepository(
 
     private fun formatOpcode(value: Int?): String = value?.let { String.format("0x%02X", it) } ?: "n/a"
 
+    private data class ResolvedSharedState(
+        val caseOpen: Boolean?,
+        val inCase: Boolean?,
+        val foldState: Boolean?,
+        val charging: Boolean?,
+        val lastVitals: Long?,
+    )
+
+    private fun Snapshot.resolveSharedState(lens: Lens): ResolvedSharedState {
+        val lensTelemetry = lens(lens)
+        return ResolvedSharedState(
+            caseOpen = lensTelemetry.caseOpen ?: caseOpen,
+            inCase = lensTelemetry.inCase ?: inCase,
+            foldState = lensTelemetry.foldState ?: foldState,
+            charging = lensTelemetry.charging ?: charging,
+            lastVitals = lensTelemetry.lastVitalsTimestamp ?: lastVitalsTimestamp,
+        )
+    }
+
+    private fun calculateIdleSleepState(state: ResolvedSharedState, nowMillis: Long): IdleSleepState {
+        val lastVitals = state.lastVitals ?: return IdleSleepState.ACTIVE
+        val caseOpen = state.caseOpen ?: return IdleSleepState.ACTIVE
+        val inCase = state.inCase ?: return IdleSleepState.ACTIVE
+        val foldState = state.foldState ?: return IdleSleepState.ACTIVE
+        val charging = state.charging ?: return IdleSleepState.ACTIVE
+        if (!foldState || !inCase || !caseOpen || charging) return IdleSleepState.ACTIVE
+        val quietFor = nowMillis - lastVitals
+        if (quietFor < G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS) return IdleSleepState.ACTIVE
+        if (quietFor < G1Protocols.SLEEP_VITALS_TIMEOUT_MS) return IdleSleepState.QUIET_PHASE_1
+        return IdleSleepState.SLEEP_CONFIRMED
+    }
+
+    private fun Snapshot.withIdleStates(nowMillis: Long): Snapshot {
+        val resolvedLeft = resolveSharedState(Lens.LEFT)
+        val resolvedRight = resolveSharedState(Lens.RIGHT)
+        val leftState = calculateIdleSleepState(resolvedLeft, nowMillis)
+        val rightState = calculateIdleSleepState(resolvedRight, nowMillis)
+        var updated = this
+        if (left.idleSleepState != leftState) {
+            updated = updated.copy(left = left.copy(idleSleepState = leftState))
+        }
+        if (right.idleSleepState != rightState) {
+            updated = updated.copy(right = right.copy(idleSleepState = rightState))
+        }
+        return updated
+    }
+
     private fun Snapshot.updateLens(
         lens: Lens,
         telemetry: LensTelemetry,
@@ -3480,7 +3530,9 @@ class BleTelemetryRepository(
         transform: (Snapshot) -> Snapshot,
     ) {
         val previous = _snapshot.value
-        val updated = _snapshot.updateAndGet(transform)
+        val updated = _snapshot.updateAndGet { current ->
+            transform(current).withIdleStates(eventTimestamp ?: System.currentTimeMillis())
+        }
         if (persist && updated != previous) {
             persistSnapshot(updated, eventTimestamp)
         }
@@ -3510,28 +3562,8 @@ class BleTelemetryRepository(
         lens: Lens,
         nowMillis: Long = System.currentTimeMillis(),
     ): Boolean {
-        val lensSnapshot = snapshot.lens(lens)
-        val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
-        val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
-        val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
-        val resolvedCharging = lensSnapshot.charging ?: snapshot.charging
-        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        if (
-            resolvedCaseOpen == null ||
-            resolvedInCase == null ||
-            resolvedFoldState == null ||
-            resolvedCharging == null ||
-            lastVitals == null
-        ) {
-            return false
-        }
-
-        val quietFor = nowMillis - lastVitals
-        return resolvedFoldState &&
-            resolvedInCase &&
-            resolvedCaseOpen &&
-            !resolvedCharging &&
-            quietFor > G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS
+        val resolved = snapshot.resolveSharedState(lens)
+        return calculateIdleSleepState(resolved, nowMillis) == IdleSleepState.SLEEP_CONFIRMED
     }
 
     private fun maybeEmitSleepTransitions(

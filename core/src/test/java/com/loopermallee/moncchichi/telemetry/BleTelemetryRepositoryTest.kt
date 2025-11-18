@@ -99,7 +99,7 @@ class BleTelemetryRepositoryTest {
         assertEquals(false, repository.isSleeping(MoncchichiBleService.Lens.LEFT, awakeNow))
         assertEquals(true, repository.isAwake(MoncchichiBleService.Lens.LEFT, awakeNow))
 
-        val sleepyNow = lastVitals + G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS + 1_000
+        val sleepyNow = lastVitals + G1Protocols.SLEEP_VITALS_TIMEOUT_MS + 1_000
         assertEquals(true, repository.isSleeping(MoncchichiBleService.Lens.LEFT, sleepyNow))
         assertEquals(false, repository.isAwake(MoncchichiBleService.Lens.LEFT, sleepyNow))
     }
