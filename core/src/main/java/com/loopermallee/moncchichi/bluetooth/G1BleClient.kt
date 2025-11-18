@@ -984,6 +984,7 @@ class G1BleClient(
         ackTimeoutStreak.set(0)
         _awake.value = true
         sleepGateActive.set(false)
+        wakeResumePending.set(false)
         _notifyReady.value = false
         cancelPairingDialogWatchdog()
         dismissPairingNotification()
@@ -1017,7 +1018,6 @@ class G1BleClient(
     fun completeWakeHandshake() {
         if (!_awake.value) return
         if (!wakeResumePending.compareAndSet(true, false)) return
-        if (sleepGateActive.get()) return
         while (ackSignals.tryReceive().isSuccess) {
             // Clear any stale sleep sentinel before resuming work.
         }
