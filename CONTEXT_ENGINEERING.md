@@ -1,589 +1,515 @@
-**CONTEXT_ENGINEERING.md — Phase 5.2
+CONTEXT ENGINEERING – PHASE 5.2
 
-Even Reality Idle Sleep Parity (Authoritative Spec)**
+Idle Sleep Parity (Even-Reality Accurate State Machine)
 
-Goal:
-Make Moncchichi Hub behave exactly like the Even Reality G1 official app when the glasses are:
+============================================
 
-Folded
+Purpose of This Patch
 
-In the case
+The goal of Phase 5.2 is to make Moncchichi Hub behave exactly like the official Even Reality G1 app when the glasses are:
 
-Case lid open
+folded + placed in case + case open + not charging + no gestures pressed + idle.
 
-Not charging
+In this state, Even Reality transitions the headset into a silent idle mode, where:
 
-Idle for 3–5+ minutes
+No outbound BLE writes from the phone
 
+No heartbeat
 
-This state must result in identical idle behavior:
+No ACK watchdog
 
-Zero PINGs
+No reconnect attempts
 
-Zero keepalives
+No state churn
 
-Zero reconnect attempts
-
-Zero ACK waiting
-
-Zero ERR logs
-
-Fully stable connection
-
-No GATT churn
-
-Only quiet periodic vitals from each lens
+Only minimal natural notifications from glasses (vitals/case)
 
 
-This spec is derived from:
+Your app currently does not reach this state, even after earlier patches.
 
-Your uploaded Even Reality nRF logs (eL.txt, eR.txt)
-
-Your uploaded Moncchichi logs
-
-Even Reality’s G1 Protocol readme
-
-Even Reality app traces in v1.6.6
-
-The Teleprompter repo and developer notes
-
-
-All wording below is literal expected behavior, not a suggestion.
+This document explains exactly what must change at each layer.
 
 
 ---
 
-🔥 1. Exact Behavior Observed in Even Reality App
+============================================
 
-1.1 No host-initiated traffic during idle
+1. Deep Comparison: Even Reality vs Moncchichi Hub
 
-In idle case mode, Even app sends:
+============================================
 
-0 PING frames
+1.1. Even Reality Idle NRF Profile (Ground Truth)
 
-0 keepalives
+When folded + in case + lid open:
 
-0 write commands
+Even Reality BLE traffic = near-zero
 
-0 status requests
+No PING (0x25)
 
-0 mirror refresh
+No Host ACK requests
 
-0 priming attempts
+No reconnect attempts
 
+No CCCD writes
 
-The host is completely silent.
-
-Only the glasses speak.
-
-
----
-
-1.2 The glasses still send vitals
-
-Frames observed:
-
-0x2C — Battery/vitals
-
-0x2B — Case state / in-case
-
-0x37 — Folded / proximity
-
-Occasional 0x0B, 0x4F, etc.
+No outbound commands
 
 
-Even app does not reply or treat these as errors.
+The only packets visible are:
 
-It only logs them.
+Vitals (0x2C) every several minutes
+
+Case state / proximity (0x2B) when state changes
+
+
+Even’s app logs:
+
+Nothing except:
+
+[CASE] CaseOpen → CaseOpen (when flap adjusted)
+
+Occasional vitals parsing
+
+
+Absolutely no heartbeats, no “[BLE] ❤️”, no “ERR”, and no reconnects.
 
 
 ---
 
-1.3 Sleep state is triggered by environmental signals
+1.2. Moncchichi Idle NRF Profile (current behavior)
 
-Even enters idle after:
+When folded + in case + lid open:
 
-Folded == true
+Moncchichi BLE traffic = incorrect
 
+Still sends PING (0x25)
+
+Still expects ACKs
+
+Still logs “Keepalive ERR”
+
+Still runs reconnect logic
+
+Still evaluates degraded connection
+
+Still emits unnecessary logs
+
+
+Phone app logs:
+
+[BLE] ❤️ Keepalive
+
+[ACK] stall
+
+[ERR]
+
+“Reconnecting…”
+
+Telemetry refreshes
+
+Developer console noise
+
+
+Conclusion: App never truly enters sleep state → all subsystems continue running.
+
+
+---
+
+============================================
+
+2. Root Cause Analysis
+
+============================================
+
+Moncchichi has four layers that jointly fail:
+
+
+---
+
+2.1. BleTelemetryRepository (critical root problem)
+
+Problems:
+
+Sleep detection logic does not match Even’s real conditions.
+
+Missing fields:
+
+foldState
+
+inCase
+
+caseOpen
+
+charging
+
+lastVitalsTimestamp
+
+
+isLensSleeping() is wrong
+
+isHeadsetSleeping() never returns true
+
+No unified event stream for sleep/wake
+
+Telemetry never triggers sleep → all other layers remain awake
+
+
+This is the single most important missing component.
+
+
+---
+
+2.2. G1BleClient
+
+Problems:
+
+Heartbeat coroutine not suspended during sleep
+
+ACK timers not suspended
+
+PING writes continue
+
+ERR/stall logs appear
+
+Mirrors Even’s ACTIVE behavior, not IdleSleep behavior
+
+
+
+---
+
+2.3. MoncchichiBleService
+
+Problems:
+
+Receives no valid SleepEvent due to (2.1)
+
+Still performs:
+
+Reconnect gating
+
+Degraded checks
+
+Heartbeat start/stop
+
+
+Logs incorrectly:
+
+[SLEEP][HEADSET] ... instead of
+"[SLEEP] Headset → IdleSleep"
+
+
+
+MoncchichiBleService must:
+
+Freeze everything during IdleSleep
+
+Wake cleanly only when required
+
+
+
+---
+
+2.4. DualLensConnectionOrchestrator
+
+Problems:
+
+IdleSleep state exists but not fully enforced
+
+Reconnect continues in background
+
+Telemetry refresh jobs run
+
+Command dispatch allowed
+
+Mirror behaviour still active
+
+Logs too noisy
+
+
+Even orchestrator = totally frozen core.
+Moncchichi orchestrator = half-awake.
+
+
+---
+
+============================================
+
+3. Correct IdleSleep Definition (Based on Even Reality)
+
+============================================
+
+A lens enters “sleep” if:
+
+foldState == FOLDED
 inCase == true
-
 caseOpen == true
-
 charging == false
+(lastVitalsTimestamp is older than QUIET_THRESHOLD)
 
-No gesture frames
+Headset enters IdleSleep when:
 
-Quiet vitals-only pattern for ~10–20s
+leftLens.sleeping AND rightLens.sleeping
 
+QUIET_THRESHOLD
 
-It then:
+Experimental from Even logs:
 
-freezes all GATT activity
-
-suspends reconnect system
-
-suspends heartbeat / PING
-
-suppresses all ACK logic
-
-suppresses connection evaluation
-
-
-Even’s internal state stops moving.
+>= 8–10 seconds of no vitals writes
 
 
 ---
 
-1.4 Wake events bring the app back online
+============================================
 
-Wake signals include:
+4. Required State Machine Changes (All Layers)
 
-Unfold
+============================================
 
-Case lid closed then opened
+4.1. BleTelemetryRepository – MUST emit exact sleep/wake events
 
-USB power applied
+Add fields:
 
-Button gesture
+caseOpen
 
-Change in case state
+inCase
 
-Rapid vitals sequence
+foldState
 
+charging
 
-Upon wake:
+lastVitalsTimestamp
 
-Heartbeat resumes
 
-Reconnect logic re-arms
-
-ACK logic returns
-
-State machine moves to Stable
-
-
-And then, if any lens is disconnected, Even starts reconnect.
-
-
----
-
-🧠 2. Root Cause: Why Moncchichi Does NOT Match Even
-
-2.1 Moncchichi still performs host-driven traffic
-
-Logs show:
-
-background heartbeat scheduling
-
-pending PINGs
-
-ACK stall warnings
-
-reconnect attempts during idle
-
-unnecessary “RecoveringLeft/Right” logs
-
-
-Even app does not do any of these.
-
-
----
-
-2.2 Moncchichi does NOT fully enter idle sleep state
-
-Moncchichi triggers:
-
-state machine transitions
-
-reconnect coordinator
-
-ACK retry logic
-
-evaluation of degraded states
-
-
-Even app completely freezes activity during sleep.
-
-
----
-
-2.3 Heartbeat is still active
-
-Even app: absolutely zero outbound packets.
-Moncchichi: heartbeat coroutine still runs.
-
-
----
-
-2.4 G1BleClient keeps ACK timers active
-
-Even app disables the entire ACK subsystem during idle.
-
-
----
-
-2.5 Moncchichi logs noise that Even never produces
-
-Examples:
-
-[BLE] ❤️ Keepalive sent
-
-[WARN][ACK] stalled
-
-[LINK] reconnect scheduled
-
-[STATE] transitioning…
-
-[CLIENT] write command…
-
-
-Even app’s logs during idle contain:
-
-vitals
-
-case state
-
-battery
-
-timestamps
-
-
-Nothing else.
-
-
----
-
-🧩 3. Requirements for Phase 5.2
-
-This is the authoritative implementation spec.
-
-Codex must implement every item without deviation.
-Nothing extra. No optimizations. No improvements.
-Just mimic Even Reality perfectly.
-
-
----
-
-✅ 4. Sleep Detection Requirements
-
-Add to BleTelemetryRepository:
-
-4.1 Required fields
-
-caseOpen: Boolean
-inCase: Boolean
-foldState: Boolean
-charging: Boolean
-lastVitalsTimestamp: Long
-
-4.2 Required helper methods
+Add helpers:
 
 isLensSleeping(lens)
+
 isHeadsetSleeping()
 
-Definition of sleep (match Even):
+SleepEvent.SleepEntered
 
-A lens is considered sleeping when:
-
-folded = true
-
-inCase = true
-
-caseOpen = true
-
-charging = false
-
-AND (now - lastVitalsTimestamp) > quietThreshold
-
-Even’s quiet threshold ≈ 10–20s
+SleepEvent.SleepExited
 
 
+Repository role = truth oracle for sleep.
 
-The headset is sleeping when both lenses are sleeping.
+Everything downstream must obey it.
 
 
 ---
 
-4.3 Emit Sleep/Wake events
+4.2. G1BleClient – Completely silence during sleep
 
-Repository must emit:
+Suspend:
 
-SleepEntered
-SleepExited
+Heartbeat coroutine
 
-Events fire only on meaningful transitions.
+ACK watchdog
 
+ERR logs
 
----
-
-🔥 5. IdleSleep Mode (Core Requirement)
-
-This is the heart of Phase 5.2.
-
-When headset enters sleep:
+ALL writes (mirror, refresh, commands)
 
 
----
+Exactly like Even.
 
-5.1 G1BleClient
-
-STOP ALL HEARTBEATS
-
-suspend heartbeat job
-suspend ACK timers
-do not send PING
-do not log ERR when no ACK
-
-No outbound BLE writes.
+Wake = resume heartbeat only after orchestrator returns to Active.
 
 
 ---
 
-5.2 MoncchichiBleService
+4.3. MoncchichiBleService – Proper sleep/wake gate
 
-Upon receiving SleepEntered:
+When SleepEvent.SleepEntered fires:
 
-log: [SLEEP] Headset → IdleSleep
+[SLEEP] Headset → IdleSleep
 
-disable reconnect engine
+Then:
 
-disable degraded state evaluation
+Stop reconnect coordinator
 
-disable priming
+Pause state transitions
 
-disable refresh
+Stop sending commands
 
-suppress ACK warnings
+Freeze telemetry refresh
 
-suppress link instability logs
+Disallow Degraded/Err states
+
+Disallow Keepalive start
+
+Stop G1BleClient ACK/heartbeat
 
 
-Upon wake:
+When SleepEvent.SleepExited fires:
 
-log [WAKE] Headset → Awake
+[WAKE] Headset → Awake
 
-re-enable heartbeat
+Then:
 
-re-enable reconnect logic
+Re-enable orchestrator
 
-if any lens is disconnected → begin reconnect
+Refresh vitals
+
+Restart heartbeat
+
+Perform reconnect if needed
 
 
 
 ---
 
-5.3 DualLensConnectionOrchestrator
-
-Add new state:
-
-IdleSleep
-
-State transitions:
-
-Stable → IdleSleep       when SleepEntered
-IdleSleep → Stable       when SleepExited
-IdleSleep → RecoveringX  only if wake reveals disconnection
+4.4. DualLensConnectionOrchestrator – Hard freeze during IdleSleep
 
 While in IdleSleep:
 
-Do NOT send ANY commands
+Reconnect loops = OFF
 
-Do NOT start reconnect
+Priming = OFF
 
-Do NOT run mirror refresh
+Refresh = OFF
 
-Do NOT run priming
+Pending mirror = PAUSED
 
-Do NOT evaluate degraded state
+Command dispatch = BLOCK
 
-Allow only inbound notifications from glasses
+Incoming telemetry = allowed
+
+No state churn
+
+Only absorbs notifications from BLE
 
 
-This must match Even Reality behavior exactly.
+Wake → resume previous state (usually Stable).
 
 
 ---
 
-🔕 6. Logging Expectations (Match Even Reality)
+============================================
 
-During sleep:
+5. Expected Correct NRF Profile (Target for Codex)
 
-NO heartbeat logs
+After patch, Moncchichi must show:
 
-NO ERR logs
+During Idle Sleep
 
-NO reconnect logs
+No PING (0x25)
 
-NO GATT busy logs
+No PING ACK requests
 
-NO “stalled ACK” logs
+No GATT operations
+
+No CCCD writes
+
+No reconnect traffic
+
+No heartbeat traffic
+
+Only:
+
+vitals (0x2C)
+
+case (0x2B) notifications
 
 
-Allowed logs:
-
-vitals
-
-case state
-
-occasional telemetry events
+Parallel to Even Reality logs
 
 
-Required logs:
+Logs
+
+[SLEEP] Headset → IdleSleep
+
+Then silence except device → host events.
+
+After Wake
+
+[WAKE] Headset → Awake
+
+Then:
+
+heartbeat resumes
+
+connection logic resumes
+
+
+
+---
+
+============================================
+
+6. Acceptance Criteria
+
+Codex must ensure Moncchichi replicates Even exactly:
+
+Must match Even Reality idle profile
+
+Absolute silence from phone
+
+No heartbeats
+
+No reconnect
+
+No ACK stall
+
+No writes
+
+Zero ERR logs
+
+Only case/vitals notifications allowed
+
+
+Sleep transitions are accurate
+
+Fires SleepEntered only when both lenses meet conditions
+
+Wake only when fold/in-case changes or lid closes
+
+
+Logs identical
 
 [SLEEP] Headset → IdleSleep
 [WAKE] Headset → Awake
 
-Absolutely nothing else.
-
 
 ---
 
-🎯 7. Acceptance Criteria (Codex MUST use this)
+============================================
 
-Moncchichi is considered compliant when:
+7. File-Level Responsibilities Summary (Codex must follow this)
 
-7.1 Idle State Behavior
+File	Responsibilities
 
-No PING sent for entire idle window
-
-No reconnect triggered
-
-No warnings logged
-
-State machine frozen at IdleSleep
-
-Connection stable for 5–10 minutes
-
-Only vitals/case frames visible in nRF Connect
-
-Logs identical to Even app idle logs
-
-
-This must be verifiable via:
-
-nRF Connect LEFT
-
-nRF Connect RIGHT
-
-Moncchichi Developer Console
+BleTelemetryRepository	Sleep detection & events
+G1BleClient	Pause all outbound BLE during sleep
+MoncchichiBleService	Global gating of reconnect/heartbeat
+DualLensConnectionOrchestrator	IdleSleep state freeze
 
 
 
 ---
 
-7.2 Wake Behavior
+============================================
 
-When user unfolds glasses / closes the case / taps:
+8. What Codex must NOT touch
 
-wake event fires
+To avoid regressions:
 
-heartbeat reactivates
+No UI changes
 
-reconnect logic reactivates
+No AI assistant code
 
-ACK logic reactivates
+No DeveloperConsole modifications
 
-state machine transitions from IdleSleep → Stable
+No context-engineering parsing layers
 
-
-Matches Even.
-
-
----
-
-🧪 8. Test Scenarios Codex Must Validate Internally
-
-Even if Codex cannot run Android, it must logically verify:
-
-
----
-
-8.1 Idle Test
-
-Scenario:
-
-glasses folded
-
-in case
-
-case lid open
-
-not charging
-
-3–5 min quiet
-
-
-Expected:
-
-SleepEntered
-
-IdleSleep state active
-
-zero traffic
-
-zero PING
-
-zero reconnect
-
-light vitals only
+No pairing dialog changes
 
 
 
 ---
 
-8.2 Wake Test
+============================================
 
-Trigger wake by:
+End of CE 5.2 – Idle Sleep Parity
 
-unfolding
-
-closing/opening case
-
-connecting USB
-
-pressing a button
-
-
-Expected:
-
-SleepExited
-
-resume normal flow
-
-heartbeat resumes
-
-reconnect functioning
-
-
-
----
-
-8.3 Stability Test
-
-Glasses remain idle for 10 minutes.
-
-Expected:
-
-connection never drops
-
-no GATT resets
-
-no reconnect triggers
-
-
-
----
-
-🏆 Summary for Codex
-
-Your goal is not to improve Moncchichi.
-
-Your goal is to clone Even Reality’s idle behavior exactly, byte-for-byte, state-for-state, timing-for-timing.
-
-Phase 5.2 success =
-Moncchichi’s idle logs match Even Reality’s idle logs with zero extraneous traffic.
-
-
----
-
-✔️ END OF DOCUMENT
+============================================
