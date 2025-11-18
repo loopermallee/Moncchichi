@@ -2376,6 +2376,7 @@ private class HeartbeatSupervisor(
         heartbeatSupervisor.shutdown()
         Lens.values().forEach { lens ->
             cancelReconnect(lens)
+            clearPendingCommands(lens)
             updateLens(lens) {
                 it.copy(
                     degraded = false,

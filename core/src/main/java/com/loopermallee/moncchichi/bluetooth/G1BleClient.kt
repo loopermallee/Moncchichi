@@ -480,6 +480,10 @@ class G1BleClient(
         resetAckTelemetry()
         lastWriteRealtime.set(0L)
         lastAckTimeoutReported.set(0L)
+        pendingAsciiAck = false
+        while (ackSignals.tryReceive().isSuccess) {
+            // Drain any pending ACKs so sleep resumes without stale timers.
+        }
         ackSignals.trySend(AckOutcome.Sleep)
     }
 
@@ -995,10 +999,6 @@ class G1BleClient(
         if (!_awake.value) return
         _awake.value = false
         activateSleepGate()
-        pendingAsciiAck = false
-        while (ackSignals.tryReceive().isSuccess) {
-            // Drain any pending ACK completions before signalling cancellation.
-        }
         ackSignals.trySend(AckOutcome.Sleep)
     }
 
