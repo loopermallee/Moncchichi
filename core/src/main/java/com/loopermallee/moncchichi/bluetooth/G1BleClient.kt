@@ -1010,18 +1010,14 @@ class G1BleClient(
             keepAliveInFlight.set(0)
             resetAckTelemetry()
         }
-        if (sleepGateActive.get()) {
-            wakeResumePending.set(true)
-            return
-        }
-        completeWakeHandshake()
+        // Defer resumption until orchestrator releases quiet window + vitals
+        wakeResumePending.set(true)
     }
 
     fun completeWakeHandshake() {
         if (!_awake.value) return
-        if (wakeResumePending.get()) {
-            wakeResumePending.set(false)
-        }
+        if (!wakeResumePending.compareAndSet(true, false)) return
+        if (sleepGateActive.get()) return
         while (ackSignals.tryReceive().isSuccess) {
             // Clear any stale sleep sentinel before resuming work.
         }
