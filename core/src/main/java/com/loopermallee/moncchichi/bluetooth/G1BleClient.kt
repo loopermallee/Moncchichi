@@ -452,6 +452,7 @@ class G1BleClient(
     @Volatile private var pendingAsciiAck: Boolean = false
     private val refreshOnConnect = AtomicBoolean(false)
     private val sleepGateActive = AtomicBoolean(false)
+    private val wakeResumePending = AtomicBoolean(false)
     private val bondMutex = Mutex()
     data class BondEvent(val state: Int, val reason: Int, val timestampMs: Long)
     private val bondEvents = MutableSharedFlow<BondEvent>(replay = 1, extraBufferCapacity = 8)
@@ -999,7 +1000,6 @@ class G1BleClient(
         if (!_awake.value) return
         _awake.value = false
         activateSleepGate()
-        ackSignals.trySend(AckOutcome.Sleep)
     }
 
     fun beginWakeHandshake() {
@@ -1009,6 +1009,18 @@ class G1BleClient(
             keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
             keepAliveInFlight.set(0)
             resetAckTelemetry()
+        }
+        if (sleepGateActive.get()) {
+            wakeResumePending.set(true)
+            return
+        }
+        completeWakeHandshake()
+    }
+
+    fun completeWakeHandshake() {
+        if (!_awake.value) return
+        if (wakeResumePending.get()) {
+            wakeResumePending.set(false)
         }
         while (ackSignals.tryReceive().isSuccess) {
             // Clear any stale sleep sentinel before resuming work.

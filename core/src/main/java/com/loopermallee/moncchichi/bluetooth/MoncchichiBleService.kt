@@ -2296,6 +2296,7 @@ private class HeartbeatSupervisor(
         wakeQuietUntil.set(0L)
         wakeQuietJob?.cancel()
         wakeQuietJob = null
+        clientRecords.values.forEach { record -> record.client.completeWakeHandshake() }
         Lens.values().forEach { lens -> heartbeatSupervisor.updateLensAwake(lens, true) }
     }
 
