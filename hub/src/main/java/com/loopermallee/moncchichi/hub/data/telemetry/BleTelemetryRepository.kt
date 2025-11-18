@@ -178,6 +178,7 @@ class BleTelemetryRepository(
         val caseOpen: Boolean? = null,
         val inCase: Boolean? = null,
         val foldState: Boolean? = null,
+        val charging: Boolean? = null,
         val lastVitalsTimestamp: Long? = null,
         val uptimeSeconds: Long? = null,
         val lastLens: Lens? = null,
@@ -3153,9 +3154,22 @@ class BleTelemetryRepository(
         val mergedCaseOpen = telemetry.caseOpen ?: other.caseOpen ?: caseOpen
         val mergedInCase = telemetry.inCase ?: other.inCase ?: inCase
         val mergedFoldState = telemetry.foldState ?: other.foldState ?: foldState
+        val mergedCharging = telemetry.charging ?: other.charging ?: charging
         val mergedVitals = maxOfNonNull(telemetry.lastVitalsTimestamp, other.lastVitalsTimestamp, lastVitalsTimestamp)
-        val normalizedTelemetry = telemetry.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedVitals)
-        val normalizedOther = other.withSharedValues(mergedCaseOpen, mergedInCase, mergedFoldState, mergedVitals)
+        val normalizedTelemetry = telemetry.withSharedValues(
+            caseOpenValue = mergedCaseOpen,
+            inCaseValue = mergedInCase,
+            foldStateValue = mergedFoldState,
+            chargingValue = mergedCharging,
+            lastVitalsValue = mergedVitals,
+        )
+        val normalizedOther = other.withSharedValues(
+            caseOpenValue = mergedCaseOpen,
+            inCaseValue = mergedInCase,
+            foldStateValue = mergedFoldState,
+            chargingValue = mergedCharging,
+            lastVitalsValue = mergedVitals,
+        )
         val updated = when (lens) {
             Lens.LEFT -> copy(
                 left = normalizedTelemetry,
@@ -3163,6 +3177,7 @@ class BleTelemetryRepository(
                 caseOpen = mergedCaseOpen,
                 inCase = mergedInCase,
                 foldState = mergedFoldState,
+                charging = mergedCharging,
                 lastVitalsTimestamp = mergedVitals,
             )
             Lens.RIGHT -> copy(
@@ -3171,6 +3186,7 @@ class BleTelemetryRepository(
                 caseOpen = mergedCaseOpen,
                 inCase = mergedInCase,
                 foldState = mergedFoldState,
+                charging = mergedCharging,
                 lastVitalsTimestamp = mergedVitals,
             )
         }
@@ -3456,17 +3472,24 @@ class BleTelemetryRepository(
         val resolvedCaseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
         val resolvedInCase = lensSnapshot.inCase ?: snapshot.inCase
         val resolvedFoldState = lensSnapshot.foldState ?: snapshot.foldState
+        val resolvedCharging = lensSnapshot.charging ?: snapshot.charging
         val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        if (resolvedCaseOpen == null || resolvedFoldState == null) {
+        if (
+            resolvedCaseOpen == null ||
+            resolvedInCase == null ||
+            resolvedFoldState == null ||
+            resolvedCharging == null ||
+            lastVitals == null
+        ) {
             return false
         }
 
-        val caseClosed = resolvedCaseOpen == false
-        val folded = resolvedFoldState == true
-        val staleVitals = lastVitals?.let { nowMillis - it >= G1Protocols.SLEEP_VITALS_TIMEOUT_MS } ?: false
-        val inCaseOrStaleVitals = (resolvedInCase == true) || staleVitals
-
-        return caseClosed && folded && inCaseOrStaleVitals
+        val quietFor = nowMillis - lastVitals
+        return resolvedFoldState &&
+            resolvedInCase &&
+            resolvedCaseOpen &&
+            !resolvedCharging &&
+            quietFor > G1Protocols.SLEEP_VITALS_TIMEOUT_MS
     }
 
     private fun maybeEmitSleepTransitions(
@@ -3513,12 +3536,14 @@ class BleTelemetryRepository(
         caseOpenValue: Boolean?,
         inCaseValue: Boolean?,
         foldStateValue: Boolean?,
+        chargingValue: Boolean?,
         lastVitalsValue: Long?,
     ): LensTelemetry {
         return copy(
             caseOpen = caseOpen ?: caseOpenValue,
             inCase = inCase ?: inCaseValue,
             foldState = foldState ?: foldStateValue,
+            charging = charging ?: chargingValue,
             lastVitalsTimestamp = lastVitalsTimestamp ?: lastVitalsValue,
         )
     }

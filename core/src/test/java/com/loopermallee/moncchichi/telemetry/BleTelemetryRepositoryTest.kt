@@ -1,6 +1,7 @@
 package com.loopermallee.moncchichi.telemetry
 
 import com.loopermallee.moncchichi.bluetooth.G1MessageParser
+import com.loopermallee.moncchichi.bluetooth.G1Protocols
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -91,11 +92,11 @@ class BleTelemetryRepositoryTest {
 
         val snapshot = repository.snapshot.value
         val lastVitals = snapshot.left.lastVitalsTimestamp ?: error("missing vitals timestamp")
-        val awakeNow = lastVitals + 1_000
+        val awakeNow = lastVitals + (G1Protocols.SLEEP_VITALS_TIMEOUT_MS / 2)
         assertEquals(false, repository.isSleeping(MoncchichiBleService.Lens.LEFT, awakeNow))
         assertEquals(true, repository.isAwake(MoncchichiBleService.Lens.LEFT, awakeNow))
 
-        val sleepyNow = lastVitals + 4_000
+        val sleepyNow = lastVitals + G1Protocols.SLEEP_VITALS_TIMEOUT_MS + 1_000
         assertEquals(true, repository.isSleeping(MoncchichiBleService.Lens.LEFT, sleepyNow))
         assertEquals(false, repository.isAwake(MoncchichiBleService.Lens.LEFT, sleepyNow))
     }
