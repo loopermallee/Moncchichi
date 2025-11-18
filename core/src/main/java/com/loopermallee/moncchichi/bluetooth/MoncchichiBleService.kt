@@ -2186,14 +2186,12 @@ private class HeartbeatSupervisor(
         val currentTriggers = updated.activeTriggers()
         val activeReason = currentTriggers.minByOrNull { it.priority }?.logLabel
         if (!previous.sleeping && updated.sleeping) {
-            val reason = selectSleepReason(previousTriggers, currentTriggers)
-            log("[SLEEP][${lens.shortLabel}] ${reason}→Sleep")
             clientRecords[lens]?.client?.enterSleepMode()
             heartbeatSupervisor.updateLensAwake(lens, false)
             updateLens(lens) {
                 it.copy(
                     sleeping = true,
-                    sleepReason = reason,
+                    sleepReason = selectSleepReason(previousTriggers, currentTriggers),
                     degraded = false,
                     consecutiveKeepAliveFailures = 0,
                     keepAliveAckTimeouts = 0,
@@ -2210,8 +2208,6 @@ private class HeartbeatSupervisor(
             }
         }
         if (previous.sleeping && !updated.sleeping) {
-            val reason = selectWakeReason(previousTriggers, currentTriggers)
-            log("[WAKE][${lens.shortLabel}] ${reason}→Active")
             updateLens(lens) {
                 it.copy(
                     sleeping = false,
@@ -2258,18 +2254,15 @@ private class HeartbeatSupervisor(
             is BleTelemetryRepository.SleepEvent.SleepExited -> event.lens
         }
         if (perLens != null) {
-            log("[SLEEP][${perLens.shortLabel}] Ignoring per-lens SleepEvent; expecting headset scope")
             return
         }
 
         val timestamp = System.currentTimeMillis()
         when (event) {
             is BleTelemetryRepository.SleepEvent.SleepEntered -> {
-                log("[SLEEP][HEADSET] SleepEvent")
                 applySleepEventState(lens = null, sleeping = true, timestamp = timestamp)
             }
             is BleTelemetryRepository.SleepEvent.SleepExited -> {
-                log("[WAKE][HEADSET] SleepEvent")
                 applySleepEventState(lens = null, sleeping = false, timestamp = timestamp)
                 if (!isSleepModeActive()) {
                     scope.launch { triggerWakeTelemetryRefresh() }
@@ -2316,6 +2309,7 @@ private class HeartbeatSupervisor(
     }
 
     private fun onSleepModeEntered(timestamp: Long) {
+        log("[SLEEP] Headset → IdleSleep")
         clientRecords.values.forEach { record ->
             record.client.enterSleepMode()
             heartbeatSupervisor.updateLensAwake(record.lens, false)
@@ -2343,6 +2337,11 @@ private class HeartbeatSupervisor(
     }
 
     private fun onSleepModeExited(timestamp: Long) {
+        idleSleepActive = false
+        if (idleSleepState.value != idleSleepActive) {
+            idleSleepState.value = idleSleepActive
+        }
+        log("[WAKE] Headset → Awake")
         Lens.values().forEach { lens -> resetTelemetryTimers(lens, timestamp) }
         Lens.values().forEach { lens -> resetHandshake(lens) }
         clientRecords.values.forEach { record ->
@@ -2352,13 +2351,6 @@ private class HeartbeatSupervisor(
         reconnectCoordinator.unfreeze()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
-        }
-        idleSleepActive = false
-        if (idleSleepState.value != idleSleepActive) {
-            idleSleepState.value = idleSleepActive
-        }
-        if (suppressedDuringSleepCount > 0) {
-            log("[WAKE] Suppressed $suppressedDuringSleepCount host commands during IdleSleep")
         }
         suppressedDuringSleepCount = 0
         ensureHeartbeatLoop()
@@ -2468,6 +2460,7 @@ private class HeartbeatSupervisor(
     }
 
     private fun shouldSuppressAckFailure(lens: Lens, event: AckEvent): Boolean {
+        if (idleSleepActive) return true
         if (event.opcode != CMD_PING) return false
         val lastSuccess = lastAckSuccessMs[lens] ?: return false
         val delta = event.timestampMs - lastSuccess
