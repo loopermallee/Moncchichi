@@ -452,6 +452,7 @@ class G1BleClient(
     @Volatile private var pendingAsciiAck: Boolean = false
     private val refreshOnConnect = AtomicBoolean(false)
     private val sleepGateActive = AtomicBoolean(false)
+    private val wakeResumePending = AtomicBoolean(false)
     private val bondMutex = Mutex()
     data class BondEvent(val state: Int, val reason: Int, val timestampMs: Long)
     private val bondEvents = MutableSharedFlow<BondEvent>(replay = 1, extraBufferCapacity = 8)
@@ -480,6 +481,10 @@ class G1BleClient(
         resetAckTelemetry()
         lastWriteRealtime.set(0L)
         lastAckTimeoutReported.set(0L)
+        pendingAsciiAck = false
+        while (ackSignals.tryReceive().isSuccess) {
+            // Drain any pending ACKs so sleep resumes without stale timers.
+        }
         ackSignals.trySend(AckOutcome.Sleep)
     }
 
@@ -979,6 +984,7 @@ class G1BleClient(
         ackTimeoutStreak.set(0)
         _awake.value = true
         sleepGateActive.set(false)
+        wakeResumePending.set(false)
         _notifyReady.value = false
         cancelPairingDialogWatchdog()
         dismissPairingNotification()
@@ -995,11 +1001,6 @@ class G1BleClient(
         if (!_awake.value) return
         _awake.value = false
         activateSleepGate()
-        pendingAsciiAck = false
-        while (ackSignals.tryReceive().isSuccess) {
-            // Drain any pending ACK completions before signalling cancellation.
-        }
-        ackSignals.trySend(AckOutcome.Sleep)
     }
 
     fun beginWakeHandshake() {
@@ -1010,6 +1011,13 @@ class G1BleClient(
             keepAliveInFlight.set(0)
             resetAckTelemetry()
         }
+        // Defer resumption until orchestrator releases quiet window + vitals
+        wakeResumePending.set(true)
+    }
+
+    fun completeWakeHandshake() {
+        if (!_awake.value) return
+        if (!wakeResumePending.compareAndSet(true, false)) return
         while (ackSignals.tryReceive().isSuccess) {
             // Clear any stale sleep sentinel before resuming work.
         }

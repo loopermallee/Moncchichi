@@ -635,6 +635,9 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun sendTo(side: Lens, payload: ByteArray): Boolean {
+        if (isIdleSleepState()) {
+            return false
+        }
         val session = when (side) {
             Lens.LEFT -> leftSession
             Lens.RIGHT -> rightSession
