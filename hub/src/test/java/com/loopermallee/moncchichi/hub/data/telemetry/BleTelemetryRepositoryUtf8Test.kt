@@ -15,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.assertNull
+import kotlin.test.assertFalse
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -329,6 +330,94 @@ class BleTelemetryRepositoryUtf8Test {
             (emitted[0] as BleTelemetryRepository.SleepEvent.SleepEntered).lens == null)
         assertTrue(emitted[1] is BleTelemetryRepository.SleepEvent.SleepExited &&
             (emitted[1] as BleTelemetryRepository.SleepEvent.SleepExited).lens == null)
+    }
+
+    @Test
+    fun `idle sleep gate suppresses state toggles until wake`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+        val snapshotField = repository.javaClass.getDeclaredField("_snapshot").apply { isAccessible = true }
+        val snapshotFlow = snapshotField.get(repository) as MutableStateFlow<BleTelemetryRepository.Snapshot>
+        val transitionMethod = repository.javaClass.getDeclaredMethod(
+            "maybeEmitSleepTransitions",
+            BleTelemetryRepository.Snapshot::class.java,
+            BleTelemetryRepository.Snapshot::class.java,
+            Long::class.javaPrimitiveType,
+        ).apply { isAccessible = true }
+        val handleEvent = repository.javaClass.getDeclaredMethod(
+            "handleTelemetryEvent",
+            BleTelemetryParser.TelemetryEvent::class.java,
+        ).apply { isAccessible = true }
+        val gateField = repository.javaClass.getDeclaredField("idleSleepGateActive").apply { isAccessible = true }
+
+        val initialCaseStatus = repository.caseStatus.value
+        val previous = snapshotFlow.value
+        val sleepySnapshot = BleTelemetryRepository.Snapshot(
+            left = BleTelemetryRepository.LensTelemetry(
+                wearing = true,
+                inCase = true,
+                caseOpen = true,
+                foldState = true,
+                charging = false,
+                lastVitalsTimestamp = 0L,
+            ),
+            right = BleTelemetryRepository.LensTelemetry(
+                wearing = true,
+                inCase = true,
+                caseOpen = true,
+                foldState = true,
+                charging = false,
+                lastVitalsTimestamp = 0L,
+            ),
+            caseOpen = true,
+            inCase = true,
+            foldState = true,
+            charging = false,
+            lastVitalsTimestamp = 0L,
+        )
+        snapshotFlow.value = sleepySnapshot
+        val sleepyNow = G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS + 5_000L
+        transitionMethod.invoke(repository, previous, sleepySnapshot, sleepyNow)
+
+        assertEquals(true, gateField.get(repository))
+
+        val gatedEvent = BleTelemetryParser.TelemetryEvent.SystemEvent(
+            lens = Lens.LEFT,
+            timestampMs = sleepyNow + 1_000L,
+            opcode = G1Protocols.OPC_SYSTEM_STATUS,
+            eventCode = 0x00,
+            wearing = false,
+            caseOpen = false,
+            charging = false,
+            caseBatteryPercent = 10,
+            rawFrame = byteArrayOf(),
+        )
+        handleEvent.invoke(repository, gatedEvent)
+
+        assertEquals(sleepySnapshot, snapshotFlow.value)
+        assertEquals(initialCaseStatus, repository.caseStatus.value)
+
+        val awakeSnapshot = sleepySnapshot.copy(
+            left = sleepySnapshot.left.copy(lastVitalsTimestamp = sleepyNow),
+            right = sleepySnapshot.right.copy(lastVitalsTimestamp = sleepyNow),
+            lastVitalsTimestamp = sleepyNow,
+        )
+        snapshotFlow.value = awakeSnapshot
+        transitionMethod.invoke(repository, sleepySnapshot, awakeSnapshot, sleepyNow)
+
+        assertFalse(gateField.get(repository) as Boolean)
+
+        val wakeEvent = gatedEvent.copy(
+            timestampMs = sleepyNow + 2_000L,
+            caseBatteryPercent = 20,
+        )
+        handleEvent.invoke(repository, wakeEvent)
+
+        val updated = snapshotFlow.value
+        assertEquals(false, updated.left.wearing)
+        assertEquals(false, updated.caseOpen)
+        val caseStatus = repository.caseStatus.value
+        assertEquals(20, caseStatus.batteryPercent)
+        assertEquals(false, caseStatus.lidOpen)
     }
 
     @Test
