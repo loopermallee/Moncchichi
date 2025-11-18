@@ -2094,13 +2094,9 @@ class BleTelemetryRepository(
                     reasonValue = flags.caseOpen
                 }
             }
-            if (changed) {
-                updated = updated.copy(lastUpdatedAt = timestamp)
-            }
             if (existing.lastStateUpdatedAt != timestamp) {
                 updated = updated.copy(lastStateUpdatedAt = timestamp)
             }
-            updated = updated.withVitalsTimestamp(timestamp)
             val next = if (updated == existing) current else current.updateLens(lens, updated)
             next.withFrame(lens, hex)
         }
@@ -2130,6 +2126,7 @@ class BleTelemetryRepository(
         val hex = event.rawFrame.toHex()
         var batteryChanged = false
         var caseChanged = false
+        val hasLensVitals = lensBattery != null
         updateSnapshot(eventTimestamp = timestamp) { current ->
             val existing = current.lens(lens)
             var updated = existing
@@ -2152,7 +2149,7 @@ class BleTelemetryRepository(
             caseBattery?.let { value ->
                 if (existing.caseBatteryPercent != value) {
                     caseChanged = true
-                    updated = updated.copy(caseBatteryPercent = value, lastUpdatedAt = timestamp)
+                    updated = updated.copy(caseBatteryPercent = value)
                 }
             }
             if (lensBattery != null || caseBattery != null) {
@@ -2162,7 +2159,9 @@ class BleTelemetryRepository(
                 }
                 updated = updated.copy(lastPowerOpcode = opcode, lastPowerUpdatedAt = timestamp)
             }
-            updated = updated.withVitalsTimestamp(timestamp)
+            if (hasLensVitals) {
+                updated = updated.withVitalsTimestamp(timestamp)
+            }
             val next = if (updated == existing) current else current.updateLens(lens, updated)
             next.withFrame(lens, hex)
         }
@@ -2351,12 +2350,12 @@ class BleTelemetryRepository(
                     }
                 }
             }
-            telemetry = telemetry.withVitalsTimestamp(timestamp)
             if (!changed && telemetry == existingTelemetry) {
                 current
             } else {
+                val shouldUpdateLastUpdated = stateChanged || (eventCode != 0x0E && event.charging != null)
                 val updatedTelemetry = telemetry.copy(
-                    lastUpdatedAt = timestamp,
+                    lastUpdatedAt = if (shouldUpdateLastUpdated) timestamp else telemetry.lastUpdatedAt,
                     lastStateUpdatedAt = if (stateChanged) timestamp else telemetry.lastStateUpdatedAt,
                 )
                 current.updateLens(lens, updatedTelemetry)
@@ -2532,52 +2531,45 @@ class BleTelemetryRepository(
                 var right = current.right
                 var snapshotChanged = false
                 if (batteryChanged && left.caseBatteryPercent != status.batteryPercent) {
-                    left = left.copy(caseBatteryPercent = status.batteryPercent, lastUpdatedAt = timestamp)
+                    left = left.copy(caseBatteryPercent = status.batteryPercent)
                     snapshotChanged = true
                 }
                 if (batteryChanged && right.caseBatteryPercent != status.batteryPercent) {
-                    right = right.copy(caseBatteryPercent = status.batteryPercent, lastUpdatedAt = timestamp)
+                    right = right.copy(caseBatteryPercent = status.batteryPercent)
                     snapshotChanged = true
                 }
                 if (lidChanged && left.caseOpen != status.lidOpen) {
-                    left = left.copy(caseOpen = status.lidOpen, lastUpdatedAt = timestamp)
+                    left = left.copy(caseOpen = status.lidOpen)
                     snapshotChanged = true
                 }
                 if (lidChanged && right.caseOpen != status.lidOpen) {
-                    right = right.copy(caseOpen = status.lidOpen, lastUpdatedAt = timestamp)
+                    right = right.copy(caseOpen = status.lidOpen)
                     snapshotChanged = true
                 }
                 if (silentChanged && status.silentMode != null && left.silentMode != status.silentMode) {
-                    left = left.copy(silentMode = status.silentMode, lastUpdatedAt = timestamp)
+                    left = left.copy(silentMode = status.silentMode)
                     snapshotChanged = true
                 }
                 if (silentChanged && status.silentMode != null && right.silentMode != status.silentMode) {
-                    right = right.copy(silentMode = status.silentMode, lastUpdatedAt = timestamp)
+                    right = right.copy(silentMode = status.silentMode)
                     snapshotChanged = true
                 }
                 if (voltageChanged && left.caseVoltageMv != status.voltageMv) {
-                    left = left.copy(caseVoltageMv = status.voltageMv, lastUpdatedAt = timestamp)
+                    left = left.copy(caseVoltageMv = status.voltageMv)
                     snapshotChanged = true
                 }
                 if (voltageChanged && right.caseVoltageMv != status.voltageMv) {
-                    right = right.copy(caseVoltageMv = status.voltageMv, lastUpdatedAt = timestamp)
+                    right = right.copy(caseVoltageMv = status.voltageMv)
                     snapshotChanged = true
                 }
                 if (!snapshotChanged) {
                     current
                 } else {
-                    val updatedLeft = left.withVitalsTimestamp(timestamp)
-                    val updatedRight = right.withVitalsTimestamp(timestamp)
                     current.copy(
-                        left = updatedLeft,
-                        right = updatedRight,
+                        left = left,
+                        right = right,
                         caseOpen = status.lidOpen ?: current.caseOpen,
-                        lastVitalsTimestamp = maxOfNonNull(
-                            current.lastVitalsTimestamp,
-                            updatedLeft.lastVitalsTimestamp,
-                            updatedRight.lastVitalsTimestamp,
-                            timestamp,
-                        ),
+                        lastVitalsTimestamp = current.lastVitalsTimestamp,
                     )
                 }
             }
@@ -3147,6 +3139,14 @@ class BleTelemetryRepository(
         lens: Lens,
         telemetry: LensTelemetry,
     ): Snapshot {
+        val hasSharedValues = telemetry.caseOpen != null ||
+            telemetry.inCase != null ||
+            telemetry.foldState != null ||
+            telemetry.charging != null
+        val hasVitals = telemetry.lastVitalsTimestamp != null
+        if (!hasSharedValues && !hasVitals) {
+            return this
+        }
         val other = when (lens) {
             Lens.LEFT -> right
             Lens.RIGHT -> left
