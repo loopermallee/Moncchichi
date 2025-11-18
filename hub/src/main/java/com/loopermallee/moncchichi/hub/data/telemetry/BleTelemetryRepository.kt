@@ -3489,7 +3489,7 @@ class BleTelemetryRepository(
             resolvedInCase &&
             resolvedCaseOpen &&
             !resolvedCharging &&
-            quietFor > G1Protocols.SLEEP_VITALS_TIMEOUT_MS
+            quietFor > G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS
     }
 
     private fun maybeEmitSleepTransitions(

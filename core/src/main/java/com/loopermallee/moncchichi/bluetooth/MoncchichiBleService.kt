@@ -2669,7 +2669,7 @@ private class HeartbeatSupervisor(
             } else {
                 false
             }
-            val derivedVitalsTimeout = lastVitalsAt?.let { now - it > G1Protocols.SLEEP_VITALS_TIMEOUT_MS } ?: false
+            val derivedVitalsTimeout = lastVitalsAt?.let { now - it > G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS } ?: false
             return copy(
                 caseClosedNoCharge = derivedCaseClosedNoCharge,
                 vitalsTimeout = derivedVitalsTimeout,

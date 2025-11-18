@@ -17,6 +17,8 @@ object G1MessageParser {
         val caseOpen: Boolean? = null,
         val inCase: Boolean? = null,
         val foldState: Boolean? = null,
+        val charging: Boolean? = null,
+        val lastVitalsTimestamp: Long? = null,
     ) {
         internal fun hasAnyValues(): Boolean {
             return batteryPercent != null ||
@@ -24,7 +26,9 @@ object G1MessageParser {
                 rssi != null ||
                 caseOpen != null ||
                 inCase != null ||
-                foldState != null
+                foldState != null ||
+                charging != null ||
+                lastVitalsTimestamp != null
         }
     }
 

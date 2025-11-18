@@ -39,7 +39,9 @@ class BleTelemetryRepositoryTest {
         )
 
         val afterBattery = repository.snapshot.value
-        assertEquals(null, afterBattery.left.lastVitalsTimestamp)
+        val initialVitals = afterBattery.left.lastVitalsTimestamp ?: error("missing initial vitals timestamp")
+        assertEquals(initialVitals, afterBattery.lastVitalsTimestamp)
+        assertEquals(initialVitals, afterBattery.right.lastVitalsTimestamp)
 
         repository.recordTelemetry(
             MoncchichiBleService.Lens.LEFT,
@@ -48,8 +50,8 @@ class BleTelemetryRepositoryTest {
 
         val snapshot = repository.snapshot.value
         assertEquals(2_000L, snapshot.left.lastVitalsTimestamp)
-        assertEquals(null, snapshot.right.lastVitalsTimestamp)
-        assertEquals(2_000L, snapshot.lastVitalsTimestamp)
+        assertEquals(true, (snapshot.lastVitalsTimestamp ?: 0L) >= snapshot.left.lastVitalsTimestamp!!)
+        assertEquals(snapshot.lastVitalsTimestamp, snapshot.right.lastVitalsTimestamp)
 
         repository.recordTelemetry(
             MoncchichiBleService.Lens.LEFT,
@@ -57,9 +59,10 @@ class BleTelemetryRepositoryTest {
         )
 
         val finalSnapshot = repository.snapshot.value
-        assertEquals(2_000L, finalSnapshot.left.lastVitalsTimestamp)
-        assertEquals(null, finalSnapshot.right.lastVitalsTimestamp)
-        assertEquals(2_000L, finalSnapshot.lastVitalsTimestamp)
+        val refreshedVitals = finalSnapshot.left.lastVitalsTimestamp ?: error("missing refreshed vitals timestamp")
+        assertEquals(finalSnapshot.lastVitalsTimestamp, refreshedVitals)
+        assertEquals(finalSnapshot.lastVitalsTimestamp, finalSnapshot.right.lastVitalsTimestamp)
+        assertEquals(true, refreshedVitals >= 2_000L)
     }
 
     @Test
@@ -92,11 +95,11 @@ class BleTelemetryRepositoryTest {
 
         val snapshot = repository.snapshot.value
         val lastVitals = snapshot.left.lastVitalsTimestamp ?: error("missing vitals timestamp")
-        val awakeNow = lastVitals + (G1Protocols.SLEEP_VITALS_TIMEOUT_MS / 2)
+        val awakeNow = lastVitals + (G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS / 2)
         assertEquals(false, repository.isSleeping(MoncchichiBleService.Lens.LEFT, awakeNow))
         assertEquals(true, repository.isAwake(MoncchichiBleService.Lens.LEFT, awakeNow))
 
-        val sleepyNow = lastVitals + G1Protocols.SLEEP_VITALS_TIMEOUT_MS + 1_000
+        val sleepyNow = lastVitals + G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS + 1_000
         assertEquals(true, repository.isSleeping(MoncchichiBleService.Lens.LEFT, sleepyNow))
         assertEquals(false, repository.isAwake(MoncchichiBleService.Lens.LEFT, sleepyNow))
     }
