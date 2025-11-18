@@ -905,7 +905,6 @@ class DualLensConnectionOrchestrator(
             is BleTelemetryRepository.SleepEvent.SleepExited -> event.lens
         }
         if (perLens != null) {
-            logger("[SLEEP][${perLens.logLabel()}] Ignoring per-lens SleepEvent; expecting headset scope")
             return
         }
 
@@ -932,11 +931,7 @@ class DualLensConnectionOrchestrator(
         stopHeartbeat()
         val cachedLeftMac = leftSession?.id?.mac ?: lastLeftMac
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
-        val leftReason = resolveSleepReason(snapshot, Lens.LEFT, now)
-        val rightReason = resolveSleepReason(snapshot, Lens.RIGHT, now)
         logger("[SLEEP] Headset → IdleSleep")
-        logger("[SLEEP][${Lens.LEFT.logLabel()}] $leftReason")
-        logger("[SLEEP][${Lens.RIGHT.logLabel()}] $rightReason")
         reconnectJobs.values.forEach { it.cancel() }
         reconnectJobs.clear()
         reconnectBackoffStep.keys.forEach { reconnectBackoffStep[it] = 0 }
@@ -947,11 +942,7 @@ class DualLensConnectionOrchestrator(
 
     private suspend fun exitIdleSleep(snapshot: BleTelemetryRepository.Snapshot) {
         sleeping = false
-        val leftReason = resolveWakeReason(snapshot, Lens.LEFT)
-        val rightReason = resolveWakeReason(snapshot, Lens.RIGHT)
         logger("[WAKE] Headset → Awake")
-        logger("[WAKE][${Lens.LEFT.logLabel()}] $leftReason")
-        logger("[WAKE][${Lens.RIGHT.logLabel()}] $rightReason")
         val leftConnected = latestLeft?.connected == true
         val rightConnected = latestRight?.connected == true
         val leftReady = latestLeft?.isReady == true || leftPrimed
@@ -1000,58 +991,6 @@ class DualLensConnectionOrchestrator(
 
     private fun shouldAbortConnectionAttempt(): Boolean {
         return sleeping || !sessionActive
-    }
-
-    private fun resolveSleepReason(
-        snapshot: BleTelemetryRepository.Snapshot,
-        side: Lens,
-        now: Long,
-    ): String {
-        val lensSnapshot = when (side) {
-            Lens.LEFT -> snapshot.left
-            Lens.RIGHT -> snapshot.right
-        }
-        val caseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
-        if (caseOpen == false) {
-            return "CaseClosed"
-        }
-        val inCase = lensSnapshot.inCase ?: snapshot.inCase
-        if (inCase == true) {
-            return "InCase"
-        }
-        val foldState = lensSnapshot.foldState ?: snapshot.foldState
-        if (foldState == true) {
-            return "Folded"
-        }
-        val lastVitals = lensSnapshot.lastVitalsTimestamp ?: snapshot.lastVitalsTimestamp
-        val vitalsExpired = lastVitals?.let { now - it > SLEEP_VITALS_TIMEOUT_MS } ?: false
-        if (vitalsExpired) {
-            return "VitalsTimeout"
-        }
-        return "Unknown"
-    }
-
-    private fun resolveWakeReason(
-        snapshot: BleTelemetryRepository.Snapshot,
-        side: Lens,
-    ): String {
-        val lensSnapshot = when (side) {
-            Lens.LEFT -> snapshot.left
-            Lens.RIGHT -> snapshot.right
-        }
-        val caseOpen = lensSnapshot.caseOpen ?: snapshot.caseOpen
-        if (caseOpen == true) {
-            return "CaseOpen"
-        }
-        val inCase = lensSnapshot.inCase ?: snapshot.inCase
-        if (inCase == false) {
-            return "CaseOpen"
-        }
-        val foldState = lensSnapshot.foldState ?: snapshot.foldState
-        if (foldState == false) {
-            return "Unfolded"
-        }
-        return "Signal"
     }
 
     private fun Lens.logLabel(): String = when (this) {
