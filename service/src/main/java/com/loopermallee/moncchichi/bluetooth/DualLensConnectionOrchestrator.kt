@@ -972,36 +972,11 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun exitIdleSleep() {
-        sleeping = false
-        awaitingWakeTelemetry = false
-        wakeQuietActive = false
-        wakeQuietUntilElapsed = 0L
+        awaitingWakeTelemetry = true
+        wakeQuietActive = true
+        wakeQuietUntilElapsed = SystemClock.elapsedRealtime() + CE_IDLE_SLEEP_QUIET_WINDOW_MS
         resetWakeTelemetryTracking()
-        logger("[WAKE] Headset → Awake")
-        val leftConnected = latestLeft?.connected == true
-        val rightConnected = latestRight?.connected == true
-        val leftReady = latestLeft?.isReady == true || leftPrimed
-        val rightReady = latestRight?.isReady == true || rightPrimed
-        when {
-            leftConnected && leftReady && rightConnected && rightReady -> {
-                _connectionState.value = State.Stable
-            }
-            leftConnected && !rightConnected -> {
-                _connectionState.value = State.RecoveringRight
-                scheduleReconnect(Lens.RIGHT)
-            }
-            rightConnected && !leftConnected -> {
-                _connectionState.value = State.RecoveringLeft
-                scheduleReconnect(Lens.LEFT)
-            }
-            else -> {
-                _connectionState.value = State.RecoveringLeft
-                scheduleReconnect(Lens.LEFT)
-                scheduleReconnect(Lens.RIGHT)
-            }
-        }
-        startHeartbeat()
-        requestWakeTelemetryRefresh()
+        logger("[WAKE] Headset → Awake (waiting for telemetry)")
     }
 
     private suspend fun thawFromTelemetry(side: Lens, event: ClientEvent.Telemetry) {
@@ -1057,11 +1032,11 @@ class DualLensConnectionOrchestrator(
     }
 
     private fun isIdleSleepState(): Boolean {
-        return sleeping || _connectionState.value is State.IdleSleep
+        return sleeping || awaitingWakeTelemetry || wakeQuietActive || _connectionState.value is State.IdleSleep
     }
 
     private fun isHeartbeatSuppressed(): Boolean {
-        return isIdleSleepState() || awaitingWakeTelemetry || wakeQuietActive
+        return isIdleSleepState()
     }
 
     private fun isQualifyingWakeTelemetry(event: ClientEvent.Telemetry): Boolean {
