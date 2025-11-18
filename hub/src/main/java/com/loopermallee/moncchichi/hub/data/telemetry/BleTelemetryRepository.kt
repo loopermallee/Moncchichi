@@ -3153,6 +3153,28 @@ class BleTelemetryRepository(
         Lens.RIGHT -> right
     }
 
+    private fun Snapshot.clearAckTelemetry(): Snapshot {
+        val clearedLeft = left.clearAckMetrics()
+        val clearedRight = right.clearAckMetrics()
+        return if (clearedLeft == left && clearedRight == right) {
+            this
+        } else {
+            copy(left = clearedLeft, right = clearedRight)
+        }
+    }
+
+    private fun LensTelemetry.clearAckMetrics(): LensTelemetry {
+        return copy(
+            lastAckAt = null,
+            lastAckOpcode = null,
+            lastAckLatencyMs = null,
+            ackSuccessCount = 0,
+            ackFailureCount = 0,
+            ackWarmupCount = 0,
+            ackDropCount = 0,
+        )
+    }
+
     private fun formatOpcode(value: Int?): String = value?.let { String.format("0x%02X", it) } ?: "n/a"
 
     private fun Snapshot.updateLens(
@@ -3521,9 +3543,38 @@ class BleTelemetryRepository(
         val updatedHeadset = isHeadsetSleeping(updated, nowMillis)
         idleSleepGateActive = updatedHeadset
         if (previousHeadset != updatedHeadset) {
+            if (updatedHeadset) {
+                resetAckTelemetryForIdleSleep(nowMillis)
+            }
             lastHeadsetSleeping = updatedHeadset
             val event = if (updatedHeadset) SleepEvent.SleepEntered(null) else SleepEvent.SleepExited(null)
             _sleepEvents.tryEmit(event)
+        }
+    }
+
+    private fun resetAckTelemetryForIdleSleep(nowMillis: Long) {
+        var changed = false
+        val clearedSnapshot = _snapshot.updateAndGet { current ->
+            val cleared = current.clearAckTelemetry()
+            if (cleared != current) {
+                changed = true
+            }
+            cleared
+        }
+        if (changed) {
+            persistSnapshot(clearedSnapshot, nowMillis)
+        }
+
+        Lens.values().forEach { lens ->
+            lensTelemetrySnapshots.getValue(lens).update { snapshot ->
+                snapshot.copy(
+                    lastAckStatus = null,
+                    lastAckTimestamp = null,
+                    heartbeatLatencyMs = null,
+                    heartbeatLatencyAvgMs = null,
+                    heartbeatMissCount = null,
+                )
+            }
         }
     }
 

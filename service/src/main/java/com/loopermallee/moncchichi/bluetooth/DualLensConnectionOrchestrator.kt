@@ -943,6 +943,9 @@ class DualLensConnectionOrchestrator(
         wakeJob = null
         stopHeartbeat()
         heartbeatStates.values.forEach { it.reset() }
+        Lens.values().forEach { lens ->
+            telemetryRepository.updateHeartbeat(lens, 0, 0, 0)
+        }
         mirrorLock.withLock { pendingMirrors.clear() }
         leftRefreshLock.withLock { pendingLeftRefresh.clear() }
         leftRefreshRequested = false
