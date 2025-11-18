@@ -165,6 +165,8 @@ class DualLensConnectionOrchestrator(
 
     @Volatile
     private var sleeping: Boolean = false
+    private var awaitingWakeTelemetry: Boolean = false
+    private var wakeRefreshIssued: Boolean = false
 
     suspend fun connectHeadset(pairKey: PairKey, leftMac: String, rightMac: String) = coroutineScope {
         require(pairKey == this@DualLensConnectionOrchestrator.pairKey) {
@@ -333,6 +335,8 @@ class DualLensConnectionOrchestrator(
         leftRefreshLock.withLock { pendingLeftRefresh.clear() }
         rightPrimed = false
         leftPrimed = false
+        awaitingWakeTelemetry = false
+        wakeRefreshIssued = false
     }
 
     fun close() {
@@ -489,6 +493,7 @@ class DualLensConnectionOrchestrator(
                         put("timestamp", System.currentTimeMillis())
                     },
                 )
+                thawFromTelemetry()
                 markHeartbeatAck(side)
                 heartbeatStates[side]?.let { heartbeat ->
                     telemetryRepository.updateHeartbeat(
@@ -930,6 +935,8 @@ class DualLensConnectionOrchestrator(
         mirrorLock.withLock { pendingMirrors.clear() }
         leftRefreshLock.withLock { pendingLeftRefresh.clear() }
         leftRefreshRequested = false
+        awaitingWakeTelemetry = false
+        wakeRefreshIssued = false
         val cachedLeftMac = leftSession?.id?.mac ?: lastLeftMac
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
         logger("[SLEEP] Headset → IdleSleep")
@@ -942,7 +949,15 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun exitIdleSleep(snapshot: BleTelemetryRepository.Snapshot) {
+        awaitingWakeTelemetry = true
+        logger("[WAKE] Headset → Awake (waiting for telemetry)")
+    }
+
+    private suspend fun thawFromTelemetry() {
+        if (!sleeping || !awaitingWakeTelemetry) return
+
         sleeping = false
+        awaitingWakeTelemetry = false
         logger("[WAKE] Headset → Awake")
         val leftConnected = latestLeft?.connected == true
         val rightConnected = latestRight?.connected == true
@@ -951,7 +966,6 @@ class DualLensConnectionOrchestrator(
         when {
             leftConnected && leftReady && rightConnected && rightReady -> {
                 _connectionState.value = State.Stable
-                requestTelemetryRefresh(Lens.RIGHT)
             }
             leftConnected && !rightConnected -> {
                 _connectionState.value = State.RecoveringRight
@@ -964,18 +978,11 @@ class DualLensConnectionOrchestrator(
             else -> {
                 _connectionState.value = State.RecoveringLeft
                 scheduleReconnect(Lens.LEFT)
-                wakeJob = scope.launch {
-                    while (sessionActive && !sleeping) {
-                        if (latestLeft?.connected == true && (latestLeft?.isReady == true || leftPrimed)) {
-                            scheduleReconnect(Lens.RIGHT)
-                            break
-                        }
-                        delay(EVEN_SEQUENCE_DELAY_MS)
-                    }
-                }
+                scheduleReconnect(Lens.RIGHT)
             }
         }
         startHeartbeat()
+        requestWakeTelemetryRefresh()
     }
 
     private fun isIdleSleepState(): Boolean {
@@ -1147,6 +1154,21 @@ class DualLensConnectionOrchestrator(
             }
         }
         telemetryRepository.persistSnapshot()
+    }
+
+    private suspend fun requestWakeTelemetryRefresh() {
+        if (wakeRefreshIssued) return
+        if (!sessionActive) return
+        if (isIdleSleepState()) return
+        wakeRefreshIssued = true
+        val commands = listOf(
+            byteArrayOf(CMD_CASE_GET.toByte()),
+            byteArrayOf(CMD_BATT_GET.toByte(), BATT_SUB_DETAIL.toByte()),
+            byteArrayOf(CMD_WEAR_DETECT.toByte()),
+        )
+        commands.forEach { payload ->
+            sendTo(Lens.RIGHT, payload)
+        }
     }
 
     private fun shouldRefreshGatt(side: Lens, now: Long): Boolean {
