@@ -850,11 +850,11 @@ class G1BleClient(
                                 }
                             }
                             when {
-                                ack.keepAlivePrompt -> {
+                                ack.keepAlivePrompt && !isSleepModeActive() -> {
                                     keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Token)
                                     deliverAck = false
                                 }
-                                ack.opcode == KEEP_ALIVE_OPCODE -> {
+                                ack.opcode == KEEP_ALIVE_OPCODE && !isSleepModeActive() -> {
                                     val previous = decrementKeepAliveInFlight()
                                     if (previous <= 0) {
                                         keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
@@ -865,7 +865,7 @@ class G1BleClient(
                         }
                         is AckOutcome.Busy -> {
                             onAckEvent(now, AckState.Delayed, evaluateDelay = false)
-                            if (ack.opcode == KEEP_ALIVE_OPCODE) {
+                            if (ack.opcode == KEEP_ALIVE_OPCODE && !isSleepModeActive()) {
                                 val previous = decrementKeepAliveInFlight()
                                 if (previous <= 0) {
                                     keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)
@@ -875,7 +875,7 @@ class G1BleClient(
                         }
                         is AckOutcome.Failure -> {
                             onAckEvent(now, AckState.Delayed, evaluateDelay = false)
-                            if (ack.opcode == KEEP_ALIVE_OPCODE) {
+                            if (ack.opcode == KEEP_ALIVE_OPCODE && !isSleepModeActive()) {
                                 val previous = decrementKeepAliveInFlight()
                                 if (previous <= 0) {
                                     keepAlivePrompt = KeepAlivePrompt(now, KeepAlivePrompt.Source.Opcode)

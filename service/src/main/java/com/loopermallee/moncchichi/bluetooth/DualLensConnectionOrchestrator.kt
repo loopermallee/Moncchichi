@@ -220,7 +220,7 @@ class DualLensConnectionOrchestrator(
             _connectionState.value = State.LeftOnlineUnprimed
             delay(EVEN_SEQUENCE_DELAY_MS)
             val primed = leftClient.probeReady(Lens.LEFT)
-            if (primed) {
+            if (primed && !isHeartbeatSuppressed()) {
                 leftClient.startKeepAlive()
             }
             primed
@@ -255,7 +255,7 @@ class DualLensConnectionOrchestrator(
             _connectionState.value = State.RightOnlineUnprimed
             delay(EVEN_SEQUENCE_DELAY_MS)
             val primed = rightClient.probeReady(Lens.RIGHT)
-            if (primed) {
+            if (primed && !isHeartbeatSuppressed()) {
                 rightClient.startKeepAlive()
                 _connectionState.value = State.ReadyRight
             }
@@ -504,7 +504,9 @@ class DualLensConnectionOrchestrator(
                     )
                 }
             }
-            is ClientEvent.KeepAliveStarted -> heartbeatStates[side]?.touchPing()
+            is ClientEvent.KeepAliveStarted -> if (!isHeartbeatSuppressed()) {
+                heartbeatStates[side]?.touchPing()
+            }
             else -> Unit
         }
         _clientEvents.emit(LensClientEvent(side, event))
@@ -843,7 +845,9 @@ class DualLensConnectionOrchestrator(
                     delay(EVEN_SEQUENCE_DELAY_MS)
                     val ready = session.client.probeReady(side)
                     if (ready) {
-                        session.client.startKeepAlive()
+                        if (!isHeartbeatSuppressed()) {
+                            session.client.startKeepAlive()
+                        }
                         heartbeatStates[side]?.reset()
                         telemetryRepository.recordTelemetry(side, mapOf("reconnected" to true))
                     }
@@ -989,6 +993,10 @@ class DualLensConnectionOrchestrator(
         return sleeping || _connectionState.value is State.IdleSleep
     }
 
+    private fun isHeartbeatSuppressed(): Boolean {
+        return isIdleSleepState() || awaitingWakeTelemetry
+    }
+
     private fun State.isActiveState(): Boolean {
         return this !is State.Idle && this !is State.IdleSleep
     }
@@ -1033,7 +1041,7 @@ class DualLensConnectionOrchestrator(
 
     private fun startHeartbeat() {
         stopHeartbeat()
-        if (isIdleSleepState()) {
+        if (isHeartbeatSuppressed()) {
             return
         }
         heartbeatJob = scope.launch {
@@ -1120,7 +1128,9 @@ class DualLensConnectionOrchestrator(
                 session.client.ensureBonded()
                 val ready = session.client.probeReady(side)
                 if (ready) {
-                    session.client.startKeepAlive()
+                    if (!isHeartbeatSuppressed()) {
+                        session.client.startKeepAlive()
+                    }
                     heartbeatStates[side]?.reset()
                     requestTelemetryRefresh(side)
                     if (latestLeft?.isReady == true && latestRight?.isReady == true) {
