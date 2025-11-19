@@ -450,10 +450,6 @@ class DualLensConnectionOrchestrator(
             is ClientEvent.ConnectionStateChanged -> {
                 if (!event.connected) {
                     // CE: link drops do not invalidate the handshake; resets are handled elsewhere.
-                    when (side) {
-                        Lens.RIGHT -> markRightPrimed(false)
-                        Lens.LEFT -> markLeftPrimed(false)
-                    }
                     if (!idleSleep) {
                         scheduleReconnect(side, reason = "link_state_changed")
                         val target = when (side) {
@@ -509,10 +505,7 @@ class DualLensConnectionOrchestrator(
                             _connectionState.value = nextState
                         }
                     }
-                    when (side) {
-                        Lens.RIGHT -> markRightPrimed(false)
-                        Lens.LEFT -> markLeftPrimed(false)
-                    }
+                    // CE: restoring a connection must not clear priming; the handshake remains valid.
                     heartbeatStates[side]?.reset()
                 }
             }
