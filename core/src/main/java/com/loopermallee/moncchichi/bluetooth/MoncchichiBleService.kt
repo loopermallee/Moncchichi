@@ -1403,10 +1403,7 @@ class MoncchichiBleService(
         val index = lens.ordinal
         val sequence = hostHeartbeatSequence[index] and 0xFF
         hostHeartbeatSequence[index] = (sequence + 1) and 0xFF
-        val payload = byteArrayOf(
-            G1Protocols.CMD_PING.toByte(),
-            sequence.toByte(),
-        )
+        val payload = byteArrayOf(G1Protocols.CMD_SILENT_MODE_GET.toByte())
         return HeartbeatPacket(sequence, payload)
     }
 
@@ -1446,8 +1443,8 @@ class MoncchichiBleService(
         val queued = record.client.enqueueHeartbeat(packet.sequence, packet.payload)
         val timestamp = System.currentTimeMillis()
         if (queued) {
-            emitConsole("PING", lens, "sent", timestamp)
-            log("[BLE][PING][${lens.shortLabel}] sent seq=${packet.sequence}")
+            emitConsole("PING", lens, "sent 0x2B (silent)", timestamp)
+            log("[BLE][PING][${lens.shortLabel}] sent silent seq=${packet.sequence}")
         }
         if (!queued) {
             return HeartbeatResult(
@@ -1980,10 +1977,10 @@ private class HeartbeatSupervisor(
         lastAckSignature[lens] = AckSignature(event.opcode, event.status, event.timestampMs)
         val opcodeLabel = event.opcode.toOpcodeLabel()
         if (event.success) {
-            markAckSuccess(lens, event.timestampMs, event.type)
+            markAckSuccess(lens, event.opcode, event.timestampMs, event.type)
             emitConsole("ACK", lens, "opcode=${opcodeLabel} status=${event.status.toHex()}", event.timestampMs)
         } else if (event.busy) {
-            if (event.opcode == CMD_PING) {
+            if (isHeartbeatOpcode(event.opcode)) {
                 notifyHeartbeatSignal(
                     lens,
                     event.timestampMs,
@@ -2410,6 +2407,11 @@ private class HeartbeatSupervisor(
         }
         startWakeQuietGate()
         reconnectCoordinator.unfreeze()
+        Lens.values().forEach { lens ->
+            val connected = currentLensStatus(lens).isConnected
+            heartbeatSupervisor.updateLensConnection(lens, connected)
+            heartbeatSupervisor.updateLensAwake(lens, true)
+        }
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
         }
@@ -2489,7 +2491,7 @@ private class HeartbeatSupervisor(
         }
     }
 
-    private fun markAckSuccess(lens: Lens, timestamp: Long, type: AckType) {
+    private fun markAckSuccess(lens: Lens, opcode: Int?, timestamp: Long, type: AckType) {
         completePendingCommand(lens)
         val previous = lastAckSuccessMs[lens]
         lastAckSuccessMs[lens] = timestamp
@@ -2501,14 +2503,16 @@ private class HeartbeatSupervisor(
             metrics.copy(lastAckDeltaMs = delta)
         }
         resetReconnectTimer(lens)
-        notifyHeartbeatSignal(
-            lens,
-            timestamp,
-            SystemClock.elapsedRealtime(),
-            type,
-            success = true,
-            busy = false,
-        )
+        if (isHeartbeatOpcode(opcode)) {
+            notifyHeartbeatSignal(
+                lens,
+                timestamp,
+                SystemClock.elapsedRealtime(),
+                type,
+                success = true,
+                busy = false,
+            )
+        }
     }
 
     private fun isDuplicateAck(lens: Lens, event: AckEvent): Boolean {
@@ -2522,10 +2526,15 @@ private class HeartbeatSupervisor(
 
     private fun shouldSuppressAckFailure(lens: Lens, event: AckEvent): Boolean {
         if (idleSleepActive) return true
-        if (event.opcode != CMD_PING) return false
+        if (!isHeartbeatOpcode(event.opcode)) return false
         val lastSuccess = lastAckSuccessMs[lens] ?: return false
         val delta = event.timestampMs - lastSuccess
         return delta in 0..PING_ACK_SUPPRESS_WINDOW_MS
+    }
+
+    private fun isHeartbeatOpcode(opcode: Int?): Boolean {
+        val normalized = opcode?.and(0xFF) ?: return false
+        return normalized == CMD_PING || normalized == G1Protocols.CMD_SILENT_MODE_GET
     }
 
     private fun registerPendingCommand(lens: Lens, timestamp: Long) {
@@ -2975,9 +2984,9 @@ private class HeartbeatSupervisor(
         private const val CASE_BATTERY_SUBCOMMAND: Byte = 0x01
         private const val BOND_RECOVERY_GUARD_MS = 3_000L
         private const val UNBOND_REASON_REMOVED = 5
-        private const val HEARTBEAT_INTERVAL_MS = 5_000L
+        private const val HEARTBEAT_INTERVAL_MS = G1Protocols.HOST_HEARTBEAT_INTERVAL_MS
         private const val HEARTBEAT_JITTER_MS = 0L
-        private const val HEARTBEAT_ACK_WINDOW_MS = 2_000L
+        private const val HEARTBEAT_ACK_WINDOW_MS = G1Protocols.ACK_TIMEOUT_MS
         private const val HEARTBEAT_RECONNECT_THRESHOLD = 3
         private const val HEARTBEAT_REBOND_THRESHOLD = 3
         private const val HEARTBEAT_IDLE_POLL_MS = 1_000L

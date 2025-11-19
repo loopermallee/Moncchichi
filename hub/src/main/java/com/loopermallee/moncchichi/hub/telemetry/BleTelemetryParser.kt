@@ -4,6 +4,7 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_DISPLAY
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_KEEPALIVE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_SERIAL_FRAME
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_SERIAL_LENS
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_SILENT_MODE_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_SYSTEM
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_COMPLETE
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_ACK_CONTINUE
@@ -221,6 +222,7 @@ class BleTelemetryParser(
         }
 
         val events = when {
+            opcode == CMD_SILENT_MODE_GET -> parseSilentModeState(lens, frame, timestampMs)
             opcode == OPC_DEVICE_STATUS -> parseDeviceStatus(lens, frame, timestampMs)
             opcode == OPC_BATTERY -> parseBattery(lens, frame, timestampMs)
             opcode in OPC_ENV_RANGE_START..OPC_ENV_RANGE_END -> parseEnvironmentSnapshot(lens, frame, timestampMs)
@@ -272,6 +274,69 @@ class BleTelemetryParser(
         }
         return events
     }
+
+    private fun parseSilentModeState(
+        lens: MoncchichiBleService.Lens,
+        frame: G1ReplyParser.NotifyFrame,
+        timestampMs: Long,
+    ): List<TelemetryEvent> {
+        val silentValue = frame.raw.getOrNull(2)?.toUnsignedInt()
+        val stateCode = frame.raw.getOrNull(3)?.toUnsignedInt()
+        val silentMode = when (silentValue) {
+            0x0C -> true
+            0x0A -> false
+            else -> null
+        }
+        val stateSnapshot = when (stateCode) {
+            0x06 -> WearStateSnapshot(wearing = true, inCradle = false, caseOpen = false, charging = false)
+            0x07 -> WearStateSnapshot(wearing = false, inCradle = false, caseOpen = false, charging = false)
+            0x08 -> WearStateSnapshot(wearing = false, inCradle = true, caseOpen = true, charging = false)
+            0x0A -> WearStateSnapshot(wearing = false, inCradle = true, caseOpen = false, charging = false)
+            0x0B -> WearStateSnapshot(wearing = false, inCradle = true, caseOpen = false, charging = true)
+            else -> null
+        }
+        if (silentMode == null && stateSnapshot == null) {
+            return emptyList()
+        }
+        val events = mutableListOf<TelemetryEvent>()
+        stateSnapshot?.let { snapshot ->
+            val flags = G1ReplyParser.StateFlags(
+                wearing = snapshot.wearing,
+                inCradle = snapshot.inCradle,
+                silentMode = silentMode ?: false,
+                caseOpen = snapshot.caseOpen,
+                charging = snapshot.charging,
+            )
+            events += TelemetryEvent.DeviceStatusEvent(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                flags = flags,
+                rawFrame = frame.raw.copyOf(),
+            )
+        }
+        if (silentMode != null || stateSnapshot?.caseOpen != null || stateSnapshot?.charging != null) {
+            events += TelemetryEvent.CaseUpdate(
+                lens = lens,
+                timestampMs = timestampMs,
+                opcode = frame.opcode,
+                caseBatteryPercent = null,
+                charging = stateSnapshot?.charging,
+                lidOpen = stateSnapshot?.caseOpen,
+                silentMode = silentMode,
+                caseVoltageMv = null,
+                rawFrame = frame.raw.copyOf(),
+            )
+        }
+        return events
+    }
+
+    private data class WearStateSnapshot(
+        val wearing: Boolean,
+        val inCradle: Boolean,
+        val caseOpen: Boolean,
+        val charging: Boolean,
+    )
 
     private fun parseBattery(
         lens: MoncchichiBleService.Lens,

@@ -225,6 +225,7 @@ object G1ReplyParser {
             0x25 -> Parsed.Mode("Idle")
             0x15, 0x20, 0x16 -> Parsed.Mode("Image")
             0xF5 -> parseF5(frame)
+            G1Protocols.CMD_SILENT_MODE_GET -> parseSilentMode(frame)
             else -> Parsed.Unknown(frame.opcode, frame.raw)
         }
     }
@@ -345,6 +346,48 @@ object G1ReplyParser {
         }
         if (percent == null && voltage == null && charging == null) return null
         return CaseBatteryTelemetry(percent, voltage, charging)
+    }
+
+    private fun parseSilentMode(frame: NotifyFrame): Parsed? {
+        val silentValue = frame.raw.getOrNull(2)?.toUnsignedInt()
+        val stateCode = frame.raw.getOrNull(3)?.toUnsignedInt()
+        val silentMode = when (silentValue) {
+            0x0C -> true
+            0x0A -> false
+            else -> null
+        }
+        val wearing = when (stateCode) {
+            0x06 -> true
+            0x07, 0x08, 0x0A, 0x0B -> false
+            else -> null
+        }
+        val inCradle = when (stateCode) {
+            0x08, 0x0A, 0x0B -> true
+            0x06, 0x07 -> false
+            else -> null
+        }
+        val caseOpen = when (stateCode) {
+            0x08 -> true
+            0x0A, 0x0B -> false
+            else -> null
+        }
+        val charging = when (stateCode) {
+            0x0B -> true
+            else -> null
+        }
+        if (silentMode == null && wearing == null && inCradle == null && caseOpen == null && charging == null) {
+            return null
+        }
+        val vitals = updateVitals(
+            DeviceVitals(
+                wearing = wearing,
+                inCradle = inCradle,
+                charging = charging,
+                silentMode = silentMode,
+                caseOpen = caseOpen,
+            ),
+        )
+        return Parsed.Vitals(vitals)
     }
 
     fun parseDisplaySettings(frame: NotifyFrame): DisplaySettings? {
