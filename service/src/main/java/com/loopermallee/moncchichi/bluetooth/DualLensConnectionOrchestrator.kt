@@ -6,6 +6,8 @@ import com.loopermallee.moncchichi.bluetooth.G1Protocols.CE_IDLE_SLEEP_QUIET_WIN
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_BATT_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_CASE_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_NOTIFICATION_AUTO_DISPLAY
+import com.loopermallee.moncchichi.bluetooth.G1Protocols.OPC_UPTIME
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.SLEEP_VITALS_TIMEOUT_MS
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.bluetooth.LinkStatus
@@ -174,6 +176,7 @@ class DualLensConnectionOrchestrator(
         Lens.RIGHT to false,
     )
     private var wakeQuietActive: Boolean = false
+    private var readyConfigIssued: Boolean = false
 
     suspend fun connectHeadset(pairKey: PairKey, leftMac: String, rightMac: String) = coroutineScope {
         require(pairKey == this@DualLensConnectionOrchestrator.pairKey) {
@@ -293,6 +296,7 @@ class DualLensConnectionOrchestrator(
         if (leftResult && rightResult) {
             _connectionState.value = State.ReadyBoth
             _connectionState.value = State.Stable
+            attemptReadyConfiguration()
         }
     }
 
@@ -344,6 +348,7 @@ class DualLensConnectionOrchestrator(
         leftPrimed = false
         awaitingWakeTelemetry = false
         wakeRefreshIssued = false
+        readyConfigIssued = false
         wakeQuietActive = false
         wakeQuietUntilElapsed = 0L
         resetWakeTelemetryTracking()
@@ -659,6 +664,7 @@ class DualLensConnectionOrchestrator(
         }
         if (primed) {
             flushPendingMirrors()
+            attemptReadyConfiguration()
         } else {
             leftRefreshRequested = false
         }
@@ -680,6 +686,7 @@ class DualLensConnectionOrchestrator(
             if (!rightPrimed && !isIdleSleepState()) {
                 scheduleReconnect(Lens.RIGHT)
             }
+            attemptReadyConfiguration()
         } else {
             leftRefreshRequested = false
         }
@@ -959,6 +966,7 @@ class DualLensConnectionOrchestrator(
         wakeRefreshIssued = false
         wakeQuietActive = false
         wakeQuietUntilElapsed = 0L
+        readyConfigIssued = false
         resetWakeTelemetryTracking()
         val cachedLeftMac = leftSession?.id?.mac ?: lastLeftMac
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
@@ -975,6 +983,7 @@ class DualLensConnectionOrchestrator(
         awaitingWakeTelemetry = true
         wakeQuietActive = true
         wakeQuietUntilElapsed = SystemClock.elapsedRealtime() + CE_IDLE_SLEEP_QUIET_WINDOW_MS
+        readyConfigIssued = false
         resetWakeTelemetryTracking()
         logger("[WAKE] Headset → Awake (waiting for telemetry)")
     }
@@ -1028,6 +1037,7 @@ class DualLensConnectionOrchestrator(
             }
         }
         startHeartbeat()
+        attemptReadyConfiguration()
         requestWakeTelemetryRefresh()
     }
 
@@ -1215,6 +1225,7 @@ class DualLensConnectionOrchestrator(
                 Lens.LEFT -> sendTo(Lens.LEFT, payload)
             }
         }
+        attemptReadyConfiguration()
         telemetryRepository.persistSnapshot()
     }
 
@@ -1230,6 +1241,38 @@ class DualLensConnectionOrchestrator(
         )
         commands.forEach { payload ->
             sendTo(Lens.RIGHT, payload)
+        }
+        attemptReadyConfiguration()
+    }
+
+    private fun attemptReadyConfiguration() {
+        if (readyConfigIssued) return
+        if (!sessionActive || isIdleSleepState()) return
+        val leftReady = leftPrimed && leftSession != null
+        val rightReady = rightPrimed && rightSession != null
+        if (!leftReady || !rightReady) return
+        readyConfigIssued = true
+        scope.launch {
+            val autoDisplayPayload = byteArrayOf(
+                CMD_NOTIFICATION_AUTO_DISPLAY.toByte(),
+                0x01,
+                0x05,
+            )
+            val batteryPayload = byteArrayOf(CMD_BATT_GET.toByte(), BATT_SUB_DETAIL.toByte())
+            val uptimePayload = byteArrayOf(OPC_UPTIME.toByte())
+
+            val leftAuto = sendTo(Lens.LEFT, autoDisplayPayload)
+            if (leftAuto) {
+                telemetryRepository.recordTelemetry(Lens.LEFT, mapOf("autoDisplayReady" to true))
+            }
+            val rightAuto = sendTo(Lens.RIGHT, autoDisplayPayload)
+            if (rightAuto) {
+                telemetryRepository.recordTelemetry(Lens.RIGHT, mapOf("autoDisplayReady" to true))
+            }
+
+            sendTo(Lens.LEFT, batteryPayload)
+            sendTo(Lens.RIGHT, batteryPayload)
+            sendTo(Lens.RIGHT, uptimePayload)
         }
     }
 
