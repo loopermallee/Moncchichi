@@ -34,6 +34,8 @@ import kotlin.collections.ArrayDeque
 import kotlin.math.min
 
 private const val EVEN_SEQUENCE_DELAY_MS = 200L
+private const val BOND_RETRY_WINDOW_MS = 30_000L
+private const val BOND_RETRY_MAX_ATTEMPTS = 3
 
 /**
  * Coordinates dual-lens connections while honouring Even parity requirements.
@@ -156,6 +158,10 @@ class DualLensConnectionOrchestrator(
     private val bondLossCounters: MutableMap<Lens, Int> = mutableMapOf(
         Lens.LEFT to 0,
         Lens.RIGHT to 0,
+    )
+    private val bondRetryHistory: MutableMap<Lens, ArrayDeque<Long>> = mutableMapOf(
+        Lens.LEFT to ArrayDeque(),
+        Lens.RIGHT to ArrayDeque(),
     )
 
     @Volatile
@@ -1167,14 +1173,27 @@ class DualLensConnectionOrchestrator(
     private fun handleBondEvent(side: Lens, event: ClientEvent.BondStateChanged) {
         if (event.bonded) {
             bondLossCounters[side] = 0
+            bondRetryHistory[side]?.clear()
+            logger("[BOND][${side.logLabel()}] bond restored; resetting retry counters")
             return
         }
-        val failures = (bondLossCounters[side] ?: 0) + 1
-        bondLossCounters[side] = failures
-        if (failures < 3) {
+        val now = SystemClock.elapsedRealtime()
+        val history = bondRetryHistory[side] ?: ArrayDeque()
+        history.addLast(now)
+        while (history.isNotEmpty() && now - history.first() > BOND_RETRY_WINDOW_MS) {
+            history.removeFirst()
+        }
+        bondRetryHistory[side] = history
+        val attemptsInWindow = history.size
+        bondLossCounters[side] = attemptsInWindow
+        logger(
+            "[BOND][${side.logLabel()}] bond loss detected attempt=${attemptsInWindow}/" +
+                "$BOND_RETRY_MAX_ATTEMPTS window=${BOND_RETRY_WINDOW_MS}ms",
+        )
+        if (attemptsInWindow > BOND_RETRY_MAX_ATTEMPTS) {
+            logger("[BOND][${side.logLabel()}] retry suppressed; max attempts reached in window")
             return
         }
-        bondLossCounters[side] = 0
         scope.launch {
             if (isIdleSleepState() || shouldAbortConnectionAttempt()) {
                 return@launch
@@ -1187,6 +1206,10 @@ class DualLensConnectionOrchestrator(
                 Lens.RIGHT -> rightSession
             } ?: return@launch
             try {
+                logger(
+                    "[BOND][${side.logLabel()}] rebond attempt $attemptsInWindow/" +
+                        "$BOND_RETRY_MAX_ATTEMPTS",
+                )
                 session.client.ensureBonded()
                 val ready = session.client.probeReady(side)
                 if (ready) {

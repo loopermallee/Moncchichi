@@ -49,6 +49,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.collections.ArrayDeque
 import kotlin.jvm.Volatile
 import kotlin.text.Charsets
 
@@ -353,6 +354,7 @@ class G1BleClient(
     private val lensLabel: String = "?",
     private val isSleeping: () -> Boolean = { false },
     private val idleSleepFlow: StateFlow<Boolean> = MutableStateFlow(false),
+    private val wakeQuietActiveFlow: StateFlow<Boolean> = MutableStateFlow(false),
     private val uartClientFactory: (
         Context,
         BluetoothDevice,
@@ -579,6 +581,7 @@ class G1BleClient(
     private var helloWatchdogJob: Job? = null
     private var gattReconnectJob: Job? = null
     private var gattReconnectAttempts = 0
+    private val authFailureTimestamps: ArrayDeque<Long> = ArrayDeque()
     @Volatile private var bondRemovalInFlight: Boolean = false
     private var ackWatchdogJob: Job? = null
     private var idleSleepJob: Job? = null
@@ -611,6 +614,7 @@ class G1BleClient(
         warmupExpected = false
         keepAliveSequence.set(KEEP_ALIVE_INITIAL_SEQUENCE)
         keepAliveInFlight.set(0)
+        authFailureTimestamps.clear()
         resetAckTelemetry()
         settingsLaunchedThisSession = false
         dismissPairingNotification()
@@ -1882,10 +1886,30 @@ class G1BleClient(
         val bonded = state.value.bonded || device.bondState == BluetoothDevice.BOND_BONDED
         if (!bonded) return
         if (status in AUTH_FAILURE_STATUS_CODES) {
+            val now = SystemClock.elapsedRealtime()
+            authFailureTimestamps.addLast(now)
+            while (authFailureTimestamps.isNotEmpty() && now - authFailureTimestamps.first() > BOND_RETRY_WINDOW_MS) {
+                authFailureTimestamps.removeFirst()
+            }
+            val authFailures = authFailureTimestamps.size
             logger.w(
                 label,
-                "${tt()} [GATT] Disconnect due to auth failure (${String.format("0x%02X", status and 0xFF)}); scheduling bond removal",
+                "${tt()} [BOND][${lensLabel}] Auth disconnect status=${String.format("0x%02X", status and 0xFF)} " +
+                    "count=${authFailures}/$BOND_RETRY_MAX_ATTEMPTS",
             )
+            if (authFailures < 2) {
+                scheduleGattReconnect("auth failure retry pending")
+                return
+            }
+            if (authFailures > BOND_RETRY_MAX_ATTEMPTS) {
+                logger.w(
+                    label,
+                    "${tt()} [BOND][${lensLabel}] Bond removal suppressed; auth failure limit reached",
+                )
+                scheduleGattReconnect("auth failure limit reached")
+                return
+            }
+            authFailureTimestamps.clear()
             scope.launch {
                 removeBondForAuthFailure("GATT status ${String.format("0x%02X", status and 0xFF)}")
             }
@@ -1970,6 +1994,14 @@ class G1BleClient(
     }
 
     suspend fun removeBondForAuthFailure(reason: String) {
+        // CE parity: prevent bond removal during IdleSleep or WakeQuiet
+        if (idleSleepFlow.value || wakeQuietActiveFlow.value) {
+            logger.w(
+                label,
+                "${tt()} [BOND] Bond removal suppressed due to sleep/wake gate"
+            )
+            return
+        }
         performBondRemoval(reason = reason, source = "AUTH_FAILED", rebondDelayMs = BOND_RETRY_DELAY_MS)
     }
 
