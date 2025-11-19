@@ -21,6 +21,9 @@ interface BleClient {
     suspend fun probeReady(lens: Lens): Boolean
     suspend fun sendCommand(payload: ByteArray): Boolean
     suspend fun sendImage(imageBytes: ByteArray): Boolean
+    suspend fun refreshGattCache(): Boolean {
+        return false
+    }
     fun startKeepAlive()
     fun close()
 }
@@ -95,6 +98,10 @@ class BleClientStub(private val initial: LensState) : BleClient {
             buildCrcFrame(imageBytes)
         }
         return true
+    }
+
+    override suspend fun refreshGattCache(): Boolean {
+        return false
     }
 
     override fun startKeepAlive() {

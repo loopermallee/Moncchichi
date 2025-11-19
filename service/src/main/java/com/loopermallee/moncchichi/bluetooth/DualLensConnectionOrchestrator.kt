@@ -186,6 +186,9 @@ class DualLensConnectionOrchestrator(
     private var wakeQuietActive: Boolean = false
     private var readyConfigIssued: Boolean = false
 
+    @Volatile
+    private var fullResetScheduled: Boolean = false
+
     suspend fun connectHeadset(pairKey: PairKey, leftMac: String, rightMac: String) = coroutineScope {
         require(pairKey == this@DualLensConnectionOrchestrator.pairKey) {
             "Attempted to connect mismatched pair $pairKey for orchestrator ${this@DualLensConnectionOrchestrator.pairKey}"
@@ -886,7 +889,11 @@ class DualLensConnectionOrchestrator(
                         }
                     }
                     if (shouldRefreshGatt(side, now)) {
-                        logger("[BLE][${side.name}] refreshing GATT cache before reconnect")
+                        val recentFailures = failureCountInWindow(side, now)
+                        val refreshed = runCatching { session.client.refreshGattCache() }.getOrDefault(false)
+                        logger(
+                            "[GATT][${side.logLabel()}] refresh triggered after ${recentFailures} failures in ${FAILURE_WINDOW_MS}ms refreshed=$refreshed",
+                        )
                         session.client.close()
                         delay(FULL_RECONNECT_DELAY_MS)
                     }
@@ -1165,6 +1172,7 @@ class DualLensConnectionOrchestrator(
         private const val HEARTBEAT_INTERVAL_MS = 5_000L
         private const val MAX_HEARTBEAT_MISSES = 3
         private const val FAILURE_WINDOW_MS = 60_000L
+        private const val GATT_REFRESH_THRESHOLD = 3
         private const val FULL_RECONNECT_DELAY_MS = 300L
         private const val STATE_FLAP_DEBOUNCE_MS = HEARTBEAT_INTERVAL_MS / 2
     }
@@ -1386,18 +1394,48 @@ class DualLensConnectionOrchestrator(
         if (isIdleSleepState()) {
             return false
         }
-        val failures = reconnectFailures[side] ?: return false
-        while (failures.isNotEmpty() && now - failures.first() > FAILURE_WINDOW_MS) {
-            failures.removeFirst()
-        }
-        return failures.size > 3
+        return failureCountInWindow(side, now) >= GATT_REFRESH_THRESHOLD
     }
 
     private fun recordReconnectFailure(side: Lens, timestamp: Long) {
+        if (isIdleSleepState()) return
         val failures = reconnectFailures[side] ?: return
         failures.addLast(timestamp)
-        while (failures.isNotEmpty() && timestamp - failures.first() > FAILURE_WINDOW_MS) {
+        trimFailureWindow(failures, timestamp)
+        maybeTriggerFullReset(timestamp)
+    }
+
+    private fun failureCountInWindow(side: Lens, now: Long): Int {
+        val failures = reconnectFailures[side] ?: return 0
+        trimFailureWindow(failures, now)
+        return failures.size
+    }
+
+    private fun trimFailureWindow(failures: ArrayDeque<Long>, now: Long) {
+        while (failures.isNotEmpty() && now - failures.first() > FAILURE_WINDOW_MS) {
             failures.removeFirst()
+        }
+    }
+
+    private fun maybeTriggerFullReset(now: Long) {
+        if (!sessionActive || isIdleSleepState() || fullResetScheduled) return
+        val leftCount = failureCountInWindow(Lens.LEFT, now)
+        val rightCount = failureCountInWindow(Lens.RIGHT, now)
+        if (leftCount >= GATT_REFRESH_THRESHOLD && rightCount >= GATT_REFRESH_THRESHOLD) {
+            val leftMac = lastLeftMac
+            val rightMac = lastRightMac
+            if (leftMac == null || rightMac == null) return
+            fullResetScheduled = true
+            scope.launch {
+                try {
+                    logger("[HEADSET] full reset triggered due to repeated GATT failures L=$leftCount R=$rightCount")
+                    disconnectHeadset()
+                    delay(FULL_RECONNECT_DELAY_MS)
+                    connectHeadset(pairKey, leftMac, rightMac)
+                } finally {
+                    fullResetScheduled = false
+                }
+            }
         }
     }
 }
