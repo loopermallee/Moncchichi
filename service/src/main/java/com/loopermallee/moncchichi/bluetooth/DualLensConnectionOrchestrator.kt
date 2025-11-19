@@ -2,11 +2,9 @@ package com.loopermallee.moncchichi.bluetooth
 
 import android.os.SystemClock
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.BATT_SUB_DETAIL
-import com.loopermallee.moncchichi.bluetooth.G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_BATT_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_CASE_GET
 import com.loopermallee.moncchichi.bluetooth.G1Protocols.CMD_WEAR_DETECT
-import com.loopermallee.moncchichi.bluetooth.G1Protocols.SLEEP_VITALS_TIMEOUT_MS
 import com.loopermallee.moncchichi.bluetooth.MoncchichiBleService.Lens
 import com.loopermallee.moncchichi.bluetooth.LinkStatus
 import com.loopermallee.moncchichi.telemetry.BleTelemetryRepository
@@ -166,14 +164,7 @@ class DualLensConnectionOrchestrator(
 
     @Volatile
     private var sleeping: Boolean = false
-    private var awaitingWakeTelemetry: Boolean = false
     private var wakeRefreshIssued: Boolean = false
-    private var wakeQuietUntilElapsed: Long = 0L
-    private val wakeTelemetryObserved: MutableMap<Lens, Boolean> = mutableMapOf(
-        Lens.LEFT to false,
-        Lens.RIGHT to false,
-    )
-    private var wakeQuietActive: Boolean = false
 
     suspend fun connectHeadset(pairKey: PairKey, leftMac: String, rightMac: String) = coroutineScope {
         require(pairKey == this@DualLensConnectionOrchestrator.pairKey) {
@@ -342,11 +333,7 @@ class DualLensConnectionOrchestrator(
         leftRefreshLock.withLock { pendingLeftRefresh.clear() }
         rightPrimed = false
         leftPrimed = false
-        awaitingWakeTelemetry = false
         wakeRefreshIssued = false
-        wakeQuietActive = false
-        wakeQuietUntilElapsed = 0L
-        resetWakeTelemetryTracking()
     }
 
     fun close() {
@@ -503,7 +490,6 @@ class DualLensConnectionOrchestrator(
                         put("timestamp", System.currentTimeMillis())
                     },
                 )
-                thawFromTelemetry(side, event)
                 markHeartbeatAck(side)
                 heartbeatStates[side]?.let { heartbeat ->
                     telemetryRepository.updateHeartbeat(
@@ -955,11 +941,7 @@ class DualLensConnectionOrchestrator(
         mirrorLock.withLock { pendingMirrors.clear() }
         leftRefreshLock.withLock { pendingLeftRefresh.clear() }
         leftRefreshRequested = false
-        awaitingWakeTelemetry = false
         wakeRefreshIssued = false
-        wakeQuietActive = false
-        wakeQuietUntilElapsed = 0L
-        resetWakeTelemetryTracking()
         val cachedLeftMac = leftSession?.id?.mac ?: lastLeftMac
         val cachedRightMac = rightSession?.id?.mac ?: lastRightMac
         logger("[SLEEP] Headset → IdleSleep")
@@ -972,38 +954,7 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun exitIdleSleep() {
-        awaitingWakeTelemetry = true
-        wakeQuietActive = true
-        wakeQuietUntilElapsed = SystemClock.elapsedRealtime() + CE_IDLE_SLEEP_QUIET_WINDOW_MS
-        resetWakeTelemetryTracking()
-        logger("[WAKE] Headset → Awake (waiting for telemetry)")
-    }
-
-    private suspend fun thawFromTelemetry(side: Lens, event: ClientEvent.Telemetry) {
-        if (!sleeping || !awaitingWakeTelemetry) return
-
-        if (isQualifyingWakeTelemetry(event)) {
-            wakeTelemetryObserved[side] = true
-        } else {
-            logger("[WAKE][${side.logLabel()}] Wake telemetry ignored: non-vitals frame while awaiting wake")
-            return
-        }
-        val quietElapsed = !wakeQuietActive || SystemClock.elapsedRealtime() >= wakeQuietUntilElapsed
-        if (!quietElapsed) {
-            logger("[WAKE][${side.logLabel()}] Wake telemetry blocked: quiet window active (${wakeQuietUntilElapsed - SystemClock.elapsedRealtime()}ms remaining)")
-            return
-        }
-        if (!wakeTelemetryObserved.values.all { it }) {
-            val pendingSides = wakeTelemetryObserved.filterValues { observed -> !observed }
-                .keys
-                .joinToString(",") { pending -> pending.logLabel() }
-            logger("[WAKE] Wake telemetry blocked: awaiting vitals from [$pendingSides]")
-            return
-        }
         sleeping = false
-        awaitingWakeTelemetry = false
-        wakeQuietActive = false
-        wakeQuietUntilElapsed = 0L
         logger("[WAKE] Headset → Awake")
         val leftConnected = latestLeft?.connected == true
         val rightConnected = latestRight?.connected == true
@@ -1032,21 +983,11 @@ class DualLensConnectionOrchestrator(
     }
 
     private fun isIdleSleepState(): Boolean {
-        return sleeping || awaitingWakeTelemetry || wakeQuietActive || _connectionState.value is State.IdleSleep
+        return sleeping || _connectionState.value is State.IdleSleep
     }
 
     private fun isHeartbeatSuppressed(): Boolean {
         return isIdleSleepState()
-    }
-
-    private fun isQualifyingWakeTelemetry(event: ClientEvent.Telemetry): Boolean {
-        return event.batteryPct != null || event.rssi != null || event.firmware != null
-    }
-
-    private fun resetWakeTelemetryTracking() {
-        wakeTelemetryObserved.keys.forEach { lens ->
-            wakeTelemetryObserved[lens] = false
-        }
     }
 
     private fun State.isActiveState(): Boolean {

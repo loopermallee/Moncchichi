@@ -46,7 +46,6 @@ import java.io.ByteArrayOutputStream
 import java.util.EnumMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.text.SimpleDateFormat
 import kotlin.coroutines.coroutineContext
@@ -245,10 +244,6 @@ class MoncchichiBleService(
         Lens.values().forEach { lens -> put(lens, 0) }
     }
     private val wakeTelemetryRefreshQueued = AtomicBoolean(false)
-    private val wakeQuietUntil = AtomicLong(0L)
-    private val wakeQuietActive = AtomicBoolean(false)
-    private val wakeVitalsObserved = AtomicBoolean(false)
-    private var wakeQuietJob: Job? = null
     private val reconnectCoordinator = ReconnectCoordinator(
         scope = scope,
         shouldContinue = { lens -> shouldAutoReconnect(lens) },
@@ -1426,10 +1421,6 @@ class MoncchichiBleService(
         if (isSleepModeActive()) {
             return null
         }
-        maybeReleaseWakeQuietGate()
-        if (wakeQuietActive.get()) {
-            return null
-        }
         if (!record.client.awake.value || isLensSleeping(lens)) {
             return null
         }
@@ -2081,7 +2072,6 @@ private class HeartbeatSupervisor(
             }
             updated
         }
-        markWakeVitalsObserved()
     }
 
     private fun logVitals(lens: Lens, vitals: G1ReplyParser.DeviceVitals) {
@@ -2261,45 +2251,6 @@ private class HeartbeatSupervisor(
         }
     }
 
-    private fun clearWakeQuietGate() {
-        wakeQuietActive.set(false)
-        wakeQuietUntil.set(0L)
-        wakeVitalsObserved.set(false)
-        wakeQuietJob?.cancel()
-        wakeQuietJob = null
-    }
-
-    private fun startWakeQuietGate() {
-        wakeQuietActive.set(true)
-        wakeVitalsObserved.set(false)
-        wakeQuietUntil.set(SystemClock.elapsedRealtime() + G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS)
-        wakeQuietJob?.cancel()
-        wakeQuietJob = scope.launch {
-            delay(G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS)
-            maybeReleaseWakeQuietGate()
-        }
-    }
-
-    private fun markWakeVitalsObserved() {
-        if (wakeVitalsObserved.compareAndSet(false, true)) {
-            maybeReleaseWakeQuietGate()
-        }
-    }
-
-    private fun maybeReleaseWakeQuietGate() {
-        val deadline = wakeQuietUntil.get()
-        val nowElapsed = SystemClock.elapsedRealtime()
-        if (!wakeQuietActive.get()) return
-        if (!wakeVitalsObserved.get()) return
-        if (deadline > 0 && nowElapsed < deadline) return
-        wakeQuietActive.set(false)
-        wakeQuietUntil.set(0L)
-        wakeQuietJob?.cancel()
-        wakeQuietJob = null
-        clientRecords.values.forEach { record -> record.client.completeWakeHandshake() }
-        Lens.values().forEach { lens -> heartbeatSupervisor.updateLensAwake(lens, true) }
-    }
-
     private fun handleSleepWakeSignal(sleeping: Boolean) {
         if (lastSleepWakeSignal == sleeping) return
         lastSleepWakeSignal = sleeping
@@ -2394,7 +2345,6 @@ private class HeartbeatSupervisor(
             idleSleepState.value = idleSleepActive
         }
         suppressedDuringSleepCount = 0
-        clearWakeQuietGate()
     }
 
     private fun onSleepModeExited(timestamp: Long) {
@@ -2407,8 +2357,9 @@ private class HeartbeatSupervisor(
         Lens.values().forEach { lens -> resetHandshake(lens) }
         clientRecords.values.forEach { record ->
             record.client.beginWakeHandshake()
+            record.client.completeWakeHandshake()
+            heartbeatSupervisor.updateLensAwake(record.lens, true)
         }
-        startWakeQuietGate()
         reconnectCoordinator.unfreeze()
         if (_connectionStage.value == ConnectionStage.IdleSleep) {
             setStage(ConnectionStage.Idle)
