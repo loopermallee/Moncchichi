@@ -164,6 +164,8 @@ class DualLensConnectionOrchestrator(
         Lens.RIGHT to ArrayDeque(),
     )
 
+    private var lastStabilityTransitionAt: Long = 0L
+
     @Volatile
     private var sessionActive: Boolean = false
 
@@ -247,9 +249,9 @@ class DualLensConnectionOrchestrator(
             flushPendingMirrors()
         } else {
             if (!isIdleSleepState()) {
-                _connectionState.value = State.DegradedRightOnly
+                setConnectionState(State.DegradedRightOnly, debounceStability = true)
             }
-            scheduleReconnect(Lens.LEFT)
+            scheduleReconnect(Lens.LEFT, reason = "left_prime_failed")
             return@coroutineScope
         }
 
@@ -283,9 +285,9 @@ class DualLensConnectionOrchestrator(
             flushPendingMirrors()
         } else {
             if (!isIdleSleepState()) {
-                _connectionState.value = State.DegradedLeftOnly
+                setConnectionState(State.DegradedLeftOnly, debounceStability = true)
             }
-            scheduleReconnect(Lens.RIGHT)
+            scheduleReconnect(Lens.RIGHT, reason = "right_prime_failed")
             return@coroutineScope
         }
 
@@ -301,7 +303,7 @@ class DualLensConnectionOrchestrator(
 
         if (leftResult && rightResult) {
             _connectionState.value = State.ReadyBoth
-            _connectionState.value = State.Stable
+            setConnectionState(State.Stable, debounceStability = true)
             attemptReadyConfiguration()
         }
     }
@@ -429,8 +431,8 @@ class DualLensConnectionOrchestrator(
                         Lens.LEFT -> markLeftPrimed(false)
                     }
                     if (!idleSleep) {
-                        scheduleReconnect(side)
-                        _connectionState.value = when (side) {
+                        scheduleReconnect(side, reason = "link_state_changed")
+                        val target = when (side) {
                             Lens.RIGHT -> when {
                                 latestLeft?.connected == true -> State.RecoveringRight
                                 latestLeft?.isReady == true -> State.DegradedLeftOnly
@@ -441,6 +443,12 @@ class DualLensConnectionOrchestrator(
                                 latestRight?.isReady == true -> State.DegradedRightOnly
                                 else -> State.ConnectingLeft
                             }
+                        }
+                        val debounce = isStabilityState(target)
+                        if (debounce) {
+                            setConnectionState(target, debounceStability = true)
+                        } else {
+                            _connectionState.value = target
                         }
                     }
                     heartbeatStates[side]?.reset()
@@ -468,7 +476,11 @@ class DualLensConnectionOrchestrator(
                         }
                     }
                     if (!idleSleep) {
-                        _connectionState.value = nextState
+                        if (isStabilityState(nextState)) {
+                            setConnectionState(nextState, debounceStability = true)
+                        } else {
+                            _connectionState.value = nextState
+                        }
                     }
                     when (side) {
                         Lens.RIGHT -> markRightPrimed(false)
@@ -492,7 +504,7 @@ class DualLensConnectionOrchestrator(
                 if (!isIdleSleepState()) {
                     if (event.ready && latestLeft?.isReady == true && latestRight?.isReady == true) {
                         _connectionState.value = State.ReadyBoth
-                        _connectionState.value = State.Stable
+                        setConnectionState(State.Stable, debounceStability = true)
                     } else if (!event.ready) {
                         _connectionState.value = State.Repriming
                     }
@@ -502,7 +514,7 @@ class DualLensConnectionOrchestrator(
                 }
             }
 
-            is ClientEvent.Error -> if (!idleSleep) scheduleReconnect(side)
+            is ClientEvent.Error -> if (!idleSleep) scheduleReconnect(side, reason = "client_error")
             is ClientEvent.BondStateChanged -> handleBondEvent(side, event)
             is ClientEvent.Telemetry -> {
                 telemetryRepository.recordTelemetry(
@@ -655,7 +667,7 @@ class DualLensConnectionOrchestrator(
         } ?: return false
         val success = runCatching { session.client.sendCommand(payload.copyOf()) }.getOrElse { false }
         if (!success) {
-            scheduleReconnect(side)
+            scheduleReconnect(side, reason = "command_failure")
         }
         return success
     }
@@ -690,7 +702,7 @@ class DualLensConnectionOrchestrator(
             flushPendingMirrors()
             flushPendingLeftRefresh()
             if (!rightPrimed && !isIdleSleepState()) {
-                scheduleReconnect(Lens.RIGHT)
+                scheduleReconnect(Lens.RIGHT, reason = "right_unprimed_after_left_prime")
             }
             attemptReadyConfiguration()
         } else {
@@ -813,11 +825,8 @@ class DualLensConnectionOrchestrator(
         }
     }
 
-    private fun scheduleReconnect(side: Lens, fromHeartbeat: Boolean = false) {
+    private fun scheduleReconnect(side: Lens, reason: String = "unspecified", fromHeartbeat: Boolean = false) {
         if (!sessionActive) {
-            return
-        }
-        if (isIdleSleepState()) {
             return
         }
         if (reconnectJobs[side]?.isActive == true) {
@@ -829,16 +838,30 @@ class DualLensConnectionOrchestrator(
         } ?: return
 
         if (fromHeartbeat && !isIdleSleepState()) {
-            _connectionState.value = when (side) {
-                Lens.LEFT -> State.RecoveringLeft
-                Lens.RIGHT -> State.RecoveringRight
-            }
+            setConnectionState(
+                when (side) {
+                    Lens.LEFT -> State.RecoveringLeft
+                    Lens.RIGHT -> State.RecoveringRight
+                },
+                debounceStability = true,
+            )
         }
 
         reconnectJobs[side] = scope.launch {
-            var backoffIndex = reconnectBackoffStep[side] ?: 0
+            var backoffIndex = reconnectBackoffStep[side]?.coerceAtMost(RECONNECT_BACKOFF_MS.lastIndex) ?: 0
+            var attempt = 1
             while (sessionActive && isActive) {
+                val gate = reconnectGateReason(side)
+                if (gate != null) {
+                    logger("[RECONNECT][${side.logLabel()}] gated reason=$gate; delaying attempts")
+                    reconnectBackoffStep[side] = 0
+                    backoffIndex = 0
+                    attempt = 1
+                    delay(HEARTBEAT_INTERVAL_MS)
+                    continue
+                }
                 val delayMs = RECONNECT_BACKOFF_MS.getOrElse(backoffIndex) { RECONNECT_BACKOFF_MS.last() }
+                logger("[RECONNECT][${side.logLabel()}] attempt=$attempt delay=${delayMs}ms reason=$reason")
                 if (delayMs > 0) {
                     delay(delayMs)
                 }
@@ -886,7 +909,7 @@ class DualLensConnectionOrchestrator(
                     reconnectFailures[side]?.clear()
                     requestTelemetryRefresh(side)
                     if (!isIdleSleepState()) {
-                        _connectionState.value = when (side) {
+                        val nextState = when (side) {
                             Lens.RIGHT -> if (latestLeft?.isReady == true) {
                                 State.Stable
                             } else {
@@ -898,6 +921,11 @@ class DualLensConnectionOrchestrator(
                                 State.LeftOnlineUnprimed
                             }
                         }
+                        if (isStabilityState(nextState)) {
+                            setConnectionState(nextState, debounceStability = true)
+                        } else {
+                            _connectionState.value = nextState
+                        }
                     }
                     reconnectJobs.remove(side)
                     return@launch
@@ -905,12 +933,13 @@ class DualLensConnectionOrchestrator(
                 recordReconnectFailure(side, now)
                 backoffIndex = min(backoffIndex + 1, RECONNECT_BACKOFF_MS.lastIndex)
                 reconnectBackoffStep[side] = backoffIndex
+                attempt += 1
             }
             reconnectJobs.remove(side)
             if (!isIdleSleepState()) {
                 when (side) {
-                    Lens.RIGHT -> _connectionState.value = State.DegradedLeftOnly
-                    Lens.LEFT -> _connectionState.value = State.DegradedRightOnly
+                    Lens.RIGHT -> setConnectionState(State.DegradedLeftOnly, debounceStability = true)
+                    Lens.LEFT -> setConnectionState(State.DegradedRightOnly, debounceStability = true)
                 }
             }
         }
@@ -1026,20 +1055,20 @@ class DualLensConnectionOrchestrator(
         val rightReady = latestRight?.isReady == true || rightPrimed
         when {
             leftConnected && leftReady && rightConnected && rightReady -> {
-                _connectionState.value = State.Stable
+                setConnectionState(State.Stable, debounceStability = true)
             }
             leftConnected && !rightConnected -> {
-                _connectionState.value = State.RecoveringRight
-                scheduleReconnect(Lens.RIGHT)
+                setConnectionState(State.RecoveringRight, debounceStability = true)
+                scheduleReconnect(Lens.RIGHT, reason = "wake_recover")
             }
             rightConnected && !leftConnected -> {
-                _connectionState.value = State.RecoveringLeft
-                scheduleReconnect(Lens.LEFT)
+                setConnectionState(State.RecoveringLeft, debounceStability = true)
+                scheduleReconnect(Lens.LEFT, reason = "wake_recover")
             }
             else -> {
-                _connectionState.value = State.RecoveringLeft
-                scheduleReconnect(Lens.LEFT)
-                scheduleReconnect(Lens.RIGHT)
+                setConnectionState(State.RecoveringLeft, debounceStability = true)
+                scheduleReconnect(Lens.LEFT, reason = "wake_recover")
+                scheduleReconnect(Lens.RIGHT, reason = "wake_recover")
             }
         }
         startHeartbeat()
@@ -1053,6 +1082,52 @@ class DualLensConnectionOrchestrator(
 
     private fun isHeartbeatSuppressed(): Boolean {
         return isIdleSleepState()
+    }
+
+    private fun reconnectGateReason(side: Lens): String? {
+        if (isIdleSleepState()) {
+            return "idle_sleep"
+        }
+        val snapshot = telemetryRepository.snapshot.value
+        if (snapshot.sleepPhase == BleTelemetryRepository.SleepPhase.SLEEP_CONFIRMED) {
+            return "ce_sleep"
+        }
+        val lensSnapshot = snapshot.lensSnapshot(side)
+        val inCase = lensSnapshot.inCase ?: snapshot.inCase
+        val caseClosed = lensSnapshot.caseOpen == false || snapshot.caseOpen == false
+        val wearing = lensSnapshot.foldState
+        return when {
+            inCase == true && caseClosed -> "in_case"
+            wearing == false -> "not_worn"
+            else -> null
+        }
+    }
+
+    private fun isStabilityState(state: State): Boolean {
+        return when (state) {
+            State.Stable,
+            State.RecoveringLeft,
+            State.RecoveringRight,
+            State.DegradedLeftOnly,
+            State.DegradedRightOnly -> true
+            else -> false
+        }
+    }
+
+    private fun setConnectionState(state: State, debounceStability: Boolean = false) {
+        val current = _connectionState.value
+        if (current == state) return
+        val targetIsStability = isStabilityState(state)
+        val now = SystemClock.elapsedRealtime()
+        if (debounceStability && targetIsStability && isStabilityState(current)) {
+            if (now - lastStabilityTransitionAt < STATE_FLAP_DEBOUNCE_MS) {
+                return
+            }
+        }
+        if (targetIsStability) {
+            lastStabilityTransitionAt = now
+        }
+        _connectionState.value = state
     }
 
     private fun isQualifyingWakeTelemetry(event: ClientEvent.Telemetry): Boolean {
@@ -1078,12 +1153,20 @@ class DualLensConnectionOrchestrator(
         Lens.RIGHT -> "R"
     }
 
+    private fun BleTelemetryRepository.Snapshot.lensSnapshot(side: Lens): BleTelemetryRepository.LensSnapshot {
+        return when (side) {
+            Lens.LEFT -> left
+            Lens.RIGHT -> right
+        }
+    }
+
     companion object {
         private val RECONNECT_BACKOFF_MS = longArrayOf(0L, 500L, 1_000L, 5_000L)
         private const val HEARTBEAT_INTERVAL_MS = 5_000L
         private const val MAX_HEARTBEAT_MISSES = 3
         private const val FAILURE_WINDOW_MS = 60_000L
         private const val FULL_RECONNECT_DELAY_MS = 300L
+        private const val STATE_FLAP_DEBOUNCE_MS = HEARTBEAT_INTERVAL_MS / 2
     }
 
     private data class HeartbeatState(
@@ -1140,7 +1223,7 @@ class DualLensConnectionOrchestrator(
                             "[WATCHDOG][${side.name}] missed heartbeat count=${state.missedPingCount} rtt=${rtt ?: -1}"
                         )
                         if (state.missedPingCount >= MAX_HEARTBEAT_MISSES) {
-                            scheduleReconnect(side, fromHeartbeat = true)
+                            scheduleReconnect(side, reason = "heartbeat_miss", fromHeartbeat = true)
                             telemetryRepository.recordTelemetry(
                                 side,
                                 mapOf(
