@@ -230,6 +230,11 @@ internal fun ByteArray.parseAckOutcome(): AckOutcome? {
         }
     }
 
+    if (opcode == G1Protocols.CMD_SILENT_MODE_GET && size >= 3) {
+        val status = this[1].toInt() and 0xFF
+        return AckOutcome.Success(opcode = opcode, status = status)
+    }
+
     val statusByteFromHeader = getOrNull(1)?.toInt()?.and(0xFF)
     when (statusByteFromHeader) {
         G1Protocols.STATUS_OK -> return AckOutcome.Success(opcode, statusByteFromHeader)
@@ -375,14 +380,14 @@ class G1BleClient(
         private const val PAIRING_NOTIFICATION_ID = 0xB10
         private const val PAIRING_NOTIFICATION_REQUEST_CODE = 0x192
         private const val GATT_RESET_DELAY_MS = 250L
-        internal const val KEEP_ALIVE_ACK_TIMEOUT_MS = G1Protocols.DEVICE_KEEPALIVE_ACK_TIMEOUT_MS
+        internal const val KEEP_ALIVE_ACK_TIMEOUT_MS = G1Protocols.ACK_TIMEOUT_MS
         internal const val KEEP_ALIVE_RETRY_BACKOFF_MS = G1Protocols.RETRY_BACKOFF_MS
         private val leftNotifyReadySignal = MutableStateFlow(false)
         internal const val KEEP_ALIVE_LOCK_POLL_INTERVAL_MS = 20L
         // Handshake capture shows firmware initiating keep-alive at sequence 0x01.
         private const val KEEP_ALIVE_INITIAL_SEQUENCE = 0x01
         internal const val KEEP_ALIVE_MAX_ATTEMPTS = G1Protocols.MAX_RETRIES
-        internal const val KEEP_ALIVE_OPCODE = G1Protocols.CMD_KEEPALIVE
+        internal const val KEEP_ALIVE_OPCODE = G1Protocols.CMD_SILENT_MODE_GET
         private const val HELLO_WATCHDOG_TIMEOUT_MS = 12_000L
         private const val HELLO_RECOVERY_RECONNECT_DELAY_MS = 750L
         private const val EVEN_HANDSHAKE_DELAY_MS = 200L
@@ -1649,7 +1654,7 @@ class G1BleClient(
         var success = false
         var rttMs: Long? = null
         val sequence = nextKeepAliveSequence()
-        val payload = buildKeepAlivePayload(sequence)
+        val payload = buildKeepAlivePayload()
         var lockContentionCount = 0
         var ackTimeoutCount = 0
         while (attempt < KEEP_ALIVE_MAX_ATTEMPTS && scope.isActive) {
@@ -2045,9 +2050,8 @@ class G1BleClient(
         }.and(0xFF)
     }
 
-    private fun buildKeepAlivePayload(sequence: Int): ByteArray {
-        val seqByte = (sequence and 0xFF).toByte()
-        return byteArrayOf(KEEP_ALIVE_OPCODE.toByte(), seqByte)
+    private fun buildKeepAlivePayload(): ByteArray {
+        return byteArrayOf(KEEP_ALIVE_OPCODE.toByte())
     }
 
     private suspend fun acquireKeepAliveLock(deadlineMs: Long): Boolean {
