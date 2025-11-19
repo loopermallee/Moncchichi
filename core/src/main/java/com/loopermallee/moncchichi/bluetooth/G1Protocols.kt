@@ -147,7 +147,7 @@ object G1Protocols {
         return when (normalized) {
             in 0x00..0x05, in 0x1E..0x20 -> F5EventType.GESTURE
             0x08, 0x09, 0x0E, 0x0F -> F5EventType.CASE
-            in 0x06..0x0B -> F5EventType.SYSTEM
+            in 0x06..0x0B, 0x11 -> F5EventType.SYSTEM
             else -> F5EventType.UNKNOWN
         }
     }

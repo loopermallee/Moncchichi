@@ -483,19 +483,8 @@ object G1ReplyParser {
         if (frame.opcode != 0xF5) return null
         val status = frame.status?.toUnsignedInt()
         val payload = frame.payload
-        val battery = parseBatteryFromF5(status, payload)
-        val charging = parseChargingFromF5(status, payload)
-        val firmware = parseFirmwareBanner(payload)
-        val vitals = if (battery != null || charging != null || firmware != null) {
-            DeviceVitals(
-                batteryPercent = battery,
-                charging = charging,
-                firmwareVersion = firmware,
-            )
-        } else {
-            null
-        }
         val subcommand = status ?: payload.firstOrNull()?.toUnsignedInt()
+        val vitals = buildVitalsFromF5(subcommand, status, payload)
         val evenAi = if (vitals == null && subcommand != null) {
             parseEvenAiEvent(subcommand, payload)
         } else {
@@ -507,24 +496,13 @@ object G1ReplyParser {
     private fun parseF5(frame: NotifyFrame): Parsed {
         val payload = frame.payload
         val status = frame.status?.toUnsignedInt()
-
-        parseBatteryFromF5(status, payload)?.let { percent ->
-            val vitals = updateVitals(DeviceVitals(batteryPercent = percent))
-            return Parsed.Vitals(vitals)
-        }
-
-        parseChargingFromF5(status, payload)?.let { charging ->
-            val vitals = updateVitals(DeviceVitals(charging = charging))
-            return Parsed.Vitals(vitals)
-        }
-
-        parseFirmwareBanner(payload)?.let { banner ->
-            val vitals = updateVitals(DeviceVitals(firmwareVersion = banner))
-            return Parsed.Vitals(vitals)
-        }
-
         val subcommand = status ?: payload.firstOrNull()?.toUnsignedInt()
             ?: return Parsed.Unknown(frame.opcode, frame.raw)
+
+        buildVitalsFromF5(subcommand, status, payload)?.let { vitals ->
+            val updated = updateVitals(vitals)
+            return Parsed.Vitals(updated)
+        }
 
         return Parsed.EvenAi(parseEvenAiEvent(subcommand, payload))
     }
@@ -540,6 +518,28 @@ object G1ReplyParser {
         }
     }
 
+    private fun buildVitalsFromF5(
+        subcommand: Int?,
+        status: Int?,
+        payload: ByteArray,
+    ): DeviceVitals? {
+        val battery = parseBatteryFromF5(status, payload)
+        val charging = parseChargingSignal(subcommand, payload)
+        val firmware = parseFirmwareBanner(payload)
+        val state = subcommand?.let { parseStateFromF5(it, payload) }
+
+        if (battery == null && charging == null && firmware == null && state == null) {
+            return null
+        }
+
+        val base = state ?: DeviceVitals()
+        return base.copy(
+            batteryPercent = battery ?: base.batteryPercent,
+            charging = charging ?: base.charging,
+            firmwareVersion = firmware ?: base.firmwareVersion,
+        )
+    }
+
     private fun parseBatteryFromF5(status: Int?, payload: ByteArray): Int? {
         val (command, valueIndex) = when {
             status == 0x0A -> 0x0A to 0
@@ -548,6 +548,11 @@ object G1ReplyParser {
         } ?: return null
         val percent = payload.getOrNull(valueIndex)?.toUnsignedInt()
         return percent?.takeIf { command == 0x0A && it in 0..100 }
+    }
+
+    private fun parseChargingSignal(subcommand: Int?, payload: ByteArray): Boolean? {
+        val charging = parseChargingFromF5(subcommand, payload)
+        return charging ?: if (subcommand == 0x09) true else null
     }
 
     private fun parseChargingFromF5(status: Int?, payload: ByteArray): Boolean? {
@@ -562,6 +567,17 @@ object G1ReplyParser {
                 1 -> true
                 else -> null
             }
+        }
+    }
+
+    private fun parseStateFromF5(subcommand: Int, payload: ByteArray): DeviceVitals? {
+        return when (subcommand) {
+            0x06 -> DeviceVitals(wearing = true, inCradle = false)
+            0x07 -> DeviceVitals(wearing = false)
+            0x08, 0x0B -> DeviceVitals(inCradle = true)
+            0x09 -> parseChargingSignal(subcommand, payload)?.let { DeviceVitals(charging = it) }
+            0x11 -> DeviceVitals(connectionState = "PAIRED")
+            else -> null
         }
     }
 
