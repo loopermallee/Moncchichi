@@ -449,7 +449,6 @@ class DualLensConnectionOrchestrator(
             is ClientEvent.Telemetry -> _telemetry.update { current -> current + (side to event) }
             is ClientEvent.ConnectionStateChanged -> {
                 if (!event.connected) {
-                    invalidateHandshake("link_drop_${side.logLabel()}")
                     when (side) {
                         Lens.RIGHT -> markRightPrimed(false)
                         Lens.LEFT -> markLeftPrimed(false)
@@ -970,12 +969,12 @@ class DualLensConnectionOrchestrator(
                     requestTelemetryRefresh(side)
                     if (!isIdleSleepState()) {
                         val nextState = when (side) {
-                            Lens.RIGHT -> if (latestLeft?.isReady == true) {
+                            Lens.RIGHT -> if (leftPrimed && rightPrimed) {
                                 State.Stable
                             } else {
                                 State.ReadyRight
                             }
-                            Lens.LEFT -> if (latestRight?.isReady == true) {
+                            Lens.LEFT -> if (leftPrimed && rightPrimed) {
                                 State.Stable
                             } else {
                                 State.LeftOnlineUnprimed
@@ -1326,7 +1325,6 @@ class DualLensConnectionOrchestrator(
         leftRefreshRequested = false
         readyConfigIssued = false
         wakeRefreshIssued = false
-        resetOperationFlags()
     }
 
     private fun setOperationActive(map: MutableMap<Lens, Boolean>, lens: Lens, active: Boolean) {
