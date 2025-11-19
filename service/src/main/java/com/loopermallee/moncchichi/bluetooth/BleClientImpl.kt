@@ -70,6 +70,10 @@ class BleClientImpl(initialState: LensState) : BleClient {
         return true
     }
 
+    override suspend fun refreshGattCache(): Boolean {
+        return false
+    }
+
     override fun startKeepAlive() {
         _events.tryEmit(ClientEvent.KeepAliveStarted)
     }
