@@ -1,339 +1,172 @@
-CE – Connection Resilience Parity (Production Even Behavior)
+Below is a CE-style section you can drop into CONTEXT_ENGINEERING.md for this upcoming patch. It:
+	•	Recaps the project goal and current plan.
+	•	Summarises what we learned from the protocol docs + logs.
+	•	States the concrete invariants and behavioral rules this patch is enforcing.
+	•	Names the key problems in the current app that this patch is meant to fix.
 
-Goal:
-Make Moncchichi’s BLE behavior as stable and forgiving as the production Even Reality app, with correct handling of:
-	•	pairing and bonding
-	•	GATT discovery and cache corruption
-	•	reconnection backoff
-	•	dual-lens coordination (left/right)
-	•	sleep/idle/case state gating
+You can put this under a new section like:
 
-Audio, AI, and advanced notifications are out of scope for this section.
+## 8. BLE v1.6.6 Parity Patch – Session Lifetime, Telemetry Bundles, Sleep/Wake
 
 ⸻
 
-0. Files Codex must inspect before editing
+8. BLE v1.6.6 Parity Patch – Session Lifetime, Telemetry Bundles, Sleep/Wake
 
-Codex must open and read these files before changing any code:
-	•	core/src/main/java/com/loopermallee/moncchichi/bluetooth/G1BleClient.kt
-	•	core/src/main/java/com/loopermallee/moncchichi/bluetooth/MoncchichiBleService.kt
-	•	core/src/main/java/com/loopermallee/moncchichi/bluetooth/G1Protocols.kt
-	•	service/src/main/java/com/loopermallee/moncchichi/bluetooth/DualLensConnectionOrchestrator.kt
-	•	hub/src/main/java/com/loopermallee/moncchichi/hub/data/telemetry/BleTelemetryRepository.kt
-	•	hub/src/main/java/com/loopermallee/moncchichi/hub/telemetry/BleTelemetryParser.kt
-	•	Any shared reconnection helpers:
-	•	ReconnectCoordinator (at the bottom of MoncchichiBleService.kt)
+8.1 Project Goal (for any new assistant / tool)
 
-Codex must not introduce new concepts that contradict these; it may refactor only if behavior stays equivalent or more robust per this spec.
+Moncchichi Hub is a third-party Android companion app for Even G1 glasses.
+The near-term BLE goal:
+	•	Reach practical 1:1 parity with the official Even app’s behavior on G1 firmware v1.6.6 for:
+	•	Pairing + bonding
+	•	Initial connect + priming
+	•	Telemetry / heartbeat
+	•	Sleep / wake / case handling
+	•	Reconnect + GATT recovery
+	•	Only after BLE is rock-solid do we layer:
+	•	AI assistant / MCP integration
+	•	HUD / teleprompter / text & BMP sending
+	•	Offline/online AI mode switching
 
-⸻
+Non-goals for this patch:
+	•	No new AI features.
+	•	No UX flows outside BLE stability.
+	•	No speculative protocol behavior that isn’t grounded in:
+	•	EvenDemoApp BLE wiki and upgrade tools
+	•	Community G1 apps (teleprompter, AI assistant, etc.)
+	•	v1.6.6 nRF Connect logs (e L.txt, e R.txt)
 
-1. Source of Truth and Constraints
-	1.	Primary sources of truth:
-	•	G1 BLE Protocol document (opcodes, expectations for bonds, idle sleep, etc.).
-	•	nRF Connect logs of production Even Reality app:
-	•	Initial pairing / bonding
-	•	Reconnect after power cycle
-	•	Reconnect after case open/close
-	•	Behavior when only one lens is present or slow to wake
-	•	Behavior after repeated GATT failures
-	2.	Parity rule:
-	•	If Moncchichi’s behavior disagrees with:
-	•	G1 protocol doc, or
-	•	Even’s nRF logs
-then production Even + protocol doc win.
-	3.	Scope limits:
-	•	Do not implement audio streaming behavior here.
-	•	Do not change user-visible UI flows beyond what’s needed to expose connection state clearly.
+8.2 What We Learned (Ground Truth Sources)
 
-⸻
+We align behavior with these anchors:
+	•	Dual-lens topology + left-first
+	•	G1 uses two independent BLE links: one per arm.
+	•	Protocol guidance: send to LEFT first, then RIGHT after LEFT ACK, except for explicitly right-only commands.
+	•	MTU + notifications as handshake precondition
+	•	Community reverse-engineering shows G1 won’t send notifications until MTU is negotiated and notifications are enabled.
+	•	A “usable” link = connected + MTU set + RX notifications enabled.
+	•	Telemetry bundle after connect (per lens)
+From v1.6.6 logs, each lens, after connect+notify, emits a consistent sequence:
+	•	0x4D ... 0xC9 ... – success marker (“M 0xC9 …”)
+	•	0xF5 0x11 ... – status / dashboard sync frame
+	•	0x2C ... – battery / case / wear telemetry
+	•	0x37 ... – uptime / runtime counters
+	•	ASCII UART line:
+	•	"net build time: ... ver 1.6.6, JBD DeviceID 4010 ..."
+→ That full set is treated as a telemetry bundle per lens.
+	•	Heartbeat as “vitals still moving”
+	•	Logs show periodic 0x2C / 0x37 and other small frames over time.
+	•	This behaves like a vitals-poll heartbeat, not aggressive PING spam.
+	•	Sleep / wake / case behavior
+	•	Case and wear detection bits live inside 0x2C payloads.
+	•	After placing/removing in case, both lenses send new 0x2C/0x37 + version strings, then mostly quiet.
+	•	There is clearly an “IdleSleep” and a short “wake but quiet” phase where the app waits for vitals after wake.
 
-2. Conceptual Connection Model (What we’re matching)
-
-Codex should assume this mental model, and align Moncchichi to it:
-	•	There is one headset (pair) with two lenses:
-	•	Lens.LEFT, Lens.RIGHT.
-	•	The phone maintains:
-	•	A pair key (Even’s pairing identity),
-	•	A bond per lens (Android bonding),
-	•	A GATT session per lens,
-	•	A logical “headset state” that represents:
-	•	both lenses connected and ready,
-	•	only one lens connected, or
-	•	idle/ sleeping.
-
-Even Reality’s behavior:
-	•	Prefers a stable “ready both” state but tolerates:
-	•	left-only,
-	•	right-only,
-	•	in-case/idle with no active reconnection attempts.
-	•	Recovers from:
-	•	transient link loss (RSSI drop),
-	•	flaky GATT,
-	•	stale/bad bond entries,
-	•	sleep transitions triggered by case or wear events.
-
-Moncchichi must do the same.
+These observations are the basis for the CE invariants enforced by this patch.
 
 ⸻
 
-3. Pairing and Bonding Behavior
+8.3 Current App Issues This Patch Targets
 
-Codex must:
-	1.	Keep the existing bonding logic in G1BleClient, but make sure it is:
-	•	clearly separated between:
-	•	initial pairing (first-time bond),
-	•	bond recovery (when a known device is “forgotten” by the glasses or phone),
-	•	fatal bond errors (too many consecutive failures → stop spamming).
-	2.	Bond retry rules (per lens):
-	•	Maintain or introduce per-lens counters:
-	•	bondLossCounters[lens]
-	•	time window (e.g. BOND_RETRY_WINDOW_MS)
-	•	Rules:
-	•	On bond loss:
-	•	Try up to BOND_RETRY_MAX_ATTEMPTS within BOND_RETRY_WINDOW_MS.
-	•	Use a delay of BOND_RETRY_DELAY_MS between attempts.
-	•	On successful bond:
-	•	Reset the bond counter for that lens.
-	•	On exceeded attempts:
-	•	Stop auto bond retries for that lens until:
-	•	the headset state is reset (manual reconnect), or
-	•	the user explicitly re-pairs.
-	3.	Bond removal / reset:
-	•	BluetoothDevice.removeBondCompat() should only be called:
-	•	when we have a clear indication of stale or broken bond, such as:
-	•	repeated GATT_AUTH_FAIL / AUTH_FAILURE_STATUS_CODES.
-	•	Do not repeatedly unbond/rebond in a tight loop.
-	4.	Pairing success event (0xF5 / 0x11):
-	•	BleTelemetryParser already surfaces pairingSuccess via a SystemEvent.
-	•	BleTelemetryRepository should:
-	•	log a clear console line: "PAIRING [L/R] success".
-	•	Optional but recommended:
-	•	Use this as a signal to reset bond counters and mark the pair as “healthy”.
+Pre-patch, Moncchichi BLE behavior had these problems:
+	1.	Handshake / priming is synthetic and too narrow
+	•	leftPrimed / rightPrimed were mostly driven by probeReady() on a single PING-style command.
+	•	“ReadyBoth” could be reached without seeing a full telemetry bundle from each lens.
+	2.	Session lifetime not enforced
+	•	GATT refreshes, link drops, and bond loss did not consistently:
+	•	Clear leftPrimed / rightPrimed
+	•	Clear pending mirrors and left-refresh queue
+	•	Reset wake/ready configuration flags
+	•	Result: “ReadyBoth” could be reached on stale state from a previous session.
+	3.	Sleep / wake not properly gated
+	•	scheduleReconnect() and bond retries could run during:
+	•	IdleSleep
+	•	Wake quiet windows
+	•	“Awaiting vitals” phase after wake
+	•	This caused reconnect storms and unnecessary wake-ups.
+	4.	State machine not strictly left-first / monotonic
+	•	Right could effectively “come ready” before left.
+	•	Stable and ReadyBoth sometimes depended on raw isReady flags instead of strict left-first priming + telemetry bundles.
+	5.	Heartbeat not integrated with telemetry
+	•	Heartbeat logic mainly looked at ping/ack and missed counts.
+	•	It did not treat 0x2C / 0x37 telemetry as valid proof of life, even though the real device behaves that way.
+	6.	Duplicate operations allowed
+	•	Multiple connect/bond/GATT refresh attempts could overlap per lens.
+	•	No per-lens op mutex; reconnect/backoff state could be corrupted by concurrent operations.
+
+This patch’s CE defines how all of that must behave going forward.
 
 ⸻
 
-4. Connection / Reconnection State Machine
+8.4 Core CE Invariants for This Patch
 
-The authoritative state machine that Codex must preserve and refine lives in:
-	•	DualLensConnectionOrchestrator:
-	•	State.Idle, State.IdleSleep, State.RecoveringLeft, State.RecoveringRight, State.Stable, State.DegradedLeftOnly, etc.
-	•	MoncchichiBleService:
-	•	ConnectionStage (Idle, IdleSleep, Active, etc.).
-	•	ReconnectCoordinator under MoncchichiBleService.
+8.4.1 Left-First Semantics (Commands + Readiness)
+	•	For any command family that is not explicitly right-only:
+	•	LEFT is always the primary target.
+	•	RIGHT must not receive the mirrored frame until:
+	•	LEFT link is READY, and
+	•	LEFT has positively ACKed (binary ACK or textual “OK” frame).
+	•	Readiness ordering:
+	•	LEFT must become primed before RIGHT priming is accepted.
+	•	If RIGHT “primes” while leftPrimed == false, it is treated as out-of-order and triggers a RIGHT reconnect, not a ready state.
 
-Codex must ensure the following invariants:
-	1.	Monotonic transitions:
-	•	For the headset-level state:
-	•	Do not bounce rapidly between:
-	•	Stable ↔ RecoveringRight ↔ Stable ↔ RecoveringLeft.
-	•	Apply minimal debouncing:
-	•	e.g., only downgrade to recovery when:
-	•	a lens has remained disconnected for > X ms (e.g. > 500 ms),
-	•	not based on a single transient state emission.
-	2.	Lens priming rules:
-	•	leftPrimed and rightPrimed must mean:
-	•	GATT discovered,
-	•	hello/handshake successful,
-	•	lens is ready for normal commands.
-	•	The headset is treated as “ReadyBoth” only when:
-	•	both leftPrimed and rightPrimed are true,
-	•	both lenses are marked connected,
-	•	idle sleep is not active.
-	3.	Stable partial states:
-	•	When one lens is connected and primed, and the other is not:
-	•	enter DegradedLeftOnly or DegradedRightOnly (if such states exist) or
-use existing RecoveringLeft/Right but avoid spamming logs/reconnects every few ms.
-	•	Reconnection for the missing lens should continue, but the app must not report the headset as fully disconnected.
-	4.	Session lifetime:
-	•	sessionActive must gate:
-	•	all connection attempts,
-	•	all reconnect loops,
-	•	all heartbeat/start/stop operations.
-	•	On disconnectHeadset():
-	•	cancel all reconnect jobs,
-	•	reset reconnectBackoffStep,
-	•	clear pending command queues, mirror queues, and left refresh queues,
-	•	reset readyConfigIssued and wake tracking variables.
+8.4.2 Session & Handshake Lifetime
+Definitions:
+	•	Session start (per lens):
+	•	GATT connected.
+	•	MTU successfully negotiated.
+	•	UART RX notifications enabled.
+	•	At this moment:
+	•	leftPrimed / rightPrimed = false
+	•	Telemetry bundle state = empty for that lens.
+	•	Telemetry bundle (per lens) is considered complete when we have seen, in the current session:
+	•	≥ 1 0x2C battery/case/wear frame.
+	•	≥ 1 0x37 uptime/runtime frame.
+	•	≥ 1 firmware/version ASCII line:
+	•	"net build time: ... ver 1.6.6, JBD DeviceID ...".
+	•	Primed lens:
+	•	A lens becomes primed only when:
+	•	Above telemetry bundle is complete since the last invalidateHandshake.
+	•	probeReady() has passed for that lens.
+	•	Headset ReadyBoth / Stable:
+	•	ReadyBoth reachable only when:
+	•	leftPrimed == true
+	•	rightPrimed == true
+	•	Both priming events happened after the last invalidateHandshake().
+	•	Stable is derived from ReadyBoth + debounced transitions + no active reconnects.
+	•	Handshake invalidation (invalidateHandshake(reason)):
+	•	Must be called on:
+	•	Link drop (ConnectionStateChanged.connected == false)
+	•	Bond loss
+	•	GATT refresh attempt
+	•	Wake-handshake restarts (exit IdleSleep / enter wake handshake)
+	•	It must:
+	•	Clear leftPrimed / rightPrimed
+	•	Clear pending mirrors
+	•	Clear the left-refresh queue
+	•	Reset leftRefreshRequested
+	•	Reset readyConfigIssued and wakeRefreshIssued
+	•	Reset per-lens operation flags (connectOpsActive, bondOpsActive, gattRefreshOpsActive)
 
-⸻
-
-5. Reconnect Backoff Behavior (Per Lens)
-
-Moncchichi must behave like Even when the connection is unstable:
-	1.	Backoff sequence:
-	•	Implement a per-lens reconnect backoff similar to:
-
-private val RECONNECT_BACKOFF_MS = longArrayOf(
-    0L,      // first retry: immediate
-    500L,    // second
-    1_000L,  // third
-    3_000L,  // fourth
-    5_000L,  // fifth and beyond (cap)
-)
-
-
-	•	Codex may tune exact values based on existing constants but must:
-	•	use a small number of increasing delays,
-	•	cap at a sane value (~5–10s).
-
-	2.	Per-lens tracking:
-	•	reconnectBackoffStep[lens] should:
-	•	start at 0 when reconnecting starts,
-	•	increment after each failed attempt,
-	•	be capped at RECONNECT_BACKOFF_MS.lastIndex.
-	•	On successful reconnect:
-	•	reset reconnectBackoffStep[lens] to 0.
-	3.	Failure window tracking:
-	•	reconnectFailures[lens] (timestamps):
-	•	maintain a sliding window of recent failures,
-	•	drop entries older than FAILURE_WINDOW_MS (e.g. 60s).
-	4.	When to stop:
-	•	If a lens has too many failures in the window (e.g. > 3–5), and:
-	•	server is in IdleSleep, or
-	•	state suggests case closed/in cradle:
-	•	allow reconnect loop to pause (or fully stop) until:
-	•	we exit idle sleep, or
-	•	we see a new wake/interaction event via telemetry.
-
-⸻
-
-6. GATT Cache Refresh and Full Reset
-
-Production Even recovers from GATT cache corruption; Moncchichi must too.
-
-Codex must wire the following behavior:
-	1.	Tracking GATT failures:
-	•	GATT_FAILURE_WINDOW_MS and GATT_REFRESH_THRESHOLD already exist (or can be introduced).
-	•	Whenever a reconnect attempt fails due to a GATT-level error (discovery failure, characteristic missing, etc.), Codex should:
-	•	record the failure timestamp in reconnectFailures[lens].
-	2.	When to refresh GATT:
-	•	shouldRefreshGatt(side, now) must:
-	•	look at reconnectFailures[side] within the FAILURE_WINDOW_MS.
-	•	return true if at least GATT_REFRESH_THRESHOLD recent failures exist.
-	•	When true:
-	•	trigger a GATT refresh cycle for that lens:
-	•	close the current BleClient,
-	•	refresh the GATT cache (using the existing Android workaround),
-	•	delay by a small fixed time (e.g. 300–500 ms),
-	•	then attempt a fresh connect.
-	3.	Full headset reset trigger:
-	•	If both lenses experience GATT failure bursts:
-	•	and the headset is not in idle sleep,
-	•	Codex may trigger:
-	•	full disconnectHeadset(),
-	•	small delay,
-	•	then re-run connectHeadset(pairKey, lastLeftMac, lastRightMac).
-	4.	Never refresh during idle sleep:
-	•	isIdleSleepState() must gate:
-	•	no GATT refresh attempts,
-	•	no full resets.
-	•	Let the glasses sleep; only refresh on wake or user-triggered connect.
-
-⸻
-
-7. Case/Wear/Sleep-Aware Reconnect Gating
-
-The reconnection behavior must respect:
-	•	inCase (from 0x2B/0xF5),
-	•	wearing (from 0x2B/0xF5),
-	•	idleSleepActive / sleeping.
-
-Codex must:
-	1.	Do not fight case/idle:
-	•	When both lenses are:
-	•	in case, and
-	•	idle sleep is active:
-	•	reconnect loops may be frozen (no repeated attempts).
-	•	ReconnectCoordinator.freeze() and unfreeze() in MoncchichiBleService should already exist; use them consistently.
-	2.	Wake-driven reconnect:
-	•	When we see:
-	•	case open,
-	•	wearing true,
-	•	explicit sleep exit event:
-	•	reconnects should be resumed (unfreeze) and allowed to run.
-	3.	Per-lens gating:
-	•	If only one lens is in case (e.g. right in case, left out):
-	•	Moncchichi can:
-	•	keep trying reconnect for the lens that’s likely out of case,
-	•	or treat the “in case” lens as intentionally offline and pause reconnect for that side.
-	•	Use the actual behaviors seen in nRF logs for reference.
-
-⸻
-
-8. Metrics and Logging (for Debugging Parity)
-
-Codex must ensure logging is good enough to compare Moncchichi against Even/nRF:
-	1.	On every connection attempt:
-	•	Log:
-	•	lens (L/R),
-	•	attempt number,
-	•	current backoff delay,
-	•	reason (e.g. “link loss”, “GATT failure”, “bond reset”, “idle wake”).
-	•	Example:
-	•	[RECONNECT][L] attempt=3 delay=1000ms reason=GATT_FAILURE
-	2.	On GATT refresh:
-	•	Log:
-	•	[GATT][L] refresh triggered after 3 failures in 60000ms
-	3.	On full headset reset:
-	•	Log:
-	•	[HEADSET] full reset triggered due to repeated GATT failures
-	4.	On bond failures & resets:
-	•	Log clear messages:
-	•	"[BOND][R] lost – attempt 1/3"
-	•	"[BOND][R] reset via removeBond() (auth failure)"
-	5.	On idle sleep and wake transitions:
-	•	Already present "[SLEEP] Headset → IdleSleep" and "[WAKE] Headset → Awake".
-	•	Ensure they are emitted exactly once per state change, not spammed.
-
-These logs will be used to line up with nRF Connect traces.
-
-⸻
-
-9. Implementation Checklist for Codex (Connection Resilience Only)
-
-Codex must execute tasks in roughly this order:
-	1.	Review existing connection code
-	•	Read:
-	•	G1BleClient
-	•	MoncchichiBleService
-	•	DualLensConnectionOrchestrator
-	•	ReconnectCoordinator
-	•	Confirm:
-	•	where reconnect decisions are made,
-	•	how state transitions propagate to the UI.
-	2.	Tighten bonding behavior
-	•	Ensure:
-	•	per-lens bond counters,
-	•	limited bond retries,
-	•	removeBondCompat() only on clear auth failures,
-	•	reset on 0xF5 pairing success.
-	3.	Refine reconnect backoff
-	•	Define/adjust RECONNECT_BACKOFF_MS.
-	•	Apply per-lens steps.
-	•	Reset step on success.
-	4.	Add GATT refresh and full reset
-	•	Use failure windows and thresholds.
-	•	Refresh only when:
-	•	not in idle sleep,
-	•	threshold exceeded.
-	•	Optionally trigger full headset reset when both lenses are stuck.
-	5.	Wire case/wear/sleep gating
-	•	Ensure:
-	•	reconnect loops freeze in deep idle/case situations,
-	•	reconnect resumes on clear wake signals (wearing/on-head, case-open, sleep exit).
-	6.	Stabilize state transitions
-	•	Avoid flapping between states on single transient events.
-	•	Introduce minimal debouncing where necessary (e.g. 200–500 ms).
-	7.	Improve logging for parity
-	•	Add logs for:
-	•	reconnect attempts,
-	•	GATT refresh,
-	•	full reset,
-	•	bond events.
-	8.	Regression guard
-	•	Make sure:
-	•	pairing still works,
-	•	simple connect/disconnect works,
-	•	idle sleep still functions,
-	•	heartbeats and telemetry (0x2B, 0x2C, 0x37, 0xF5) are not broken.
+8.4.3 Sleep / Wake / WakeQuiet Gating
+	•	IdleSleep entry:
+	•	When both lenses are effectively offline and telemetry or case/wear bits indicate “in case / sleeping”:
+	•	Enter State.IdleSleep
+	•	Cancel all reconnect jobs
+	•	Reset reconnect backoff
+	•	Clear pending queues, primed flags, telemetry bundle state
+	•	Wake and WakeQuiet:
+	•	On wake trigger (case open / wear detect):
+	•	awaitingWakeTelemetry = true
+	•	wakeQuietActive = true
+	•	wakeQuietUntil = now + QUIET_WINDOW_MS
+	•	Call invalidateHandshake("wake_handshake_restart")
+	•	During wake quiet:
+	•	Do not schedule reconnects
+	•	Do not run bond retries
+	•	Do not perform GATT refresh
+	•	Wake telemetry qualification:
+	•	wakeTelemetryObserved[lens] = true only after we see fresh 0x2C and 0x37 from that lens after wake.
+	•	Exit wake handshake:
+	•	When wakeTelemetryObserved[LEFT] == true AND wakeTelemetryObserved[RIGHT] == true AND now >= wakeQuietUntil
+	•	Clear wakeQuietActive
+	•	Allow reconnect / bond / GATT operations to resume
