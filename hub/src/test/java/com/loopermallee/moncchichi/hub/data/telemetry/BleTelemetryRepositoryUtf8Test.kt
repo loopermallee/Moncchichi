@@ -116,6 +116,31 @@ class BleTelemetryRepositoryUtf8Test {
     }
 
     @Test
+    fun `f5 system subcodes update wear and case state`() = runTest {
+        val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
+        val pairing = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.events.first { it.contains("PAIRING") }
+        }
+
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x06))
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x07))
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x08))
+        repository.onFrame(Lens.LEFT, byteArrayOf(0xF5.toByte(), 0x09, 0x01))
+        repository.onFrame(Lens.RIGHT, byteArrayOf(0xF5.toByte(), 0x11))
+
+        val snapshot = repository.snapshot.value
+        assertEquals(false, snapshot.left.wearing)
+        assertEquals(true, snapshot.left.inCase)
+        assertEquals(true, snapshot.left.charging)
+
+        val inCaseStatus = repository.inCaseStatus.value
+        assertEquals(true, inCaseStatus.valueFor(Lens.LEFT))
+
+        val pairingLine = pairing.await()
+        assertTrue(pairingLine.contains("PAIRING") && pairingLine.contains("success"))
+    }
+
+    @Test
     fun `glasses state binary frame updates snapshot`() = runTest {
         val repository = BleTelemetryRepository(MemoryRepository(FakeMemoryDao()), backgroundScope)
 

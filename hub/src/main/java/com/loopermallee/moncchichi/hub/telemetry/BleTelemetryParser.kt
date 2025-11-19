@@ -114,9 +114,11 @@ class BleTelemetryParser(
             val opcode: Int,
             val eventCode: Int,
             val wearing: Boolean?,
+            val inCase: Boolean?,
             val caseOpen: Boolean?,
             val charging: Boolean?,
             val caseBatteryPercent: Int?,
+            val pairingSuccess: Boolean?,
             override val rawFrame: ByteArray,
         ) : TelemetryEvent
 
@@ -657,20 +659,28 @@ class BleTelemetryParser(
         val valueIndex = frame.resolveF5ValueIndex(code)
         val rawValue = valueIndex?.let { frame.payload.getOrNull(it)?.toUnsignedInt() }
         var wearing: Boolean? = null
+        var inCase: Boolean? = null
         var caseOpen: Boolean? = null
         var charging: Boolean? = null
         var caseBattery: Int? = null
+        var pairingSuccess: Boolean? = null
         when (code) {
             0x06 -> wearing = true
             0x07 -> wearing = false
-            0x08 -> caseOpen = true
-            0x09 -> caseOpen = false
-            0x0A -> charging = true
-            0x0B -> charging = false
+            0x08, 0x0B -> inCase = true
+            0x09 -> charging = rawValue?.let { it != 0 } ?: true
             0x0E -> charging = rawValue?.let { it == 1 }
             0x0F -> caseBattery = rawValue?.takeIf { it in 0..100 }
+            0x11 -> pairingSuccess = true
         }
-        if (wearing == null && caseOpen == null && charging == null && caseBattery == null) {
+        if (
+            wearing == null &&
+            inCase == null &&
+            caseOpen == null &&
+            charging == null &&
+            caseBattery == null &&
+            pairingSuccess == null
+        ) {
             return null
         }
         return TelemetryEvent.SystemEvent(
@@ -679,9 +689,11 @@ class BleTelemetryParser(
             opcode = frame.opcode,
             eventCode = code,
             wearing = wearing,
+            inCase = inCase,
             caseOpen = caseOpen,
             charging = charging,
             caseBatteryPercent = caseBattery,
+            pairingSuccess = pairingSuccess,
             rawFrame = frame.raw.copyOf(),
         )
     }
@@ -697,11 +709,7 @@ class BleTelemetryParser(
         }
         val valueIndex = frame.resolveF5ValueIndex(code)
         val rawValue = valueIndex?.let { frame.payload.getOrNull(it)?.toUnsignedInt() }
-        val lidOpen = when (code) {
-            0x08 -> true
-            0x09 -> false
-            else -> null
-        }
+        val lidOpen: Boolean? = null
         val charging = when (code) {
             0x0E -> rawValue?.let { it == 1 }
             else -> null
@@ -710,11 +718,7 @@ class BleTelemetryParser(
             0x0F -> rawValue?.takeIf { it in 0..100 }
             else -> null
         }
-        val silent = when (code) {
-            0x0A -> rawValue?.let { it != 0 } ?: true
-            0x0B -> rawValue?.let { it != 0 }?.not() ?: false
-            else -> null
-        }
+        val silent: Boolean? = null
         if (lidOpen == null && charging == null && caseBattery == null && silent == null) {
             return null
         }
@@ -738,9 +742,9 @@ class BleTelemetryParser(
             else -> null
         }
     }
-    private val systemEventCodes = 0x06..0x0B
+    private val systemEventCodes = setOf(0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x11)
     private val specialSystemCodes = setOf(0x0E, 0x0F)
-    private val caseEventCodes = setOf(0x08, 0x09, 0x0A, 0x0B, 0x0E, 0x0F)
+    private val caseEventCodes = setOf(0x0E, 0x0F)
 
     private fun G1ReplyParser.NotifyFrame.toEnvironmentSnapshot(): EnvironmentSnapshot? {
         val payloadCopy = payload.copyOf()

@@ -2026,6 +2026,7 @@ class BleTelemetryRepository(
             is BleTelemetryParser.TelemetryEvent.CaseUpdate -> true
             is BleTelemetryParser.TelemetryEvent.SystemEvent ->
                 event.wearing != null ||
+                    event.inCase != null ||
                     event.caseOpen != null ||
                     event.charging != null ||
                     event.caseBatteryPercent != null
@@ -2332,6 +2333,11 @@ class BleTelemetryRepository(
             val label = if (value) "wearing" else "not_wearing"
             emitConsole("WEAR", lens, label, timestamp)
         }
+        event.inCase?.let { value ->
+            _inCaseStatus.update(lens, value, timestamp)
+            val label = if (value) "in_case" else "out_case"
+            emitConsole("CASE", lens, label, timestamp)
+        }
         event.charging?.let { value ->
             _chargingStatus.update(lens, value, timestamp)
             if (eventCode == 0x0E) {
@@ -2361,6 +2367,13 @@ class BleTelemetryRepository(
             event.wearing?.let { value ->
                 if (telemetry.wearing != value) {
                     telemetry = telemetry.copy(wearing = value)
+                    changed = true
+                    stateChanged = true
+                }
+            }
+            event.inCase?.let { value ->
+                if (telemetry.inCase != value) {
+                    telemetry = telemetry.copy(inCase = value)
                     changed = true
                     stateChanged = true
                 }
@@ -2397,6 +2410,10 @@ class BleTelemetryRepository(
             ) { snapshot ->
                 snapshot.copy(isCharging = event.charging)
             }
+        }
+
+        if (event.pairingSuccess == true) {
+            emitConsole("PAIRING", lens, "success", timestamp)
         }
     }
 
@@ -2676,11 +2693,22 @@ class BleTelemetryRepository(
         var chargingChanged = false
         var firmwareChanged = false
 
+        vitals.wearing?.let { value -> _wearingStatus.update(lens, value, timestamp) }
+        vitals.inCradle?.let { value -> _inCaseStatus.update(lens, value, timestamp) }
+        vitals.caseOpen?.let { value ->
+            updateCaseStatus(
+                lens = lens,
+                timestamp = timestamp,
+                lidOpen = value,
+            )
+        }
+
         updateSnapshot(eventTimestamp = timestamp) { current ->
             val existing = current.lens(lens)
             var updated = existing
             var lensUpdatedAt = existing.lastUpdatedAt
             var powerHistory = existing.powerHistory
+            var stateChanged = false
 
             trustedBattery?.let { percent ->
                 if (shouldAdopt(existing.batterySourceOpcode, existing.batteryUpdatedAt, opcode, timestamp, ::batteryPriority)) {
@@ -2712,6 +2740,29 @@ class BleTelemetryRepository(
                 }
             }
 
+            vitals.wearing?.let { value ->
+                if (updated.wearing != value) {
+                    updated = updated.copy(wearing = value)
+                    stateChanged = true
+                }
+            }
+            vitals.inCradle?.let { value ->
+                if (updated.inCase != value) {
+                    updated = updated.copy(inCase = value)
+                    stateChanged = true
+                }
+            }
+            vitals.caseOpen?.let { value ->
+                if (updated.caseOpen != value) {
+                    updated = updated.copy(caseOpen = value)
+                    stateChanged = true
+                }
+            }
+
+            if (stateChanged && lensUpdatedAt != timestamp) {
+                lensUpdatedAt = timestamp
+            }
+
             firmwareBanner?.let { banner ->
                 if (shouldAdopt(existing.firmwareSourceOpcode, existing.firmwareUpdatedAt, opcode, timestamp, ::firmwarePriority)) {
                     if (existing.firmwareVersion != banner || existing.firmwareSourceOpcode != opcode) {
@@ -2739,7 +2790,10 @@ class BleTelemetryRepository(
                 updated = updated.copy(lastPowerOpcode = opcode, lastPowerUpdatedAt = timestamp)
             }
 
-            updated = updated.withVitalsTimestamp(timestamp)
+            updated = updated.copy(
+                lastUpdatedAt = if (stateChanged) timestamp else updated.lastUpdatedAt,
+                lastStateUpdatedAt = if (stateChanged) timestamp else updated.lastStateUpdatedAt,
+            ).withVitalsTimestamp(timestamp)
             if (updated != existing) {
                 updated = updated.copy(lastUpdatedAt = lensUpdatedAt)
                 current.updateLens(lens, updated).withFrame(lens, hex)
