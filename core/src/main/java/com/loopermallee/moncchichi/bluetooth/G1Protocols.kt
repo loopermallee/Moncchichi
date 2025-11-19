@@ -19,6 +19,7 @@ object G1Protocols {
     const val CMD_BATT_GET = CMD_GLASSES_INFO
     const val BATT_SUB_DETAIL = 0x01
     const val CMD_WEAR_DETECT = 0x27
+    const val CMD_NOTIFICATION_AUTO_DISPLAY = 0x4F
     const val CMD_HUD_TEXT = 0x09
     const val CMD_CLEAR = 0x25
     const val OPC_ACK_CONTINUE = 0xCB
@@ -95,6 +96,7 @@ object G1Protocols {
         CMD_SERIAL_LENS to "CMD_SERIAL_LENS",
         CMD_SERIAL_FRAME to "CMD_SERIAL_FRAME",
         CMD_SILENT_MODE_GET to "CMD_SILENT_MODE_GET",
+        CMD_NOTIFICATION_AUTO_DISPLAY to "CMD_NOTIFICATION_AUTO_DISPLAY",
         CMD_HUD_TEXT to "CMD_HUD_TEXT",
         OPC_ACK_CONTINUE to "OPC_ACK_CONTINUE",
         OPC_ACK_COMPLETE to "OPC_ACK_COMPLETE",
