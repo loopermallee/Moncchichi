@@ -340,6 +340,7 @@ class MoncchichiBleService(
     private var idleSleepActive: Boolean = false
     private var suppressedDuringSleepCount: Int = 0
     private val idleSleepState = MutableStateFlow(false)
+    private val wakeQuietState = MutableStateFlow(false)
     private val sleepMonitorJob = scope.launch {
         while (isActive) {
             checkSleepTimeouts()
@@ -881,6 +882,7 @@ class MoncchichiBleService(
             logger = logger,
             isSleeping = { idleSleepActive },
             idleSleepFlow = idleSleepState,
+            wakeQuietActiveFlow = wakeQuietState,
         )
         val jobs = mutableListOf<Job>()
         jobs += scope.launch {
@@ -2260,6 +2262,7 @@ private class HeartbeatSupervisor(
 
     private fun clearWakeQuietGate() {
         wakeQuietActive.set(false)
+        wakeQuietState.value = false
         wakeQuietUntil.set(0L)
         wakeVitalsObserved.set(false)
         wakeQuietJob?.cancel()
@@ -2268,6 +2271,7 @@ private class HeartbeatSupervisor(
 
     private fun startWakeQuietGate() {
         wakeQuietActive.set(true)
+        wakeQuietState.value = true
         wakeVitalsObserved.set(false)
         wakeQuietUntil.set(SystemClock.elapsedRealtime() + G1Protocols.CE_IDLE_SLEEP_QUIET_WINDOW_MS)
         wakeQuietJob?.cancel()
@@ -2290,6 +2294,7 @@ private class HeartbeatSupervisor(
         if (!wakeVitalsObserved.get()) return
         if (deadline > 0 && nowElapsed < deadline) return
         wakeQuietActive.set(false)
+        wakeQuietState.value = false
         wakeQuietUntil.set(0L)
         wakeQuietJob?.cancel()
         wakeQuietJob = null

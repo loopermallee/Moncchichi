@@ -354,6 +354,7 @@ class G1BleClient(
     private val lensLabel: String = "?",
     private val isSleeping: () -> Boolean = { false },
     private val idleSleepFlow: StateFlow<Boolean> = MutableStateFlow(false),
+    private val wakeQuietActiveFlow: StateFlow<Boolean> = MutableStateFlow(false),
     private val uartClientFactory: (
         Context,
         BluetoothDevice,
@@ -1993,6 +1994,14 @@ class G1BleClient(
     }
 
     suspend fun removeBondForAuthFailure(reason: String) {
+        // CE parity: prevent bond removal during IdleSleep or WakeQuiet
+        if (idleSleepFlow.value || wakeQuietActiveFlow.value) {
+            logger.w(
+                label,
+                "${tt()} [BOND] Bond removal suppressed due to sleep/wake gate"
+            )
+            return
+        }
         performBondRemoval(reason = reason, source = "AUTH_FAILED", rebondDelayMs = BOND_RETRY_DELAY_MS)
     }
 
