@@ -449,6 +449,7 @@ class DualLensConnectionOrchestrator(
             is ClientEvent.Telemetry -> _telemetry.update { current -> current + (side to event) }
             is ClientEvent.ConnectionStateChanged -> {
                 if (!event.connected) {
+                    // CE: link drops do not invalidate the handshake; resets are handled elsewhere.
                     when (side) {
                         Lens.RIGHT -> markRightPrimed(false)
                         Lens.LEFT -> markLeftPrimed(false)
@@ -1317,6 +1318,7 @@ class DualLensConnectionOrchestrator(
     }
 
     private suspend fun invalidateHandshake(reason: String) {
+        // CE: purge priming state but keep in-flight connect/bond/refresh tracking intact.
         logger("[BLE] Handshake invalidated reason=$reason")
         mirrorLock.withLock { pendingMirrors.clear() }
         leftRefreshLock.withLock { pendingLeftRefresh.clear() }
