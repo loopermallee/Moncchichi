@@ -1370,21 +1370,25 @@ class DualLensConnectionOrchestrator(
                 logger("[BOND][${side.logLabel()}] duplicate bond attempt suppressed")
                 return@launch
             }
-            if (isIdleSleepState() || shouldAbortConnectionAttempt()) {
-                return@launch
-            }
-            if (isIdleSleepState()) {
-                return@launch
-            }
             setOperationActive(bondOpsActive, side, true)
-            if (!isIdleSleepState()) {
-                _connectionState.value = State.Repriming
-            }
-            val session = when (side) {
-                Lens.LEFT -> leftSession
-                Lens.RIGHT -> rightSession
-            } ?: return@launch
             try {
+                if (shouldAbortConnectionAttempt()) {
+                    return@launch
+                }
+                val wakeQuietGateActive = sleeping && awaitingWakeTelemetry && wakeQuietActive
+                if (isIdleSleepState()) {
+                    logger("[BOND][${side.logLabel()}] rebond gated: idle sleep active")
+                    return@launch
+                }
+                if (wakeQuietGateActive) {
+                    logger("[BOND][${side.logLabel()}] rebond gated: wake quiet active")
+                    return@launch
+                }
+                _connectionState.value = State.Repriming
+                val session = when (side) {
+                    Lens.LEFT -> leftSession
+                    Lens.RIGHT -> rightSession
+                } ?: return@launch
                 logger(
                     "[BOND][${side.logLabel()}] rebond attempt $attemptsInWindow/" +
                         "$BOND_RETRY_MAX_ATTEMPTS",
